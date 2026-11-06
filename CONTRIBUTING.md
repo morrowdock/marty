@@ -29,7 +29,8 @@ CI refuses a pull request that has a commit without a sign-off.
 ## How changes land
 
 - All changes go to `main` through pull requests.
-- CI (build, test and the sign-off check) must pass.
+- CI (build, test and the sign-off check) must pass. A repository rule on
+  `main` enforces this.
 - Pull requests are squash-merged.
 
 Follow [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Report vulnerabilities as

@@ -6,10 +6,12 @@ Marty is an AI teacher built on the
 **Status: early preview.** Interfaces and formats can change. Do not depend on
 them yet.
 
-## What Marty does
+## Goal
+
+None of this works yet. This is what Marty is being built to do.
 
 You ask a learning question, for example "How does a planetary gearbox
-reduce speed?". Marty then:
+reduce speed?". Marty will then:
 
 1. Plans a short lesson.
 2. Finds parts in the MartyGraphics component library.
@@ -21,14 +23,15 @@ reduce speed?". Marty then:
 7. Answers follow-up questions, such as "What if the sun gear had more teeth?".
 
 The engine is the source of truth. It never guesses. Marty is the teacher on
-top of it. Any model (Claude, GPT, Gemini or a small local model) can drive
-Marty, because correctness comes from the engine and not from the model.
+top of it. The aim is that any model (Claude, GPT, Gemini or a small local
+model) can drive Marty, because correctness comes from the engine and not from
+the model. This is not tested yet.
 
 ## Parts of this repository
 
 | Part | Status |
 | --- | --- |
-| MCP server (`marty-mcp`): engine tools for any MCP client | In progress |
+| MCP server (`marty-mcp`): engine tools for any MCP client | Designed ([docs/DESIGN-MCP.md](docs/DESIGN-MCP.md)) |
 | Marty loop: plan, author, check, repair, render, teach | Planned |
 | Bench: development questions for prompt-to-3D lessons | Planned |
 
@@ -37,7 +40,8 @@ The design of the MCP tool set is in [docs/DESIGN-MCP.md](docs/DESIGN-MCP.md).
 ## Requirements
 
 - macOS 14 or later, Swift 6 (Xcode 16 or later).
-- No network access, API key or paid service is necessary to build or test.
+- No API key or paid service is necessary. After SwiftPM fetches the
+  dependencies, build and test need no network access.
 
 ## Contributing
 

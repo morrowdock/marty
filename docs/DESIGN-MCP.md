@@ -14,8 +14,11 @@ no judgment of their own: every number in a result comes from the engine.
 
 1. **Deterministic.** The same input at the same engine pin gives the same
    bytes of output. JSON keys are sorted. Results contain no clock time,
-   random value or absolute home path. The only exception is `render`, which
-   reports a measured render time in a separate `timing` field.
+   random value or absolute path. The only exception is `render`: it returns
+   the absolute path of its output directory (a client needs it to open the
+   files) and a measured time in a separate `timing` field. `manifest.json`
+   holds no time. Image digests are stable on one machine only: Metal output
+   can differ between GPUs and operating system versions.
 2. **Bounded.** A request line is at most 1 MiB. A document is at most the
    engine limit (64 KiB). A component definition is at most 16 KiB, and a
    request carries at most 8 of them. A patch is at most 16 KiB. Larger input
@@ -37,22 +40,40 @@ no judgment of their own: every number in a result comes from the engine.
 
 A document can be up to 64 KiB, and a repair loop sends it many times. To keep
 the context small, `check` returns `ref`, the SHA-256 of the canonical
-document (`sha256:` followed by 64 hex digits). The server keeps the last 32
-accepted or refused documents in memory. `render`, `patch` and `check`
-accept `ref` in place of `document`. An unknown `ref` gives the tool error
-`ref.unknown`, and the caller sends the full document again. The cache is
-only a speed-up: a result never depends on what is in the cache.
+document (`sha256:` followed by 64 hex digits). Formatting does not change a
+`ref`. The server keeps the last 32 documents that it could read as JSON
+(accepted or refused) in memory. A document that is not valid JSON, or is too
+large, gets no `ref`. `render`, `patch` and `check` accept `ref` in place of
+`document`. An unknown `ref` gives the tool error `cache.miss` (a name that
+cannot be mixed up with the engine's own `ref.unknown.<id>`), and the caller
+sends the full document again. The cache is only a speed-up: a result never
+depends on what is in the cache.
 
 ## Tools
 
 | Tool | Input | Result |
 | --- | --- | --- |
-| `catalog` | `compact` (default true) | Components (id, about, parameters with default and range, inner parts, anchors), primitive kinds, materials, camera presets and the format limits. About 4 KB when compact. |
+| `catalog` | `compact` (default true) | Components (id, about, parameters with default and range, inner parts, anchors; about 4 KB for the 7 built-ins at this pin, and it grows with the library), plus a fixed part: primitive ids, camera presets and the format limits. |
 | `explain` | `id` (component or primitive) | One entry: what it is, its keys or parameters, and one small example that the engine accepts. |
-| `check` | `document` or `ref`; `components` (optional definitions); `strict` (optional) | `ok`, `reason`, `part`, `ref`, title, part count, triangles, steps, solved ratios, mesh and gear checks, source size and SHA-256. |
+| `check` | `document` or `ref`; `components` (optional definitions) | `ok`, `reason`, `part`, `ref`, title, part count, triangles, steps, solved ratios, mesh and gear checks, source size and SHA-256. |
 | `component_check` | `definition`; `with` (optional values) | `ok`, `reason`, `part`, the catalog entry, a ready `use` entry and the instance checks. |
-| `patch` | `document` or `ref`; `patch`; `components` (optional) | The `check` result of the patched document, its new `ref`, and the patched document when `return_document` is true. |
+| `patch` | `document` or `ref`; `patch` (the engine format, below); `components` (optional) | The `check` result of the patched document, its new `ref`, and the patched document when `return_document` is true. |
 | `render` | `document` or `ref`; `components`; `size` (default 1280x800, at most 1920x1200); `loop` (default false) | `ok`, the output directory, the file names (hero, exploded, one still per step, optional loop GIF, snapshot, manifest) and their SHA-256 digests. |
+
+**Patch format.** `patch` uses the engine's own patch,
+`MGSolidParser.applying(_:to:)`. Its keys are `params`, `parts` (merge fields
+by part id; `null` removes a field; `instance.part` merges into that `use`
+entry's `set`; the instance id edits the `use` entry itself), `constraints`
+and `steps` (each replaces the whole list) and `title`. Other keys are refused
+with `patch.unknown.<key>`. The engine patches only a compiled document, so the
+base must be accepted. A refused base gives `ok: false` with `stage: "base"`
+and the base's own reason; a refused patch gives `stage: "patch"`.
+
+**Primitives.** The engine has no public list of primitive kinds and their
+keys. Marty keeps that list, taken from docs/SOLID-3D.md at the pin, and tests
+hold it to the engine: every example must be accepted, every missing required
+key must be named in the refusal, and every optional key must be known to the
+parser.
 
 Later tools, when the engine supports them:
 
@@ -73,11 +94,13 @@ the field. The server never imitates an engine feature.
 ## What the engine should own
 
 `marty-solid check` builds its report (mesh closure, the gear sweep and the
-refusal order) in the example CLI, not in the `MartyGraphics` library. Marty
-must copy that logic, and a copy can drift. Request to the engine coordinator:
-move the report into the library (for example `MGSolidReport.make(doc)`), so
-the CLI and Marty use one implementation. Until then, Marty keeps its copy
-small and tests it against the same example models as the CLI.
+refusal order) in the example CLI, not in the `MartyGraphics` library. The
+render sequence (captions, step stills, the loop GIF and the manifest) is also
+only in the CLI, and it is the larger copy. Marty must copy both, and a copy
+can drift. Request to the engine coordinator: move both into the library (for
+example `MGSolidReport.make(doc)` and a render sequence type), so the CLI and
+Marty use one implementation. Until then, Marty keeps its copies small and
+tests them against the same example models as the CLI.
 
 ## Transport
 
@@ -86,7 +109,8 @@ small and tests it against the same example models as the CLI.
 - Methods: `initialize`, `notifications/initialized`, `ping`, `tools/list`,
   `tools/call`. Other methods give `-32601`.
 - Protocol versions: the server answers with the client's version when it
-  supports it (2025-06-18 or 2025-03-26), else with 2025-06-18.
+  supports it (2025-11-25, 2025-06-18 or 2025-03-26), else with 2025-11-25.
+  A tools-only server uses the same messages in all three.
 - Results have both `content` (one text item with the JSON) and
   `structuredContent` (the same JSON as an object).
 - Requests are handled one at a time, in order, on the main thread. Rendering
@@ -101,5 +125,6 @@ small and tests it against the same example models as the CLI.
   `ref` cache.
 - Protocol tests that start the built server as a fresh process, send
   `initialize`, `tools/list` and `tools/call`, and compare the results.
-  The same input in two processes must give the same bytes.
+  The same input in two processes must give the same bytes (`render` is
+  not part of this test).
 - `render` tests run only when a Metal device is present.
