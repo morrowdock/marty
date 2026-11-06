@@ -1,6 +1,6 @@
 # Design note: the Marty MCP tool set
 
-Status: draft, 2026-11-06. Engine pin: MartyGraphics `main` at
+Status: implemented in `marty-mcp` 0.1.0 (2026-11-06), except the later tools. Engine pin: MartyGraphics `main` at
 `76104deae44a186ccf29a43db9e091f088f12103`.
 
 ## Goal
@@ -62,7 +62,7 @@ depends on what is in the cache.
 
 **Patch format.** `patch` uses the engine's own patch,
 `MGSolidParser.applying(_:to:)`. Its keys are `params`, `parts` (merge fields
-by part id; `null` removes a field; `instance.part` merges into that `use`
+by part id; for a plain part, `null` removes a field; `instance.part` merges into that `use`
 entry's `set`; the instance id edits the `use` entry itself), `constraints`
 and `steps` (each replaces the whole list) and `title`. Other keys are refused
 with `patch.unknown.<key>`. The engine patches only a compiled document, so the
@@ -99,7 +99,10 @@ render sequence (captions, step stills, the loop GIF and the manifest) is also
 only in the CLI, and it is the larger copy. Marty must copy both, and a copy
 can drift. Request to the engine coordinator: move both into the library (for
 example `MGSolidReport.make(doc)` and a render sequence type), so the CLI and
-Marty use one implementation. Until then, Marty keeps its copies small and
+Marty use one implementation. One difference: Marty keeps render time out of
+`manifest.json` (it is in the tool result), so the manifest of a render is
+reproducible; the CLI writes `renderSecondsPerFrame` into its manifest. A shared
+render sequence should return the time beside the manifest. Until then, Marty keeps its copies small and
 tests them against the same example models as the CLI.
 
 ## Transport
@@ -107,10 +110,12 @@ tests them against the same example models as the CLI.
 - JSON-RPC 2.0, one message per line on standard input and output (MCP stdio
   transport). Logs go to standard error only.
 - Methods: `initialize`, `notifications/initialized`, `ping`, `tools/list`,
-  `tools/call`. Other methods give `-32601`.
+  `tools/call`. Other requests give `-32601`. Unknown notifications (for
+  example `notifications/cancelled`) are ignored.
 - Protocol versions: the server answers with the client's version when it
-  supports it (2025-11-25, 2025-06-18 or 2025-03-26), else with 2025-11-25.
-  A tools-only server uses the same messages in all three.
+  supports it (2025-11-25 or 2025-06-18), else with 2025-11-25. Both use the
+  same messages for a tools-only server. 2025-03-26 is not offered: it
+  requires JSON-RPC batches and has no `structuredContent`.
 - Results have both `content` (one text item with the JSON) and
   `structuredContent` (the same JSON as an object).
 - Requests are handled one at a time, in order, on the main thread. Rendering

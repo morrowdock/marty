@@ -1,0 +1,8 @@
+{"v": 1, "kind": "assembly", "title": "Slider-crank: rotation to back-and-forth", "units": "mm",
+ "parts": [{"id": "engine", "use": "sliderCrank", "with": {"radius": 18, "rod": 62, "piston": 14}}],
+ "steps": [
+  {"say": "A slider-crank turns spinning motion into back-and-forth motion, as in an engine or a pump.", "camera": "hero"},
+  {"say": "Input: the crank turns. Its pin travels in a circle of radius 18 mm.", "highlight": ["engine.crank"], "spin": 1},
+  {"say": "The connecting rod (62 mm) links the crank pin to the piston and pushes and pulls it.", "highlight": ["engine.rod"], "spin": 1},
+  {"say": "The piston slides along a straight line. Its stroke is twice the crank radius: 36 mm per turn.", "highlight": ["engine.piston"], "spin": 1}
+ ]}

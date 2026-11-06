@@ -1,0 +1,53 @@
+{
+  "v": 1,
+  "kind": "assembly",
+  "title": "Planetary gear set",
+  "units": "mm",
+  "parts": [
+    {"id": "base", "name": "Housing base", "material": "aluminum",
+     "shape": {"plate": {"radius": 84, "thickness": 7.5, "z0": -9, "chamfer": 1.2,
+               "holes": [[0, 0, 8], [66.25, 38.25, 2.6], [0, 76.5, 2.6], [-66.25, 38.25, 2.6],
+                         [-66.25, -38.25, 2.6], [0, -76.5, 2.6], [66.25, -38.25, 2.6]]}}},
+    {"id": "bolt", "name": "Bolt", "parent": "base", "material": "blackOxide", "at": [66.25, 38.25, 0],
+     "repeat": {"count": 6, "axis": [0, 0, 1]},
+     "shape": [{"hex": {"acrossFlats": 7, "length": 4.1, "z0": -1.5, "chamfer": 0.6}},
+               {"shaft": {"radius": 2.5, "length": 8.1, "z0": -9.5, "chamfer": 0.3}}],
+     "explode": [0, 0, 16], "explodeWindow": [0, 0.35]},
+    {"id": "ring", "name": "Ring gear (60T, fixed)", "material": "darkSteel",
+     "shape": {"ringGear": {"teeth": 60, "module": 2, "width": 15.5, "outer": 68.9, "z0": -1.5, "chamfer": 0.4}},
+     "explode": [0, 0, 20], "explodeWindow": [0.3, 0.85]},
+    {"id": "sun", "name": "Sun gear (24T, input)", "material": "brass",
+     "shape": {"gear": {"teeth": 24, "module": 2, "width": 14, "bore": 6, "chamfer": 0.56}},
+     "joint": {"revolute": [0, 0, 1]}, "drive": {"input": 1},
+     "explode": [0, 0, 42], "explodeWindow": [0.2, 0.75]},
+    {"id": "inputShaft", "name": "Input shaft", "parent": "sun", "material": "brushedSteel",
+     "shape": {"shaft": {"radius": 5.92, "length": 25.5, "z0": -9, "chamfer": 0.6}}},
+    {"id": "carrier", "name": "Planet carrier (output)", "material": "anodized.blue",
+     "shape": [{"carrier": {"arms": 3, "radius": 42, "hub": 15, "boss": 9.5, "armWidth": 13, "thickness": 6,
+                            "z0": 17, "chamfer": 0.9, "blend": 5}},
+               {"revolvedProfile": {"points": [[0, 22.5], [15, 22.5], [15, 25.2], [13.6, 26.6], [0, 26.6]]}}],
+     "joint": {"revolute": [0, 0, 1]}, "explode": [0, 0, 92], "explodeWindow": [0, 0.55]},
+    {"id": "outputShaft", "name": "Output shaft", "parent": "carrier", "material": "brushedSteel",
+     "shape": [{"shaft": {"radius": 9, "length": 27, "z0": 26, "chamfer": 0.9}},
+               {"box": {"size": [4, 4.5, 16], "chamfer": 0.4, "at": [9.4, 0, 42]}}],
+     "explode": [0, 0, 20], "explodeWindow": [0.05, 0.6]},
+    {"id": "pin", "name": "Planet pin", "parent": "carrier", "material": "polishedSteel", "at": [42, 0, 0],
+     "repeat": {"count": 3, "axis": [0, 0, 1]},
+     "shape": {"shaft": {"radius": 4, "length": 25.2, "z0": -0.8, "chamfer": 0.5}}},
+    {"id": "planet", "name": "Planet gear (18T)", "parent": "carrier", "material": "brushedSteel", "at": [42, 0, 0],
+     "repeat": {"count": 3, "axis": [0, 0, 1]},
+     "shape": {"gear": {"teeth": 18, "module": 2, "width": 13.2, "z0": 0.4, "bore": 4.3, "chamfer": 0.56}},
+     "joint": {"revolute": [0, 0, 1]}, "explode": [0, 0, -26], "explodeWindow": [0.1, 0.65]}
+  ],
+  "constraints": [
+    {"gearMesh": {"a": "sun", "b": "planet", "carrier": "carrier"}},
+    {"gearMesh": {"a": "ring", "b": "planet", "carrier": "carrier"}}
+  ],
+  "steps": [
+    {"say": "Three planet gears ride on a carrier between a sun gear and a fixed ring gear.", "camera": "hero"},
+    {"say": "Input: the brass sun gear (24 teeth) turns.", "highlight": ["sun"], "spin": 1},
+    {"say": "Each planet (18 teeth) meshes with the sun and rolls inside the fixed ring (60 teeth).", "highlight": ["planet"], "spin": 1},
+    {"say": "Output: the carrier turns 24 / (24 + 60) = 2/7 of a turn per sun turn, in the same direction.", "highlight": ["carrier"], "spin": 1},
+    {"say": "Exploded along the shaft axis: base, ring, sun, planets and carrier.", "explode": 1, "camera": "iso"}
+  ]
+}

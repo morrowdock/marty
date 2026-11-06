@@ -1,0 +1,21 @@
+{"v": 1, "kind": "assembly", "title": "Slider-crank: rotation to back-and-forth", "units": "mm",
+ "parts": [
+  {"id": "frame", "name": "Frame", "material": "darkSteel", "shape": {"box": {"size": [150, 60, 6], "chamfer": 1}}, "at": [30, 0, -14]},
+  {"id": "crank", "name": "Crank (input)", "material": "brushedSteel",
+   "shape": [{"shaft": {"radius": 6, "length": 16, "z0": -10}},
+             {"box": {"size": [30, 12, 6], "chamfer": 1, "at": [9, 0, -3]}},
+             {"shaft": {"radius": 4, "length": 10, "z0": 0, "at": [18, 0, 0]}}],
+   "joint": {"revolute": [0, 0, 1]}, "drive": {"input": 1}},
+  {"id": "piston", "name": "Piston", "material": "aluminum",
+   "shape": {"shaft": {"radius": 14, "length": 24, "z0": -12, "rot": [0, 1, 0, 90]}},
+   "joint": {"prismatic": [1, 0, 0]}, "drive": {"crankSlider": {"crank": "crank", "radius": 18, "rod": 62}}},
+  {"id": "rod", "name": "Connecting rod", "parent": "piston", "material": "anodized.orange",
+   "shape": {"box": {"size": [62, 8, 4], "chamfer": 1, "at": [-31, 0, 5]}},
+   "joint": {"revolute": [0, 0, 1]}, "drive": {"crankRod": {"crank": "crank", "radius": 18, "rod": 62}}}
+ ],
+ "steps": [
+  {"say": "A slider-crank turns spinning motion into back-and-forth motion, as in an engine or a pump.", "camera": "hero"},
+  {"say": "Input: the crank turns. Its pin travels in a circle of radius 18 mm.", "highlight": ["crank"], "spin": 1},
+  {"say": "The connecting rod (62 mm) links the crank pin to the piston and pushes and pulls it.", "highlight": ["rod"], "spin": 1},
+  {"say": "The piston slides along a straight line. Its stroke is twice the crank radius: 36 mm per turn.", "highlight": ["piston"], "spin": 1}
+ ]}
