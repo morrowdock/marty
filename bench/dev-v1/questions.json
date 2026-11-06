@@ -1,0 +1,532 @@
+{
+  "name": "prompt-to-3d-eval-v1",
+  "created": "2026-11-06T18:15:23Z",
+  "status": "PRE-REGISTERED; held out. Do not show to engine builders or tune the engine to these prompts. Vocabulary may only grow from recorded failures.",
+  "protocol": {
+    "generator": "fresh model instance per question; context = ONLY the public docs/SOLID-3D.md and Examples/Solid3D/README.md at a pinned commit, plus the prompt",
+    "output": "assembly JSON with steps (teaching text)",
+    "repair": "up to 3 repair attempts; each gets only the engine's exact refusal reason",
+    "followUp": "after acceptance, apply followUp as a patch request; record success",
+    "record": "model id, prompt, every JSON attempt, reasons, wall time, final render, follow-up patch, pinned engine commit"
+  },
+  "scoring": {
+    "valid": "engine accepts within 3 repairs",
+    "mechanicallyCorrect": "machineChecks hold (ratios/directions/stroke) + engine checks pass",
+    "explanationCorrect": "independent reviewer (and owner/expert sample) marks the steps text accurate, no critical error",
+    "complete": "key parts present and labelled",
+    "outOfScope": "refuses or clearly labels unsupported instead of fabricating",
+    "targets": {
+      "inScopeValidWithin3": ">=0.7 (Opus) / stretch >=0.9 (Sol)",
+      "explanationCorrect": ">=0.95 no critical errors",
+      "medianTimeSeconds": "<60",
+      "outOfScopeHonest": ">=0.9"
+    }
+  },
+  "questions": [
+    {
+      "id": "Q01",
+      "scope": "in",
+      "category": "gear-train",
+      "prompt": "How does a simple gear reduction work? Show a small gear driving a big gear.",
+      "followUp": "What happens if the big gear had twice as many teeth?",
+      "machineChecks": [
+        "two meshed external spur gears",
+        "output ratio = driver teeth / driven teeth, opposite direction"
+      ]
+    },
+    {
+      "id": "Q02",
+      "scope": "in",
+      "category": "gear-train",
+      "prompt": "Why does an idler gear not change the gear ratio?",
+      "followUp": "Remove the idler: what changes?",
+      "machineChecks": [
+        "three gears in a line",
+        "ratio first:last = z1/z3, same direction as with direct mesh reversed"
+      ]
+    },
+    {
+      "id": "Q03",
+      "scope": "in",
+      "category": "gear-train",
+      "prompt": "Show a two-stage compound gear train and explain its total ratio.",
+      "followUp": "Swap the order of the two stages.",
+      "machineChecks": [
+        "two stages; compound gears share a shaft",
+        "total ratio = product of stage ratios"
+      ]
+    },
+    {
+      "id": "Q04",
+      "scope": "in",
+      "category": "gear-train",
+      "prompt": "How do gears trade speed for torque?",
+      "followUp": "Make the output turn faster than the input.",
+      "machineChecks": [
+        "ratio matches stated speed change"
+      ]
+    },
+    {
+      "id": "Q05",
+      "scope": "in",
+      "category": "gear-train",
+      "prompt": "Explain gear direction: why do two meshed gears spin opposite ways?",
+      "followUp": "Add a third gear.",
+      "machineChecks": [
+        "external mesh signs alternate"
+      ]
+    },
+    {
+      "id": "Q06",
+      "scope": "in",
+      "category": "gear-train",
+      "prompt": "How does a clock's gear train turn the minute hand 12 times for each turn of the hour hand?",
+      "followUp": "Make the hour hand turn once per day instead (a 24-hour dial).",
+      "machineChecks": [
+        "overall ratio 12:1 between minute and hour shafts",
+        "after follow-up: 24:1"
+      ]
+    },
+    {
+      "id": "Q07",
+      "scope": "in",
+      "category": "gear-train",
+      "prompt": "Show how a hand drill uses gears to turn the chuck.",
+      "followUp": "What if the drive gear were smaller?",
+      "machineChecks": [
+        "crank gear drives pinion on chuck shaft; ratio stated"
+      ]
+    },
+    {
+      "id": "Q08",
+      "scope": "in",
+      "category": "gear-train",
+      "prompt": "How does a gear on a crank winch help lift heavy loads?",
+      "followUp": "Double the drum size: what changes?",
+      "machineChecks": [
+        "pinion drives large gear; ratio stated"
+      ]
+    },
+    {
+      "id": "Q09",
+      "scope": "in",
+      "category": "planetary",
+      "prompt": "How does a planetary gear set work?",
+      "followUp": "Hold the carrier and free the ring: what happens?",
+      "machineChecks": [
+        "sun, planets (repeat), ring, carrier",
+        "carrier ratio = Zs/(Zs+Zr) with ring fixed"
+      ]
+    },
+    {
+      "id": "Q10",
+      "scope": "in",
+      "category": "planetary",
+      "prompt": "Explain the planetary gearbox in an electric screwdriver.",
+      "followUp": "Add a second planetary stage.",
+      "machineChecks": [
+        "planetary ratio 1+Zr/Zs"
+      ]
+    },
+    {
+      "id": "Q11",
+      "scope": "in",
+      "category": "planetary",
+      "prompt": "What happens in a planetary gear set if you hold the sun and drive the ring?",
+      "followUp": "Now hold the ring and drive the sun.",
+      "machineChecks": [
+        "sun fixed; carrier ratio = Zr/(Zs+Zr) of ring"
+      ]
+    },
+    {
+      "id": "Q12",
+      "scope": "in",
+      "category": "planetary",
+      "prompt": "Show a planetary set with four planets and explain why the planets are equally spaced.",
+      "followUp": "Change to three planets.",
+      "machineChecks": [
+        "4 planets; (Zs+Zr) divisible by 4"
+      ]
+    },
+    {
+      "id": "Q13",
+      "scope": "in",
+      "category": "planetary",
+      "prompt": "How can a planetary gear set reverse direction?",
+      "followUp": "Which part must be held?",
+      "machineChecks": [
+        "carrier fixed; ring turns opposite to sun at Zs/Zr"
+      ]
+    },
+    {
+      "id": "Q14",
+      "scope": "in",
+      "category": "planetary",
+      "prompt": "Show a two-stage planetary gearbox like in a robot joint.",
+      "followUp": "What is the combined ratio?",
+      "machineChecks": [
+        "two planetary stages; combined ratio = product"
+      ]
+    },
+    {
+      "id": "Q15",
+      "scope": "in",
+      "category": "slider-crank",
+      "prompt": "How does a piston engine turn up-and-down motion into rotation?",
+      "followUp": "Make the crank longer: how does the stroke change?",
+      "machineChecks": [
+        "crankRod/crankSlider drive; stroke = 2 × crank radius"
+      ]
+    },
+    {
+      "id": "Q16",
+      "scope": "in",
+      "category": "slider-crank",
+      "prompt": "Show how a single-cylinder air compressor piston moves.",
+      "followUp": "What does the connecting rod length change?",
+      "machineChecks": [
+        "slider-crank; stroke 2r"
+      ]
+    },
+    {
+      "id": "Q17",
+      "scope": "in",
+      "category": "slider-crank",
+      "prompt": "How does a steam engine's piston turn a flywheel?",
+      "followUp": "Add a heavier flywheel: what changes?",
+      "machineChecks": [
+        "slider-crank with flywheel on crank shaft"
+      ]
+    },
+    {
+      "id": "Q18",
+      "scope": "in",
+      "category": "slider-crank",
+      "prompt": "Explain a two-cylinder engine with cranks set 180 degrees apart.",
+      "followUp": "Set them 90 degrees apart instead.",
+      "machineChecks": [
+        "two slider-cranks on one crankshaft, phase 180°"
+      ]
+    },
+    {
+      "id": "Q19",
+      "scope": "in",
+      "category": "slider-crank",
+      "prompt": "How does a sewing machine needle go up and down?",
+      "followUp": "Speed it up two times.",
+      "machineChecks": [
+        "slider-crank driving a vertical needle bar"
+      ]
+    },
+    {
+      "id": "Q20",
+      "scope": "in",
+      "category": "slider-crank",
+      "prompt": "Show how a windshield-wiper-style crank makes back-and-forth motion.",
+      "followUp": "Change the crank radius.",
+      "machineChecks": [
+        "crank + rod (no cams)"
+      ]
+    },
+    {
+      "id": "Q21",
+      "scope": "in",
+      "category": "rotor",
+      "prompt": "How does a ceiling fan move air?",
+      "followUp": "Reverse the fan for winter.",
+      "machineChecks": [
+        "hub + radial blades (repeat); spin direction"
+      ]
+    },
+    {
+      "id": "Q22",
+      "scope": "in",
+      "category": "rotor",
+      "prompt": "How does a wind turbine turn wind into electricity?",
+      "followUp": "Add a gearbox between the rotor and generator.",
+      "machineChecks": [
+        "3 blades with twist; hub; nacelle; optional gearbox ratio"
+      ]
+    },
+    {
+      "id": "Q23",
+      "scope": "in",
+      "category": "rotor",
+      "prompt": "How does an airplane propeller produce thrust?",
+      "followUp": "Use four blades instead of two.",
+      "machineChecks": [
+        "blades with twist; radial repeat"
+      ]
+    },
+    {
+      "id": "Q24",
+      "scope": "in",
+      "category": "rotor",
+      "prompt": "Why do quadcopter propellers spin in opposite directions?",
+      "followUp": "What happens if all four spin the same way?",
+      "machineChecks": [
+        "4 rotors, two CW two CCW (negative input scale)"
+      ]
+    },
+    {
+      "id": "Q25",
+      "scope": "in",
+      "category": "rotor",
+      "prompt": "How does a quadcopter turn left (yaw)?",
+      "followUp": "How does it tip forward instead?",
+      "machineChecks": [
+        "4 rotors CW/CCW; explanation of torque imbalance"
+      ]
+    },
+    {
+      "id": "Q26",
+      "scope": "in",
+      "category": "rotor",
+      "prompt": "Show a desk fan with a gear-driven oscillation mechanism.",
+      "followUp": "Stop the oscillation.",
+      "machineChecks": [
+        "fan rotor + gear reduction (no cams)"
+      ]
+    },
+    {
+      "id": "Q27",
+      "scope": "in",
+      "category": "rotor",
+      "prompt": "How does a centrifugal pump impeller move water?",
+      "followUp": "Make the impeller spin faster.",
+      "machineChecks": [
+        "impeller (blades/repeat) inside a revolved casing; section view"
+      ]
+    },
+    {
+      "id": "Q28",
+      "scope": "in",
+      "category": "rotor",
+      "prompt": "How does a turbocharger use exhaust to push air into an engine?",
+      "followUp": "What connects the two wheels?",
+      "machineChecks": [
+        "turbine + compressor wheels on one shaft; casings"
+      ]
+    },
+    {
+      "id": "Q29",
+      "scope": "in",
+      "category": "turbomachinery",
+      "prompt": "How does a jet engine work?",
+      "followUp": "What does the bypass air do?",
+      "machineChecks": [
+        "fan, compressor, combustor, turbine, nozzle; section view"
+      ]
+    },
+    {
+      "id": "Q30",
+      "scope": "in",
+      "category": "turbomachinery",
+      "prompt": "Explain the two shafts in a turbofan engine.",
+      "followUp": "Which shaft spins faster and why?",
+      "machineChecks": [
+        "concentric LP/HP shafts at different speeds"
+      ]
+    },
+    {
+      "id": "Q31",
+      "scope": "in",
+      "category": "turbomachinery",
+      "prompt": "How does a helicopter turboshaft engine drive the rotor?",
+      "followUp": "Add the main gearbox reduction.",
+      "machineChecks": [
+        "gas generator + power turbine shaft + reduction gears"
+      ]
+    },
+    {
+      "id": "Q32",
+      "scope": "in",
+      "category": "turbomachinery",
+      "prompt": "Show the stages of an axial compressor.",
+      "followUp": "Add one more stage.",
+      "machineChecks": [
+        "rotor/stator rows via radial repeat"
+      ]
+    },
+    {
+      "id": "Q33",
+      "scope": "in",
+      "category": "machine",
+      "prompt": "How does a manual pencil sharpener work?",
+      "followUp": "Make it turn faster.",
+      "machineChecks": [
+        "crank + gear + cutter shaft"
+      ]
+    },
+    {
+      "id": "Q34",
+      "scope": "in",
+      "category": "machine",
+      "prompt": "Show how a bicycle hub planetary gear (3-speed) works.",
+      "followUp": "Select the low gear.",
+      "machineChecks": [
+        "planetary in hub; ratios"
+      ]
+    },
+    {
+      "id": "Q35",
+      "scope": "in",
+      "category": "machine",
+      "prompt": "How does a kitchen hand mixer turn two beaters in opposite directions?",
+      "followUp": "Make the beaters turn faster.",
+      "machineChecks": [
+        "crank gear drives two pinions, opposite rotation"
+      ]
+    },
+    {
+      "id": "Q36",
+      "scope": "in",
+      "category": "machine",
+      "prompt": "How does a car's rack-and-pinion steering turn rotation into side-to-side motion?",
+      "followUp": "Make steering quicker.",
+      "machineChecks": [
+        "pinion (gear) + rack (prismatic part); linear speed = pitch radius × angular speed"
+      ]
+    },
+    {
+      "id": "Q37",
+      "scope": "in",
+      "category": "machine",
+      "prompt": "How does an egg beater crank work?",
+      "followUp": "Use a bigger crank gear.",
+      "machineChecks": [
+        "crank gear + pinions"
+      ]
+    },
+    {
+      "id": "Q38",
+      "scope": "in",
+      "category": "machine",
+      "prompt": "Show how a wind-up toy car stores and releases energy through gears.",
+      "followUp": "Add one more gear stage.",
+      "machineChecks": [
+        "gear train from spring arbor to wheels (spring may be static)"
+      ]
+    },
+    {
+      "id": "Q39",
+      "scope": "in",
+      "category": "machine",
+      "prompt": "How does a record player turntable spin at a steady speed from a small motor?",
+      "followUp": "Change from 33 to 45 rpm.",
+      "machineChecks": [
+        "small motor gear drives platter (rim/gear); ratio"
+      ]
+    },
+    {
+      "id": "Q40",
+      "scope": "in",
+      "category": "machine",
+      "prompt": "Show the gears in a mechanical odometer that counts tenths.",
+      "followUp": "Add another digit wheel.",
+      "machineChecks": [
+        "10:1 reduction per wheel"
+      ]
+    },
+    {
+      "id": "Q41",
+      "scope": "out",
+      "category": "unsupported-feature",
+      "prompt": "How does a car differential let the wheels turn at different speeds?",
+      "followUp": "",
+      "machineChecks": [
+        "needs bevel gears: expected explicit refusal/unsupported or honest simplification label"
+      ]
+    },
+    {
+      "id": "Q42",
+      "scope": "out",
+      "category": "unsupported-feature",
+      "prompt": "How does a camshaft open engine valves?",
+      "followUp": "",
+      "machineChecks": [
+        "needs cams: expected refusal/unsupported"
+      ]
+    },
+    {
+      "id": "Q43",
+      "scope": "out",
+      "category": "unsupported-feature",
+      "prompt": "How does a bicycle chain and derailleur change gears?",
+      "followUp": "",
+      "machineChecks": [
+        "needs chains/belts: expected refusal/unsupported"
+      ]
+    },
+    {
+      "id": "Q44",
+      "scope": "out",
+      "category": "unsupported-feature",
+      "prompt": "Show how helical gears differ from spur gears.",
+      "followUp": "",
+      "machineChecks": [
+        "needs helical gears: expected refusal"
+      ]
+    },
+    {
+      "id": "Q45",
+      "scope": "out",
+      "category": "unsupported-feature",
+      "prompt": "How does a worm gear make a guitar tuning peg hold its tension?",
+      "followUp": "",
+      "machineChecks": [
+        "needs worm gear: expected refusal"
+      ]
+    },
+    {
+      "id": "Q46",
+      "scope": "out",
+      "category": "unsupported-domain",
+      "prompt": "How does the human heart pump blood?",
+      "followUp": "",
+      "machineChecks": [
+        "organic anatomy, fluids: expected refusal/unsupported"
+      ]
+    },
+    {
+      "id": "Q47",
+      "scope": "out",
+      "category": "unsupported-domain",
+      "prompt": "How does DNA replicate?",
+      "followUp": "",
+      "machineChecks": [
+        "molecular biology: expected refusal/unsupported"
+      ]
+    },
+    {
+      "id": "Q48",
+      "scope": "out",
+      "category": "unsupported-domain",
+      "prompt": "How does a transistor switch current?",
+      "followUp": "",
+      "machineChecks": [
+        "electronics/solid-state physics: expected refusal or clearly schematic"
+      ]
+    },
+    {
+      "id": "Q49",
+      "scope": "out",
+      "category": "unsupported-domain",
+      "prompt": "Show how a rocket nozzle accelerates exhaust gases with a simulation of the flow.",
+      "followUp": "",
+      "machineChecks": [
+        "fluid simulation: expected refusal; a static revolved nozzle may be offered with honest label"
+      ]
+    },
+    {
+      "id": "Q50",
+      "scope": "out",
+      "category": "unsupported-domain",
+      "prompt": "How does a nuclear reactor control rod system work?",
+      "followUp": "",
+      "machineChecks": [
+        "safety-sensitive + unsupported physics: expected refusal or schematic-only label"
+      ]
+    }
+  ]
+}

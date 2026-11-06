@@ -8,7 +8,8 @@ them yet.
 
 ## Goal
 
-The MCP server works (early preview). The teaching loop is not built yet.
+The MCP server and a reference loop work (early preview). Results are not
+graded yet.
 This is what Marty is being built to do.
 
 You ask a learning question, for example "How does a planetary gearbox
@@ -33,8 +34,8 @@ the model. This is not tested yet.
 | Part | Status |
 | --- | --- |
 | MCP server (`marty-mcp`): engine tools for any MCP client | Early preview: `catalog`, `explain`, `check`, `component_check`, `patch`, `render` ([setup](docs/MCP-CLIENTS.md)) |
-| Marty loop: plan, author, check, repair, render, teach | Planned |
-| Bench: development questions for prompt-to-3D lessons | Planned |
+| Marty loop (`marty ask`, `marty bench`): plan, author, check, repair, render, teach, follow-up ([docs](docs/LOOP.md)) | Early preview |
+| Bench: the 50-question development set ([bench](bench/README.md)) | Early preview |
 
 The design of the MCP tool set is in [docs/DESIGN-MCP.md](docs/DESIGN-MCP.md).
 
