@@ -19,7 +19,7 @@ let package = Package(
         .target(name: "MartyEngine", dependencies: [.product(name: "MartyGraphics", package: "martygraphics")]),
         .target(name: "MartyMCP", dependencies: ["MartyEngine"]),
         .executableTarget(name: "marty-mcp", dependencies: ["MartyMCP"]),
-        .testTarget(name: "MartyEngineTests", dependencies: ["MartyEngine"]),
+        .testTarget(name: "MartyEngineTests", dependencies: ["MartyEngine", .product(name: "MartyGraphics", package: "martygraphics")]),
         .testTarget(name: "MartyMCPTests", dependencies: ["MartyMCP", "marty-mcp"]),
     ],
     swiftLanguageModes: [.v5]

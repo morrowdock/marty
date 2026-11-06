@@ -4,6 +4,9 @@ import MartyGraphics
 
 /// The engine tools behind the MCP server. Each method takes decoded tool arguments and returns a JSON object.
 /// Every number in a result comes from the MartyGraphics engine; this type only bounds inputs and shapes reports.
+/// A library refusal, carried as a result report.
+struct Refused: Error { let report: [String: Any]; init(_ r: [String: Any]) { report = r } }
+
 @MainActor
 public final class MartyEngine {
     /// Where `render` writes. `nil` turns `render` off.
@@ -44,17 +47,17 @@ public final class MartyEngine {
     // MARK: library
 
     /// The built-in components plus extra definitions, registered in order (a later one may use an earlier one).
-    func library(_ definitions: [Any]) throws -> Result<MGSolidLibrary, [String: Any]> {
+    func library(_ definitions: [Any]) throws -> Result<MGSolidLibrary, Refused> {
         guard definitions.count <= MartyLimits.componentsPerRequest else {
             throw ToolError("args.components.count", "at most \(MartyLimits.componentsPerRequest) component definitions")
         }
         var lib = MGSolidLibrary.builtIn
         for (i, def) in definitions.enumerated() {
             switch Decode.json(def, limit: MartyLimits.componentBytes, tooLarge: "component.bytes") {
-            case .failure(let r): return .failure(["ok": false, "reason": r.reason, "part": NSNull(), "component": i])
+            case .failure(let r): return .failure(Refused(["ok": false, "reason": r.reason, "part": NSNull(), "component": i]))
             case .success(let json):
                 if case .failure(let issue) = lib.register(json: json) {
-                    return .failure(["ok": false, "reason": issue.reason, "part": issue.part as Any, "component": i])
+                    return .failure(Refused(["ok": false, "reason": issue.reason, "part": issue.part as Any, "component": i]))
                 }
             }
         }
@@ -108,7 +111,7 @@ public final class MartyEngine {
 
     public func check(document: Any?, ref: String?, components: [Any]) throws -> [String: Any] {
         let lib: MGSolidLibrary
-        switch try library(components) { case .failure(let r): return r; case .success(let l): lib = l }
+        switch try library(components) { case .failure(let r): return r.report; case .success(let l): lib = l }
         switch try resolve(document: document, ref: ref) {
         case .failure(let r): return ["ok": false, "reason": r.reason, "part": NSNull()]
         case .success(let json): return checkJSON(json, lib).report
@@ -119,7 +122,7 @@ public final class MartyEngine {
 
     public func componentCheck(definition: Any, with values: [String: Double], components: [Any]) throws -> [String: Any] {
         var lib: MGSolidLibrary
-        switch try library(components) { case .failure(let r): return r; case .success(let l): lib = l }
+        switch try library(components) { case .failure(let r): return r.report; case .success(let l): lib = l }
         let json: MGJSON
         switch Decode.json(definition, limit: MartyLimits.componentBytes, tooLarge: "component.bytes") {
         case .failure(let r): return ["ok": false, "reason": r.reason, "part": NSNull()]
@@ -148,7 +151,7 @@ public final class MartyEngine {
 
     public func patch(document: Any?, ref: String?, patch: Any, components: [Any], returnDocument: Bool) throws -> [String: Any] {
         let lib: MGSolidLibrary
-        switch try library(components) { case .failure(let r): return r; case .success(let l): lib = l }
+        switch try library(components) { case .failure(let r): return r.report; case .success(let l): lib = l }
         let base: MGJSON
         switch try resolve(document: document, ref: ref) {
         case .failure(let r): return ["ok": false, "reason": r.reason, "part": NSNull(), "stage": "base"]
@@ -182,7 +185,7 @@ public final class MartyEngine {
 
     public func catalog(compact: Bool, components: [Any]) throws -> [String: Any] {
         let lib: MGSolidLibrary
-        switch try library(components) { case .failure(let r): return r; case .success(let l): lib = l }
+        switch try library(components) { case .failure(let r): return r.report; case .success(let l): lib = l }
         var primitives: [String: Any] = [:]
         for kind in MartyPrimitive.Kind.allCases {
             let list = MartyPrimitive.all.filter { $0.kind == kind }
@@ -205,7 +208,7 @@ public final class MartyEngine {
 
     public func explain(id: String, components: [Any]) throws -> [String: Any] {
         let lib: MGSolidLibrary
-        switch try library(components) { case .failure(let r): return r; case .success(let l): lib = l }
+        switch try library(components) { case .failure(let r): return r.report; case .success(let l): lib = l }
         if let c = lib[id] {
             return ["ok": true, "id": id, "type": "component", "entry": c.catalogEntry.any, "definition": c.source.any,
                     "use": ["id": "a", "use": id, "with": [String: Double]()]]

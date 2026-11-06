@@ -21,7 +21,7 @@ extension MartyEngine {
             width = p[0]; height = p[1]
         }
         let lib: MGSolidLibrary
-        switch try library(components) { case .failure(let r): return r; case .success(let l): lib = l }
+        switch try library(components) { case .failure(let r): return r.report; case .success(let l): lib = l }
         let json: MGJSON
         switch try resolve(document: document, ref: ref) {
         case .failure(let r): return ["ok": false, "reason": r.reason, "part": NSNull()]
@@ -43,7 +43,7 @@ extension MartyEngine {
         let out = root.appendingPathComponent(name, isDirectory: true)
         let manifestURL = out.appendingPathComponent("manifest.json")
         if let data = try? Data(contentsOf: manifestURL), let m = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            return ["ok": true, "ref": docRef, "directory": out.path, "files": m["outputs"] ?? [], "reused": true]
+            return ["ok": true, "ref": docRef, "directory": out.path, "files": m["outputs"] ?? [Any](), "reused": true]
         }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let tmp = root.appendingPathComponent(".partial-\(key.prefix(20))-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
@@ -56,7 +56,7 @@ extension MartyEngine {
         let result = try Self.renderFiles(doc, ref: docRef, into: tmp, width: width, height: height, loop: loop)
         var manifest: [String: Any] = ["engine": MartyPin.engineRevision, "ref": docRef, "title": doc.title,
                                        "parts": doc.assembly.parts.count, "steps": doc.steps.count,
-                                       "checks": report["checks"] ?? [:], "outputs": result.files]
+                                       "checks": report["checks"] ?? [String: Any](), "outputs": result.files]
         try MartyJSON.data(manifest).write(to: tmp.appendingPathComponent("manifest.json"))
         do { try FileManager.default.moveItem(at: tmp, to: out) }
         catch {
