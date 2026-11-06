@@ -41,6 +41,8 @@ public enum MartyJSON {
     public static func sanitized(_ v: Any?) -> Any {
         switch v {
         case nil: return NSNull()
+        // A parsed JSON boolean is an NSNumber that also casts to Double; keep it a boolean.
+        case let n as NSNumber where CFGetTypeID(n) == CFBooleanGetTypeID(): return n
         case let d as Double: return d.isFinite ? d : NSNull()
         case let a as [Any]: return a.map { sanitized($0) }
         case let m as [String: Any]: return m.mapValues { sanitized($0) }

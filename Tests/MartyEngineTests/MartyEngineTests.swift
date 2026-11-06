@@ -24,6 +24,12 @@ final class MartyEngineTests: XCTestCase {
         XCTAssertTrue(manifest.contains(MartyPin.engineRevision))
     }
 
+    func testParsedBooleansStayBooleans() throws {
+        let parsed = try JSONSerialization.jsonObject(with: Data(#"{"a":true,"b":[false,1,2.5],"c":{"d":false}}"#.utf8))
+        XCTAssertEqual(MartyJSON.string(parsed), #"{"a":true,"b":[false,1,2.5],"c":{"d":false}}"#)
+        XCTAssertEqual(MartyJSON.string(["x": Double.nan, "y": true]), #"{"x":null,"y":true}"#)
+    }
+
     func testEngineExampleModelsAreAccepted() throws {
         let e = MartyEngine(outputRoot: nil)
         for name in ["planetary.json", "planetary-components.json", "slider-crank.json", "slider-crank-component.json", "propeller.json"] {
