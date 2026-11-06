@@ -50,6 +50,11 @@ final class MCPServerTests: XCTestCase {
         XCTAssertEqual(try code("[1,2]"), -32600)
         XCTAssertEqual(try code(#"{"jsonrpc":"2.0","id":1,"method":"resources/list"}"#), -32601)
         XCTAssertEqual(try code(#"{"jsonrpc":"2.0","id":true,"method":"ping"}"#), -32600)
+        // A response (we send no requests) gets no answer, with or without an id.
+        XCTAssertNil(s.handle(line: Data(#"{"jsonrpc":"2.0","id":5,"result":{}}"#.utf8)))
+        // An id that is not a string or number is never echoed.
+        let odd = try XCTUnwrap(s.handle(line: Data(#"{"jsonrpc":"2.0","id":{"x":1}}"#.utf8)))
+        XCTAssertTrue(String(decoding: odd, as: UTF8.self).contains(#""id":null"#))
         XCTAssertEqual(try code(#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{}}"#), -32602)
         // Hostile nesting within the line limit is refused, not a crash.
         XCTAssertEqual(try code(String(repeating: "[", count: 200_000)), -32700)
@@ -73,7 +78,12 @@ final class MCPServerTests: XCTestCase {
         XCTAssertEqual(try call(s, "check", ["document": doc, "extra": 1]).result["error"] as? String, "args.unknown.extra")
         XCTAssertEqual(try call(s, "check", ["document": doc, "bad key\u{1F600}\"x": 1]).result["error"] as? String, "args.unknown.bad_key__x")
         XCTAssertEqual(try call(s, "explain", [:]).result["error"] as? String, "args.missing.id")
-        XCTAssertEqual(try call(s, "nope", [:]).result["error"] as? String, "tool.unknown")
+        let unknown = try XCTUnwrap(try send(s, ["jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": ["name": "nope", "arguments": [:]]]))
+        XCTAssertEqual((unknown["error"] as? [String: Any])?["code"] as? Int, -32602, "an unknown tool is a protocol error")
+        // Clients that send null for every optional argument mean "not given".
+        let nulls = try call(s, "check", ["document": doc, "ref": NSNull(), "components": NSNull()])
+        XCTAssertFalse(nulls.isError, "\(nulls.result)")
+        XCTAssertEqual(nulls.result["ok"] as? Bool, true)
         XCTAssertEqual(try call(s, "catalog", ["compact": 1]).result["error"] as? String, "args.type.compact")
         XCTAssertEqual(try call(s, "render", ["document": doc]).result["error"] as? String, "render.disabled")
         XCTAssertTrue(try call(s, "check", ["ref": "sha256:0"]).isError)

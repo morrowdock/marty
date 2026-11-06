@@ -11,10 +11,12 @@ import UniformTypeIdentifiers
 /// manifest). The directory name comes from a digest of the inputs, so the same request reuses the same result.
 extension MartyEngine {
     public func render(document: Any?, ref: String?, components: [Any], size: String?, loop: Bool) throws -> [String: Any] {
-        guard let root = outputRoot else { throw ToolError("render.disabled", "start the server with --output-dir DIR to render") }
+        guard let root = outputRoot else { throw ToolError("render.disabled", "this server was started with --no-render") }
         var width = 1280, height = 800
         if let s = size {
-            let p = s.split(separator: "x").compactMap { Int($0) }
+            let parts = s.split(separator: "x", omittingEmptySubsequences: false)
+            let digits = parts.allSatisfy { !$0.isEmpty && $0.count <= 4 && $0.unicodeScalars.allSatisfy { ("0"..."9").contains($0) } }
+            let p = digits ? parts.compactMap { Int($0) } : []
             guard p.count == 2, MartyLimits.renderWidth.contains(p[0]), MartyLimits.renderHeight.contains(p[1]) else {
                 throw ToolError("args.size", "size is WIDTHxHEIGHT, width 320-1920 and height 200-1200")
             }
@@ -37,13 +39,15 @@ extension MartyEngine {
             }
             return MartyJSON.ref(j)
         }
-        let key = MartyJSON.sha256(Data(([MartyPin.engineRevision, docRef, "\(width)x\(height)", loop ? "loop" : "still"] + componentKeys)
+        let key = MartyJSON.sha256(Data(([MartyPin.engineRevision, Self.renderFormat, docRef, "\(width)x\(height)", loop ? "loop" : "still"] + componentKeys)
             .joined(separator: "\n").utf8))
         let name = "render-" + key.prefix(20)
         let out = root.appendingPathComponent(name, isDirectory: true)
         let manifestURL = out.appendingPathComponent("manifest.json")
-        if let data = try? Data(contentsOf: manifestURL), let m = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            return ["ok": true, "ref": docRef, "directory": out.path, "files": m["outputs"] ?? [Any](), "reused": true]
+        if let data = try? Data(contentsOf: manifestURL), let m = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let outputs = m["outputs"] as? [Any] {
+            return ["ok": true, "ref": docRef, "directory": out.path, "reused": true,
+                    "files": outputs + [["file": "manifest.json", "bytes": data.count, "sha256": MartyJSON.sha256(data)]]]
         }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let tmp = root.appendingPathComponent(".partial-\(key.prefix(20))-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
@@ -54,20 +58,26 @@ extension MartyEngine {
 
         let started = Date()
         let result = try Self.renderFiles(doc, ref: docRef, into: tmp, width: width, height: height, loop: loop)
-        var manifest: [String: Any] = ["engine": MartyPin.engineRevision, "ref": docRef, "title": doc.title,
+        let manifest: [String: Any] = ["engine": MartyPin.engineRevision, "format": Self.renderFormat, "ref": docRef, "title": doc.title,
                                        "parts": doc.assembly.parts.count, "steps": doc.steps.count,
                                        "checks": report["checks"] ?? [String: Any](), "outputs": result.files]
-        try MartyJSON.data(manifest).write(to: tmp.appendingPathComponent("manifest.json"))
+        let manifestData = MartyJSON.data(manifest)
+        try manifestData.write(to: tmp.appendingPathComponent("manifest.json"))
         do { try FileManager.default.moveItem(at: tmp, to: out) }
         catch {
-            // Another process finished the same render first; its result is the same request.
+            // Another process finished the same render first; its result is the same request. Remove our copy.
             guard FileManager.default.fileExists(atPath: manifestURL.path) else { throw error }
+            try? FileManager.default.removeItem(at: tmp)
         }
         finished = true
-        return ["ok": true, "ref": docRef, "directory": out.path, "files": result.files, "reused": false,
+        let files = result.files + [["file": "manifest.json", "bytes": manifestData.count, "sha256": MartyJSON.sha256(manifestData)]]
+        return ["ok": true, "ref": docRef, "directory": out.path, "files": files, "reused": false,
                 "timing": ["seconds": Date().timeIntervalSince(started), "framesRendered": result.frames,
                            "renderSecondsPerFrame": result.frames > 0 ? result.seconds / Double(result.frames) : 0]]
     }
+
+    /// Changes whenever Marty's render sequence or manifest changes, so an old result is never reused for a new format.
+    public static let renderFormat = "marty-render/1"
 
     static func renderFiles(_ doc: MGSolidDocument, ref: String, into out: URL, width: Int, height: Int, loop: Bool)
         throws -> (files: [[String: Any]], frames: Int, seconds: Double) {
@@ -113,7 +123,7 @@ extension MartyEngine {
             }
             guard CGImageDestinationFinalize(gif) else { throw ToolError("render.gif") }
             let d = try Data(contentsOf: gifURL)
-            files.append(["file": "loop.gif", "bytes": d.count, "sha256": MartyJSON.sha256(d), "width": 640, "frames": n, "loopSeconds": 12.0])
+            files.append(["file": "loop.gif", "bytes": d.count, "sha256": MartyJSON.sha256(d), "width": 640, "frames": n, "delaySeconds": 0.1, "loopSeconds": 12.0])
         }
         let snapURL = out.appendingPathComponent("snapshot.json")
         try MGSolidSnapshot.make(doc.assembly, params: doc.defaults).jsonData().write(to: snapURL)

@@ -23,14 +23,14 @@ public final class MCPServer {
             return Self.error(id: nil, -32600, "request.object")
         }
         let id = msg["id"]
+        // Only a string or a number is an id we may echo; anything else is answered with id null.
+        let validID = id is String || (id as? NSNumber).map({ CFGetTypeID($0) != CFBooleanGetTypeID() }) == true
         guard msg["jsonrpc"] as? String == "2.0", let method = msg["method"] as? String else {
-            if id == nil, msg["result"] != nil || msg["error"] != nil { return nil }  // a response to us; we send no requests
-            return Self.error(id: id, -32600, "request.invalid")
+            if msg["method"] == nil, msg["result"] != nil || msg["error"] != nil { return nil }  // a response; we send no requests
+            return Self.error(id: validID ? id : nil, -32600, "request.invalid")
         }
         guard let id else { return nil }  // notifications (initialized, cancelled, ...) need no answer
-        guard id is String || (id as? NSNumber).map({ CFGetTypeID($0) != CFBooleanGetTypeID() }) == true else {
-            return Self.error(id: nil, -32600, "request.id")
-        }
+        guard validID else { return Self.error(id: nil, -32600, "request.id") }
         let params = msg["params"] as? [String: Any] ?? [:]
         switch method {
         case "initialize":
@@ -49,6 +49,8 @@ public final class MCPServer {
         case "tools/call":
             guard let name = params["name"] as? String else { return Self.error(id: id, -32602, "params.name") }
             guard let args = (params["arguments"] ?? [String: Any]()) as? [String: Any] else { return Self.error(id: id, -32602, "params.arguments") }
+            // An unknown tool is a protocol error in MCP, not a tool result.
+            guard Tools.all.contains(where: { $0.name == name }) else { return Self.error(id: id, -32602, "tool.unknown") }
             do {
                 return Self.result(id: id, Self.toolResult(try Tools.call(name, args, engine: engine), isError: false))
             } catch let e as ToolError {

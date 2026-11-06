@@ -19,8 +19,10 @@ struct Tool {
 }
 
 enum Schema {
+    /// `anyOf` rather than a type array, which some schema converters (for example to the OpenAPI subset) reject.
+    static let objectOrString: [[String: Any]] = [["type": "object"], ["type": "string"]]
     static let document: [String: Any] = [
-        "type": ["object", "string"],
+        "anyOf": objectOrString,
         "description": "A solid assembly document (MartyGraphics format v1) as a JSON object, or a string that holds it. At most 64 KiB.",
     ]
     static let ref: [String: Any] = [
@@ -29,7 +31,7 @@ enum Schema {
     ]
     static let components: [String: Any] = [
         "type": "array", "maxItems": MartyLimits.componentsPerRequest,
-        "items": ["type": ["object", "string"]],
+        "items": ["anyOf": objectOrString],
         "description": "Extra component definitions (each at most 16 KiB), registered in order after the built-in library.",
     ]
 }
@@ -50,19 +52,19 @@ enum Tools {
              required: [], readOnly: true),
         Tool(name: "component_check", title: "Check a component definition",
              description: "Validate a new component definition, compile it alone, instantiate it with `with` values and run the engine checks. Returns the catalog entry and a ready `use` entry.",
-             properties: ["definition": ["type": ["object", "string"], "description": "The component definition (at most 16 KiB)."],
+             properties: ["definition": ["anyOf": Schema.objectOrString, "description": "The component definition (at most 16 KiB)."],
                           "with": ["type": "object", "additionalProperties": ["type": "number"], "description": "Parameter values."],
                           "components": Schema.components],
              required: ["definition"], readOnly: true),
         Tool(name: "patch", title: "Patch a document",
              description: "Apply an engine patch ({params, parts (merge by id; null removes a field), constraints, steps, title}) to a document and check the result. Use it for what-if questions. Returns the new check result and its ref.",
              properties: ["document": Schema.document, "ref": Schema.ref,
-                          "patch": ["type": ["object", "string"], "description": "The patch (at most 16 KiB)."],
+                          "patch": ["anyOf": Schema.objectOrString, "description": "The patch (at most 16 KiB)."],
                           "return_document": ["type": "boolean", "description": "Also return the patched document (default false)."],
                           "components": Schema.components],
              required: ["patch"], readOnly: true),
         Tool(name: "render", title: "Render a document",
-             description: "Render an accepted document: hero.png, exploded.png, one captioned still per step, snapshot.json and manifest.json (and loop.gif when loop is true). Returns the output directory and the files with SHA-256 digests. A refused document returns the check result.",
+             description: "Render an accepted document: hero.png, exploded.png, one captioned still per step, snapshot.json and manifest.json (and loop.gif when loop is true). Returns the output directory and every file with its SHA-256 digest. A document that check refuses (also check.meshOpen or check.gearsInterpenetrate) is not rendered; the result is its check report.",
              properties: ["document": Schema.document, "ref": Schema.ref, "components": Schema.components,
                           "size": ["type": "string", "pattern": "^[0-9]{3,4}x[0-9]{3,4}$", "description": "WIDTHxHEIGHT (default 1280x800; at most 1920x1200)."],
                           "loop": ["type": "boolean", "description": "Also render a 12-second loop GIF (120 frames; slower). Default false."]],
@@ -70,8 +72,10 @@ enum Tools {
     ]
 
     /// Runs one tool. A `ToolError` is a wrong request; any other result (also a refusal) is a normal result.
-    @MainActor static func call(_ name: String, _ args: [String: Any], engine: MartyEngine) throws -> [String: Any] {
+    @MainActor static func call(_ name: String, _ given: [String: Any], engine: MartyEngine) throws -> [String: Any] {
         guard let tool = all.first(where: { $0.name == name }) else { throw ToolError("tool.unknown", String(name.prefix(64))) }
+        // Some clients send null for every optional argument; null means "not given".
+        let args = given.filter { !($0.value is NSNull) }
         let allowed = Set(tool.properties.keys)
         if let extra = args.keys.sorted().first(where: { !allowed.contains($0) }) {
             throw ToolError("args.unknown.\(token(extra))")
@@ -107,7 +111,9 @@ enum Tools {
 
     static func string(_ v: Any?, _ key: String) throws -> String? {
         guard let v else { return nil }
-        guard let s = v as? String, s.utf8.count <= MartyLimits.idLength else { throw ToolError("args.type.\(key)", "a string of at most \(MartyLimits.idLength) bytes") }
+        guard let s = v as? String, s.count <= MartyLimits.idLength, s.utf8.count <= 4 * MartyLimits.idLength else {
+            throw ToolError("args.type.\(key)", "a string of at most \(MartyLimits.idLength) characters")
+        }
         return s
     }
 

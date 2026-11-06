@@ -174,7 +174,11 @@ public final class MartyEngine {
             // The engine refused the patch; the base document is unchanged.
             return ["ok": false, "reason": issue.reason, "part": issue.part as Any, "stage": "patch", "baseRef": baseRef]
         case .success(let patched):
-            var r = checkJSON(patched.source, lib).report
+            // The engine already compiled the patched document; report on it without compiling it again.
+            let ref = remember(patched.source)
+            var r = Self.report(patched)
+            r["ref"] = ref
+            r["source"] = ["bytes": patched.source.canonicalData.count, "sha256": String(ref.dropFirst(7))]
             r["baseRef"] = baseRef
             if returnDocument { r["document"] = patched.source.any }
             return r

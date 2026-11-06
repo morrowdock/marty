@@ -44,6 +44,52 @@ final class MartyEngineTests: XCTestCase {
         XCTAssertEqual((p["steps"] as? [String])?.count, 5)
     }
 
+    /// Marty's report equals `marty-solid check` at the pinned commit (golden files from the engine's own CLI,
+    /// binary sha256 7b5a4491...), field by field, for every engine example model.
+    func testReportMatchesTheEngineCLI() throws {
+        func same(_ a: Any?, _ b: Any?, _ path: String) {
+            switch (a, b) {
+            case let (x as [String: Any], y as [String: Any]):
+                XCTAssertEqual(Set(x.keys), Set(y.keys), path)
+                for k in x.keys { same(x[k], y[k], path + "." + k) }
+            case let (x as [Any], y as [Any]):
+                XCTAssertEqual(x.count, y.count, path)
+                for (i, (p, q)) in zip(x, y).enumerated() { same(p, q, "\(path)[\(i)]") }
+            case let (x as NSNumber, y as NSNumber):
+                XCTAssertEqual(x.doubleValue, y.doubleValue, accuracy: 1e-9 * max(1, abs(x.doubleValue)), path)
+            default:
+                XCTAssertEqual("\(a ?? "nil")", "\(b ?? "nil")", path)
+            }
+        }
+        let e = MartyEngine(outputRoot: nil)
+        for name in ["planetary", "planetary-components", "slider-crank", "slider-crank-component", "propeller"] {
+            let golden = try object(try fixture("cli-76104dea/\(name).check.json"))
+            let parsed = try JSONSerialization.jsonObject(with: MartyJSON.data(try e.check(document: try fixture("\(name).json"), ref: nil, components: [])))
+            var mine = try XCTUnwrap(parsed as? [String: Any])
+            for k in ["ref", "source", "part", "partIds"] { mine.removeValue(forKey: k) }
+            var cli = golden
+            cli.removeValue(forKey: "file")
+            same(mine, cli, name)
+        }
+    }
+
+    /// Drives and constraints with object bodies name their missing keys too.
+    func testDriveAndConstraintKeysMatchTheEngine() throws {
+        let e = MartyEngine(outputRoot: nil)
+        let cases: [(String, String, String)] = [
+            ("follow", #""ratio":-0.5"#, "part.drive.follow.missing.ratio"),
+            ("crankSlider", #""rod":62"#, "part.drive.crankSlider.missing.rod"),
+            ("gearMesh", #","b":"wheel""#, "constraint.gearMesh.missing.b"),
+        ]
+        for (id, cut, expected) in cases {
+            let p = try XCTUnwrap(MartyPrimitive.all.first { $0.id == id })
+            XCTAssertTrue(p.example.contains(cut), id)
+            let broken = p.example.replacingOccurrences(of: cut, with: "")
+                .replacingOccurrences(of: ",}", with: "}").replacingOccurrences(of: "{,", with: "{")
+            XCTAssertEqual(try e.check(document: broken, ref: nil, components: [])["reason"] as? String, expected, "\(id): \(broken)")
+        }
+    }
+
     func testEveryPrimitiveExampleIsAccepted() throws {
         let e = MartyEngine(outputRoot: nil)
         for p in MartyPrimitive.all {
@@ -202,12 +248,13 @@ final class MartyEngineTests: XCTestCase {
         let r = try e.render(document: doc, ref: nil, components: [], size: "640x400", loop: false)
         XCTAssertEqual(r["ok"] as? Bool, true, "\(r)")
         let names = try XCTUnwrap(r["files"] as? [[String: Any]]).compactMap { $0["file"] as? String }
-        XCTAssertEqual(names, ["hero.png", "exploded.png", "step-1.png", "step-2.png", "step-3.png", "step-4.png", "snapshot.json"])
+        XCTAssertEqual(names, ["hero.png", "exploded.png", "step-1.png", "step-2.png", "step-3.png", "step-4.png", "snapshot.json", "manifest.json"])
         let dir = URL(fileURLWithPath: try XCTUnwrap(r["directory"] as? String))
         XCTAssertEqual(dir.deletingLastPathComponent().standardizedFileURL.path, root.standardizedFileURL.path)
         XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("manifest.json").path))
         let again = try e.render(document: nil, ref: r["ref"] as? String, components: [], size: "640x400", loop: false)
         XCTAssertEqual(again["reused"] as? Bool, true)
+        XCTAssertEqual(MartyJSON.data(again["files"] ?? []), MartyJSON.data(r["files"] ?? []), "reuse returns the same files and digests")
         XCTAssertEqual(again["directory"] as? String, r["directory"] as? String)
         // Nothing but the result directory is left behind.
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [dir.lastPathComponent])
@@ -220,8 +267,10 @@ final class MartyEngineTests: XCTestCase {
         }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("marty-render-tests-\(UUID().uuidString)")
         let on = MartyEngine(outputRoot: root)
-        XCTAssertThrowsError(try on.render(document: "{}", ref: nil, components: [], size: "9999x10", loop: false)) {
-            XCTAssertEqual(($0 as? ToolError)?.reason, "args.size")
+        for bad in ["9999x10", "640x400x", "+640x400", "1280xabcx800", "640x", "x400", "６４０x400"] {
+            XCTAssertThrowsError(try on.render(document: "{}", ref: nil, components: [], size: bad, loop: false), bad) {
+                XCTAssertEqual(($0 as? ToolError)?.reason, "args.size")
+            }
         }
         let refused = try on.render(document: #"{"v":1}"#, ref: nil, components: [], size: nil, loop: false)
         XCTAssertEqual(refused["ok"] as? Bool, false)

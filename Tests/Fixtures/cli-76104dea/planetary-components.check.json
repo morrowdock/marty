@@ -1,0 +1,36 @@
+{
+  "checks" : {
+    "gearPairs" : 6,
+    "gearsEngage" : true,
+    "maxPenetrationMM" : -0.21520590891061531,
+    "meshesClosed" : true,
+    "minClearanceMM" : 0.21520590891061531,
+    "openMeshes" : [
+
+    ],
+    "toleranceMM" : 0.02
+  },
+  "file" : {
+    "lines" : 12,
+    "sha256" : "bddaaa590ca70d2d603080726fbd70c950309e81e67121228d55971232416c5c"
+  },
+  "ok" : true,
+  "parts" : 13,
+  "ratios" : {
+    "stage.carrier" : 0.2857142857142857,
+    "stage.planet1" : -0.95238095238095233,
+    "stage.planet2" : -0.95238095238095233,
+    "stage.planet3" : -0.95238095238095233,
+    "stage.sun" : 1
+  },
+  "reason" : null,
+  "steps" : [
+    "Three planet gears ride on a carrier between a sun gear and a fixed ring gear.",
+    "Input: the brass sun gear (24 teeth) turns.",
+    "Each planet (18 teeth) meshes with the sun and rolls inside the fixed ring (60 teeth).",
+    "Output: the carrier turns 24 \/ (24 + 60) = 2\/7 of a turn per sun turn, in the same direction.",
+    "Exploded along the shaft axis: base, ring, sun, planets and carrier."
+  ],
+  "title" : "Planetary gear set (from components)",
+  "triangles" : 50372
+}

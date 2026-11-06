@@ -21,14 +21,23 @@ no judgment of their own: every number in a result comes from the engine.
    can differ between GPUs and operating system versions.
 2. **Bounded.** A request line is at most 1 MiB. A document is at most the
    engine limit (64 KiB). A component definition is at most 16 KiB, and a
-   request carries at most 8 of them. A patch is at most 16 KiB. Larger input
-   is refused before it is parsed.
+   request carries at most 8 of them. A patch is at most 16 KiB. A line over
+   1 MiB is refused before it is parsed. A document, component or patch sent
+   as a string is measured as sent, before it is parsed. One sent as a JSON
+   object is parsed with the request and then measured in its canonical
+   (compact, sorted-key) form; `source.bytes` in a result is that canonical
+   size.
 3. **No network and no shell.** The server reads JSON-RPC from standard input
    and writes to standard output. It never opens a socket and never runs a
    process. Model text is only data for the engine parser.
 4. **Writes only to its own directory.** `render` writes into a new
-   subdirectory of the output root that the server got at launch
-   (`--output-dir`). A tool argument can never choose a path.
+   subdirectory `render-<digest>` of the output root: `--output-dir`, or by
+   default `~/Library/Caches/marty-mcp/renders` (`--no-render` turns `render`
+   off). A tool argument can never choose a path. The digest covers the engine
+   pin, Marty's render format version, the document, the components, the size
+   and the loop flag, so the same request reuses the same directory. A
+   process that is killed during a render can leave a `.partial-*` directory;
+   it is safe to delete.
 5. **Refusal is a result, not an error.** A document that the engine refuses
    gives `ok: false` with `reason` (a stable dotted token, for example
    `constraint.gearMesh.distance`) and `part`. A tool error (`isError: true`)
@@ -71,9 +80,15 @@ and the base's own reason; a refused patch gives `stage: "patch"`.
 
 **Primitives.** The engine has no public list of primitive kinds and their
 keys. Marty keeps that list, taken from docs/SOLID-3D.md at the pin, and tests
-hold it to the engine: every example must be accepted, every missing required
-key must be named in the refusal, and every optional key must be known to the
-parser.
+hold it to the engine: every example must be accepted; for shapes, and for the
+drives and constraints with object bodies (`follow`, `crankSlider`,
+`gearMesh`), a missing required key must be named in the refusal; and every
+optional shape key must be known to the parser.
+
+**Render refuses what check refuses.** `render` runs the same report as
+`check` and renders only an accepted document, so it also refuses
+`check.meshOpen` and `check.gearsInterpenetrate`. The engine's own CLI render
+does not run those two checks.
 
 Later tools, when the engine supports them:
 
@@ -110,7 +125,8 @@ tests them against the same example models as the CLI.
 - JSON-RPC 2.0, one message per line on standard input and output (MCP stdio
   transport). Logs go to standard error only.
 - Methods: `initialize`, `notifications/initialized`, `ping`, `tools/list`,
-  `tools/call`. Other requests give `-32601`. Unknown notifications (for
+  `tools/call`. Other requests give `-32601`. An unknown tool name in
+  `tools/call` gives `-32602`. A `null` argument means "not given". Unknown notifications (for
   example `notifications/cancelled`) are ignored.
 - Protocol versions: the server answers with the client's version when it
   supports it (2025-11-25 or 2025-06-18), else with 2025-11-25. Both use the

@@ -31,7 +31,8 @@ let usage = """
     var splitter = LineSplitter()
     let stdin = FileHandle.standardInput, stdout = FileHandle.standardOutput
     while true {
-        let chunk = stdin.availableData
+        // At most 64 KiB per read, so a large file on standard input never sits in memory at once.
+        let chunk = (try? stdin.read(upToCount: 65536)) ?? Data()
         if chunk.isEmpty { return 0 }  // end of input: the client closed the pipe
         for line in splitter.feed(chunk) {
             let reply = line.map { server.handle(line: $0) } ?? MCPServer.tooLarge
