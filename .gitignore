@@ -1,0 +1,20 @@
+# SwiftPM / Xcode
+.build/
+.swiftpm/
+/Packages/
+*.xcodeproj/
+xcuserdata/
+DerivedData/
+Package.resolved.bak
+
+# Local run output (receipts and renders stay out of git unless a PR adds them on purpose)
+/runs/
+/out/
+
+# macOS
+.DS_Store
+
+# Secrets must never be committed
+.env
+*.pem
+*.key
