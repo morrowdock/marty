@@ -44,11 +44,14 @@ extension MartyEngine {
         let name = "render-" + key.prefix(20)
         let out = root.appendingPathComponent(name, isDirectory: true)
         let manifestURL = out.appendingPathComponent("manifest.json")
-        if let data = try? Data(contentsOf: manifestURL), let m = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let outputs = m["outputs"] as? [Any] {
+        /// A finished render of the same request: its own manifest, as written.
+        func reused() -> [String: Any]? {
+            guard let data = try? Data(contentsOf: manifestURL), let m = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let outputs = m["outputs"] as? [Any] else { return nil }
             return ["ok": true, "ref": docRef, "directory": out.path, "reused": true,
                     "files": outputs + [["file": "manifest.json", "bytes": data.count, "sha256": MartyJSON.sha256(data)]]]
         }
+        if let r = reused() { return r }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let tmp = root.appendingPathComponent(".partial-\(key.prefix(20))-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
         try? FileManager.default.removeItem(at: tmp)
@@ -65,9 +68,11 @@ extension MartyEngine {
         try manifestData.write(to: tmp.appendingPathComponent("manifest.json"))
         do { try FileManager.default.moveItem(at: tmp, to: out) }
         catch {
-            // Another process finished the same render first; its result is the same request. Remove our copy.
-            guard FileManager.default.fileExists(atPath: manifestURL.path) else { throw error }
+            // Another process finished the same render first: remove our copy and return the files that are there.
+            guard let r = reused() else { throw error }
             try? FileManager.default.removeItem(at: tmp)
+            finished = true
+            return r
         }
         finished = true
         let files = result.files + [["file": "manifest.json", "bytes": manifestData.count, "sha256": MartyJSON.sha256(manifestData)]]

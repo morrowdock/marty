@@ -111,7 +111,8 @@ enum Tools {
 
     static func string(_ v: Any?, _ key: String) throws -> String? {
         guard let v else { return nil }
-        guard let s = v as? String, s.count <= MartyLimits.idLength, s.utf8.count <= 4 * MartyLimits.idLength else {
+        // JSON Schema maxLength counts code points, so count Unicode scalars (not characters or bytes).
+        guard let s = v as? String, s.unicodeScalars.count <= MartyLimits.idLength else {
             throw ToolError("args.type.\(key)", "a string of at most \(MartyLimits.idLength) characters")
         }
         return s

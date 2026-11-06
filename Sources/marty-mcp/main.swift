@@ -5,10 +5,11 @@ import MartyEngine
 import MartyMCP
 
 let usage = """
-    Usage: marty-mcp [--output-dir DIR]
+    Usage: marty-mcp [--output-dir DIR | --no-render] [--version]
       Speaks MCP (JSON-RPC 2.0, one message per line) on standard input and output.
       --output-dir DIR   where `render` writes (default: ~/Library/Caches/marty-mcp/renders).
       --no-render        turn the render tool off.
+      --version          print the server version and the engine commit, then stop.
     """
 
 @MainActor func run() -> Int32 {
@@ -29,12 +30,15 @@ let usage = """
     }
     let server = MCPServer(engine: MartyEngine(outputRoot: output))
     var splitter = LineSplitter()
-    let stdin = FileHandle.standardInput, stdout = FileHandle.standardOutput
+    let stdout = FileHandle.standardOutput
+    var buffer = [UInt8](repeating: 0, count: 65536)
     while true {
-        // At most 64 KiB per read, so a large file on standard input never sits in memory at once.
-        let chunk = (try? stdin.read(upToCount: 65536)) ?? Data()
-        if chunk.isEmpty { return 0 }  // end of input: the client closed the pipe
-        for line in splitter.feed(chunk) {
+        // POSIX read returns as soon as any bytes are available (an interactive client sends one short line and
+        // waits), and at most 64 KiB, so a large file on standard input never sits in memory at once.
+        let n = buffer.withUnsafeMutableBytes { read(STDIN_FILENO, $0.baseAddress, $0.count) }
+        if n < 0 { if errno == EINTR { continue }; return 1 }
+        if n == 0 { return 0 }  // end of input: the client closed the pipe
+        for line in splitter.feed(Data(buffer[0..<n])) {
             let reply = line.map { server.handle(line: $0) } ?? MCPServer.tooLarge
             if let reply { stdout.write(reply + Data([0x0A])) }
         }

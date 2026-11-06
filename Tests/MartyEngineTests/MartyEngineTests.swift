@@ -56,6 +56,8 @@ final class MartyEngineTests: XCTestCase {
                 XCTAssertEqual(x.count, y.count, path)
                 for (i, (p, q)) in zip(x, y).enumerated() { same(p, q, "\(path)[\(i)]") }
             case let (x as NSNumber, y as NSNumber):
+                let xb = CFGetTypeID(x) == CFBooleanGetTypeID(), yb = CFGetTypeID(y) == CFBooleanGetTypeID()
+                XCTAssertEqual(xb, yb, "\(path): boolean against number")
                 XCTAssertEqual(x.doubleValue, y.doubleValue, accuracy: 1e-9 * max(1, abs(x.doubleValue)), path)
             default:
                 XCTAssertEqual("\(a ?? "nil")", "\(b ?? "nil")", path)
@@ -73,20 +75,34 @@ final class MartyEngineTests: XCTestCase {
         }
     }
 
-    /// Drives and constraints with object bodies name their missing keys too.
+    /// Drives and constraints with object bodies name every missing required key and refuse an unknown key.
     func testDriveAndConstraintKeysMatchTheEngine() throws {
         let e = MartyEngine(outputRoot: nil)
-        let cases: [(String, String, String)] = [
-            ("follow", #""ratio":-0.5"#, "part.drive.follow.missing.ratio"),
-            ("crankSlider", #""rod":62"#, "part.drive.crankSlider.missing.rod"),
-            ("gearMesh", #","b":"wheel""#, "constraint.gearMesh.missing.b"),
-        ]
-        for (id, cut, expected) in cases {
+        /// Applies `edit` to the first object stored under `key` anywhere in `value`.
+        func mutate(_ value: Any, _ key: String, _ edit: (inout [String: Any]) -> Void, _ done: inout Bool) -> Any {
+            if var o = value as? [String: Any] {
+                if !done, var body = o[key] as? [String: Any] { edit(&body); o[key] = body; done = true; return o }
+                for k in o.keys.sorted() { o[k] = mutate(o[k]!, key, edit, &done) }
+                return o
+            }
+            if let a = value as? [Any] { return a.map { mutate($0, key, edit, &done) } }
+            return value
+        }
+        let bodies: [(id: String, prefix: String)] = [("follow", "part.drive.follow"), ("crankSlider", "part.drive.crankSlider"),
+                                                      ("crankRod", "part.drive.crankRod"), ("gearMesh", "constraint.gearMesh")]
+        for (id, prefix) in bodies {
             let p = try XCTUnwrap(MartyPrimitive.all.first { $0.id == id })
-            XCTAssertTrue(p.example.contains(cut), id)
-            let broken = p.example.replacingOccurrences(of: cut, with: "")
-                .replacingOccurrences(of: ",}", with: "}").replacingOccurrences(of: "{,", with: "{")
-            XCTAssertEqual(try e.check(document: broken, ref: nil, components: [])["reason"] as? String, expected, "\(id): \(broken)")
+            func reason(_ edit: (inout [String: Any]) -> Void) throws -> String {
+                var done = false
+                let doc = mutate(try object(p.example), id, edit, &done)
+                XCTAssertTrue(done, id)
+                return try e.check(document: doc, ref: nil, components: [])["reason"] as? String ?? "accepted"
+            }
+            for key in p.required {
+                XCTAssertEqual(try reason { $0.removeValue(forKey: key) }, "\(prefix).missing.\(key)", id)
+            }
+            XCTAssertEqual(try reason { $0["bogusKey"] = 1 }, "\(prefix).unknown.bogusKey", id)
+            for key in p.optional { XCTAssertNotEqual(try reason { $0[key] = "wrong type" }, "\(prefix).unknown.\(key)", id) }
         }
     }
 

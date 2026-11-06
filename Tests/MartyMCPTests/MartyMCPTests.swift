@@ -120,6 +120,33 @@ final class MCPProcessTests: XCTestCase {
         return (p.terminationStatus, String(decoding: data, as: UTF8.self))
     }
 
+    /// A real client keeps standard input open and waits for each answer; the server must answer a short line at once.
+    func testAnswersWhileInputStaysOpen() throws {
+        let p = Process()
+        p.executableURL = binary
+        p.arguments = ["--no-render"]
+        let stdin = Pipe(), stdout = Pipe()
+        p.standardInput = stdin; p.standardOutput = stdout; p.standardError = Pipe()
+        try p.run()
+        defer { if p.isRunning { p.terminate() } }
+        let got = DispatchSemaphore(value: 0)
+        var first = Data()
+        DispatchQueue.global().async {
+            while !first.contains(0x0A) {
+                let d = stdout.fileHandleForReading.availableData
+                if d.isEmpty { break }
+                first.append(d)
+            }
+            got.signal()
+        }
+        stdin.fileHandleForWriting.write(Data((#"{"jsonrpc":"2.0","id":1,"method":"ping"}"# + "\n").utf8))
+        XCTAssertEqual(got.wait(timeout: .now() + 10), .success, "no answer while standard input stays open")
+        XCTAssertTrue(String(decoding: first, as: UTF8.self).hasPrefix(#"{"id":1,"jsonrpc":"2.0","result":{}}"#), String(decoding: first, as: UTF8.self))
+        try stdin.fileHandleForWriting.close()
+        p.waitUntilExit()
+        XCTAssertEqual(p.terminationStatus, 0)
+    }
+
     func testSessionIsReproducibleAcrossProcesses() throws {
         XCTAssertTrue(FileManager.default.isExecutableFile(atPath: binary.path), binary.path)
         let doc = #"{"v":1,"kind":"assembly","title":"Pair","units":"mm","parts":[{"id":"g","use":"spurPair","with":{"wheelTeeth":40}}]}"#

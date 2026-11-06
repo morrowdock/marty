@@ -82,8 +82,9 @@ and the base's own reason; a refused patch gives `stage: "patch"`.
 keys. Marty keeps that list, taken from docs/SOLID-3D.md at the pin, and tests
 hold it to the engine: every example must be accepted; for shapes, and for the
 drives and constraints with object bodies (`follow`, `crankSlider`,
-`gearMesh`), a missing required key must be named in the refusal; and every
-optional shape key must be known to the parser.
+`crankRod`, `gearMesh`), every missing required key must be named in the
+refusal, an unknown key must be refused, and every optional key must be known
+to the parser.
 
 **Render refuses what check refuses.** `render` runs the same report as
 `check` and renders only an accepted document, so it also refuses
