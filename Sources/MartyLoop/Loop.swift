@@ -79,7 +79,8 @@ public final class MartyLoop {
     static func summary(_ r: [String: Any]) -> [String: Any] {
         var s: [String: Any] = [:]
         for k in ["ok", "reason", "part", "title", "partIds", "ratios"] { if let v = r[k] { s[k] = v } }
-        if let c = r["checks"] as? [String: Any] { s["checks"] = c.filter { ["gearPairs", "gearsEngage", "meshesClosed", "minClearanceMM"].contains($0.key) } }
+        // Only pass/fail checks: clearances are engine checks, not teaching facts, and they invite noise in answers.
+        if let c = r["checks"] as? [String: Any] { s["checks"] = c.filter { ["gearPairs", "gearsEngage", "meshesClosed"].contains($0.key) } }
         return s
     }
 
@@ -117,7 +118,7 @@ public final class MartyLoop {
             parts.append(Self.compact(e))
         }
         let authorSystem = MartyPrompts.authorSystem(parts: parts.isEmpty ? "(none chosen; use the format guide)" : parts.joined(separator: "\n"),
-                                                     example: MartyExamples.spurReduction)
+                                                     example: MartyExamples.formatExample)
         let planText = Self.compact(plan)
         var user = MartyPrompts.authorUser(question: question, plan: planText)
         var accepted: [String: Any]? = nil
@@ -231,6 +232,7 @@ public final class MartyLoop {
 }
 
 /// Small accepted documents used as format examples in prompts. Tests check each one with the engine.
+/// The example is about no bench subject (no gears, cranks or blades), so it shows the format without giving away an answer.
 public enum MartyExamples {
-    public static let spurReduction = #"{"v":1,"kind":"assembly","title":"Spur gear reduction","units":"mm","parts":[{"id":"pair","use":"spurPair","with":{"pinionTeeth":12,"wheelTeeth":36}}],"steps":[{"say":"A small pinion drives a larger wheel.","camera":"hero"},{"say":"Input: the pinion (12 teeth) turns once.","highlight":["pair.pinion"],"spin":1},{"say":"The wheel (36 teeth) turns 12/36 = 1/3 of a turn, the other way.","highlight":["pair.wheel"],"spin":1}]}"#
+    public static let formatExample = #"{"v":1,"kind":"assembly","title":"A shaft held in two bearings","units":"mm","parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}},{"id":"label","name":"Name plate","material":"plastic.teal","shape":{"box":{"size":[40,4,14],"chamfer":0.5}},"at":[0,-70,7]}],"steps":[{"say":"Two bearings hold a shaft in line so that it can turn freely.","camera":"hero"},{"say":"Input: the shaft turns. The bearings and the base stay still.","highlight":["shaft.input"],"spin":1},{"say":"Exploded: the base, the bearings and the shaft.","explode":1,"camera":"iso"}]}"#
 }

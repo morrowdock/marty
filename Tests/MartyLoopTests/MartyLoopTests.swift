@@ -11,9 +11,12 @@ final class MartyLoopTests: XCTestCase {
     }
 
     func testPromptExamplesAreAccepted() throws {
-        let r = try MartyEngine(outputRoot: nil).check(document: MartyExamples.spurReduction, ref: nil, components: [])
+        let r = try MartyEngine(outputRoot: nil).check(document: MartyExamples.formatExample, ref: nil, components: [])
         XCTAssertEqual(r["ok"] as? Bool, true, "\(r)")
     }
+
+    /// A gear reduction document, as a model might write it (test data only; not a prompt example).
+    static let spurReduction = #"{"v":1,"kind":"assembly","title":"Spur gear reduction","units":"mm","parts":[{"id":"pair","use":"spurPair","with":{"pinionTeeth":12,"wheelTeeth":36}}],"steps":[{"say":"A small pinion drives a larger wheel.","camera":"hero"},{"say":"Input: the pinion (12 teeth) turns once.","highlight":["pair.pinion"],"spin":1},{"say":"The wheel (36 teeth) turns 12/36 = 1/3 of a turn, the other way.","highlight":["pair.wheel"],"spin":1}]}"#
 
     func testReplyJSON() {
         XCTAssertEqual(ReplyJSON.object(#"{"a":1}"#)?["a"] as? Int, 1)
@@ -26,7 +29,7 @@ final class MartyLoopTests: XCTestCase {
     func testLoopRepairsFromTheExactReasonAndRecordsEverything() throws {
         let plan = #"{"inScope": true, "subject": "gear reduction", "beats": ["pinion drives wheel"], "components": ["spurPair", "wormGear"], "primitives": ["gear"], "honesty": ""}"#
         let bad = #"{"document": {"v": 1, "kind": "assembly", "title": "Gears", "units": "mm", "parts": [{"id": "pair", "use": "spurPair", "with": {"wheelTeeth": 999}}]}, "components": []}"#
-        let good = "```json\n{\"document\": \(MartyExamples.spurReduction), \"components\": []}\n```"
+        let good = "```json\n{\"document\": \(Self.spurReduction), \"components\": []}\n```"
         let patch = #"{"patch": {"parts": {"pair": {"with": {"pinionTeeth": 12, "wheelTeeth": 72}}}}}"#
         let answer = "The wheel now turns 12/72 = 1/6 of a turn per pinion turn."
         let model = ScriptedAdapter(replies: [plan, bad, good, patch, answer])
@@ -116,7 +119,7 @@ final class MartyLoopTests: XCTestCase {
         let file = dir.appendingPathComponent("q.json")
         try Data(#"{"questions": [{"id": "S1", "prompt": "Show a gear reduction.", "scope": "in"}, {"id": "S2", "prompt": "Show a worm gear.", "scope": "out"}]}"#.utf8).write(to: file)
         let plan = #"{"components": ["spurPair"], "primitives": []}"#
-        let good = #"{"document": \#(MartyExamples.spurReduction)}"#
+        let good = #"{"document": \#(Self.spurReduction)}"#
         var made = 0
         let s = try Bench.run(file: file, ids: nil, makeModel: { made += 1; return ScriptedAdapter(replies: [plan, good]) },
                               out: dir.appendingPathComponent("run"), options: .init(), followUps: true)
