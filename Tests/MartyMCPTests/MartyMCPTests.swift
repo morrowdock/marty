@@ -99,6 +99,11 @@ final class MCPServerTests: XCTestCase {
         XCTAssertEqual(s.feed(Data("123456789".utf8)), [nil])
         XCTAssertEqual(s.feed(Data("more\nok\n".utf8)), [Data("ok".utf8)])
         XCTAssertEqual(s.feed(Data("123456789\nok\n".utf8)), [nil, Data("ok".utf8)])
+        XCTAssertEqual(s.feed(Data("tail".utf8)), [])
+        XCTAssertEqual(s.finish(), Data("tail".utf8))
+        XCTAssertNil(s.finish())
+        _ = s.feed(Data("123456789".utf8))
+        XCTAssertNil(s.finish(), "an overlong last line was already answered")
     }
 }
 
@@ -162,6 +167,8 @@ final class MCPProcessTests: XCTestCase {
             String(repeating: "x", count: MartyLimits.requestBytes + 10),
             #"{"jsonrpc":"2.0","id":7,"method":"ping"}"#,
         ].joined(separator: "\n") + "\n"
+        // A last line without a newline is still answered at end of input.
+        XCTAssertTrue(try run(#"{"jsonrpc":"2.0","id":8,"method":"ping"}"#).out.contains(#""id":8"#))
         let a = try run(input), b = try run(input)
         XCTAssertEqual(a.status, 0)
         XCTAssertEqual(a.out, b.out)

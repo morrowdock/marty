@@ -96,6 +96,13 @@ public struct LineSplitter {
 
     public init(limit: Int = MartyLimits.requestBytes) { self.limit = limit }
 
+    /// At end of input: the last line when it had no newline (and is not blank or too long).
+    public mutating func finish() -> Data? {
+        defer { buffer.removeAll(); discarding = false }
+        guard !discarding, buffer.count <= limit, !buffer.allSatisfy({ $0 == 0x20 || $0 == 0x0D || $0 == 0x09 }) else { return nil }
+        return buffer
+    }
+
     /// Adds bytes; returns complete lines (`nil` entries mark a line that was too long).
     public mutating func feed(_ chunk: Data) -> [Data?] {
         var out: [Data?] = []
