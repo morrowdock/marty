@@ -136,12 +136,18 @@ public enum MartyPrompts {
         \(role)
 
         Answer the learner's follow-up in 2 to 4 short sentences, in plain words. Use only numbers from the engine \
-        reports below (solved ratios, tooth counts and sizes in the model). Reply with the answer text only.
+        reports below (solved ratios) and sizes set in the model or in the change (tooth counts, radii, lengths). Use only \
+        simple, exact arithmetic on them (for example a sum, a product or a ratio of two sizes). Reply with the answer text only.
         """
     }
 
-    public static func answerUser(followUp: String, before: String, after: String?) -> String {
-        "Learner asks: \(followUp)\n\nEngine report before:\n\(before)\n\n" + (after.map { "Engine report after the change:\n\($0)\n" } ?? "No model change.\n")
+    public static func answerUser(followUp: String, before: String, after: String?, patch: String? = nil, ratiosChanged: Bool = false) -> String {
+        var s = "Learner asks: \(followUp)\n\nEngine report before:\n\(before)\n\n"
+        guard let after else { return s + "No model change.\n" }
+        if let patch { s += "The change you made (sizes you set may be stated):\n\(patch)\n\n" }
+        s += "Engine report after the change:\n\(after)\n"
+        if !ratiosChanged { s += "The solved speed ratios did not change.\n" }
+        return s
     }
 }
 

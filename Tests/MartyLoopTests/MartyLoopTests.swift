@@ -133,4 +133,37 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertThrowsError(try Bench.run(file: file, ids: ["NOPE"], makeModel: { ScriptedAdapter(replies: []) },
                                            out: dir.appendingPathComponent("run2"), options: .init(), followUps: false))
     }
+
+    /// A what-if patch that changes only words is refused; the model repairs it with a real change.
+    func testTextOnlyFollowUpPatchIsRefused() throws {
+        let plan = #"{"components": ["spurPair"], "primitives": []}"#
+        let good = #"{"document": \#(Self.spurReduction)}"#
+        let textOnly = #"{"patch": {"title": "Wheel held", "steps": [{"say": "Now the wheel is held still."}]}}"#
+        let real = #"{"patch": {"parts": {"pair": {"with": {"pinionTeeth": 12, "wheelTeeth": 48}}}}}"#
+        let model = ScriptedAdapter(replies: [plan, good, textOnly, real, "The wheel turns 12/48 = 1/4 turn."])
+        var options = MartyLoop.Options()
+        options.followUp = "What if the wheel had 48 teeth?"
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: options).run(question: "q")
+        let f = try XCTUnwrap(r["followUp"] as? [String: Any])
+        let attempts = try XCTUnwrap(f["attempts"] as? [[String: Any]])
+        XCTAssertEqual(attempts.first?["reason"] as? String, "followup.textOnly")
+        XCTAssertEqual(f["changed"] as? Bool, true)
+        XCTAssertEqual(f["ratiosChanged"] as? Bool, true)
+        XCTAssertTrue(model.prompts[3].user.contains("changes only text"))
+        XCTAssertTrue(model.prompts[4].user.contains("wheelTeeth"), "the answer prompt shows the accepted change")
+    }
+
+    func testEmptyFollowUpIsSkipped() throws {
+        let plan = #"{"components": [], "primitives": []}"#
+        let model = ScriptedAdapter(replies: [plan, #"{"document": \#(Self.spurReduction)}"#])
+        var options = MartyLoop.Options()
+        options.followUp = "  "
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: options).run(question: "q")
+        XCTAssertNil(r["followUp"])
+        XCTAssertEqual(model.prompts.count, 2)
+    }
 }

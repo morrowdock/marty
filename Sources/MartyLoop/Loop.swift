@@ -174,7 +174,8 @@ public final class MartyLoop {
             receipt["lesson"] = "lesson.json"
 
             // 5. Follow-up turn.
-            if let followUp = options.followUp {
+            // An empty follow-up (the out-of-scope bench questions have none) means no follow-up turn.
+            if let followUp = options.followUp?.trimmingCharacters(in: .whitespacesAndNewlines), !followUp.isEmpty {
                 receipt["followUp"] = try self.followUp(question: question, followUp: followUp, ref: ref, report: report, components: acceptedComponents)
             }
         }
@@ -198,6 +199,7 @@ public final class MartyLoop {
         var after: [String: Any]? = nil
         var attempts: [[String: Any]] = []
         var noChange = false
+        var acceptedPatch: Any? = nil
         for attempt in 0...options.repairs {
             let (text, i) = ask("followup", attempt: attempt, system: system, user: user)
             guard let text else { note(i, ["ok": false, "reason": "adapter"]); break }
@@ -207,11 +209,22 @@ public final class MartyLoop {
                 continue
             }
             guard let patch = reply["patch"], !(patch is NSNull) else { noChange = true; note(i, ["ok": true, "patch": NSNull()]); break }
+            // A what-if must change the model, not only its words: a patch of only title and steps would narrate a
+            // change the engine never solved. Refuse it like an engine refusal, so the model can repair or reply null.
+            if let keys = (patch as? [String: Any]).map({ Set($0.keys) }), !keys.isEmpty, keys.isSubset(of: ["title", "steps"]) {
+                let o: [String: Any] = ["ok": false, "reason": "followup.textOnly"]
+                note(i, o); attempts.append(o)
+                user = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp)
+                    + "\n\nYour previous reply:\n\(text)\n\nThat patch changes only text (title or steps), so the engine solves the same "
+                    + "motion as before and the new text would not be true. Change parts, drives or constraints so the engine solves the "
+                    + "new case (for a component, \"<instance>.<inner id>\" edits an inner part), or reply {\"patch\": null}."
+                continue
+            }
             var r: [String: Any]
             do { r = try engine.patch(document: nil, ref: ref, patch: patch, components: components, returnDocument: false) }
             catch let e as ToolError { r = ["ok": false, "reason": e.reason] }
             note(i, Self.outcome(r)); attempts.append(Self.outcome(r))
-            if (r["ok"] as? Bool) == true { after = r; break }
+            if (r["ok"] as? Bool) == true { after = r; acceptedPatch = patch; break }
             let reason = r["reason"] as? String ?? "unknown"
             user = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp)
                 + "\n\nYour previous reply:\n\(text)\n\nThe engine refused the patch with reason `\(reason)`"
@@ -220,10 +233,16 @@ public final class MartyLoop {
         }
         result["attempts"] = attempts
         result["changed"] = after != nil
-        if let after { result["after"] = Self.summary(after).merging(["ref": after["ref"] ?? NSNull()]) { a, _ in a } }
+        var ratiosChanged = false
+        if let after {
+            result["after"] = Self.summary(after).merging(["ref": after["ref"] ?? NSNull()]) { a, _ in a }
+            ratiosChanged = MartyJSON.data(after["ratios"] ?? [String: Any]()) != MartyJSON.data(report["ratios"] ?? [String: Any]())
+            result["ratiosChanged"] = ratiosChanged
+        }
         guard after != nil || noChange else { result["ok"] = false; return result }
         let (answer, i) = ask("answer", attempt: 0, system: MartyPrompts.answerSystem(),
-                              user: MartyPrompts.answerUser(followUp: followUp, before: before, after: after.map { Self.compact(Self.summary($0)) }))
+                              user: MartyPrompts.answerUser(followUp: followUp, before: before, after: after.map { Self.compact(Self.summary($0)) },
+                                                            patch: acceptedPatch.map { Self.compact($0) }, ratiosChanged: ratiosChanged))
         note(i, ["ok": answer != nil])
         result["ok"] = answer != nil
         result["answer"] = answer.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) as Any } ?? NSNull()
