@@ -108,7 +108,16 @@ final class LessonToolTests: XCTestCase {
         XCTAssertEqual(later["ok"] as? Bool, false)
         XCTAssertEqual(later["reason"] as? String, "lesson.stream.exhausted")
         XCTAssertEqual(later["exhausted"] as? Bool, true)
-        let ended = try e.lessonStream(session: id, chunk: "", end: true)
+        // Only engine whitespace: no statement was dropped.
+        let blank = try e.lessonStream(session: id, chunk: " \n\t", end: false)
+        XCTAssertEqual(blank["ok"] as? Bool, true)
+        XCTAssertEqual(blank["exhausted"] as? Bool, true)
+        // NBSP is not engine whitespace: it was dropped, and the call says so.
+        XCTAssertEqual(try e.lessonStream(session: id, chunk: "\u{00A0}", end: false)["reason"] as? String, "lesson.stream.exhausted")
+        // Statements with end: true are dropped too; the call says so and the stream ends.
+        let ended = try e.lessonStream(session: id, chunk: #"{"say":"Hi."}"# + "\n", end: true)
+        XCTAssertEqual(ended["ok"] as? Bool, false)
+        XCTAssertEqual(ended["reason"] as? String, "lesson.stream.exhausted")
         XCTAssertEqual(ended["exhausted"] as? Bool, false)
         // After end a new stream in the same session is accepted.
         let again = try e.lessonStream(session: id, chunk: scene, end: false)

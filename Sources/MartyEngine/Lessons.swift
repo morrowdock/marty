@@ -119,7 +119,9 @@ extension MartyEngine {
             exhausted = events.isEmpty && session.unfinishedInput.isEmpty
         }
         // Statements sent to a stream that was already exhausted are dropped by the engine: say so, not silent success.
-        let ignored = wasExhausted && exhausted && !end && chunk.contains { !$0.isWhitespace }
+        // The engine's own whitespace: space, tab, CR, LF (not NBSP or other Unicode spaces). Computed before endStream, so a
+        // call that also ends the stream still reports the dropped statements.
+        let ignored = wasExhausted && exhausted && chunk.utf8.contains { ![0x20, 0x09, 0x0D, 0x0A].contains($0) }
         if end { events += session.endStream(); exhausted = false }
         // Least recently used goes first: the session used now is the newest.
         lessonSessions.append((key, session, exhausted))

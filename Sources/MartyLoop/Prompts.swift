@@ -5,7 +5,7 @@ import Foundation
 /// author step sees a short format guide plus `explain` entries for the parts the plan chose. The receipt records the
 /// size and SHA-256 of every prompt, so a change in context is always measured.
 public enum MartyPrompts {
-    public static let version = "marty-prompts/1"
+    public static let version = "marty-prompts/2"
 
     static let role = """
         You are Marty, a teacher who explains how things work with checked 3D models. A deterministic engine \
@@ -107,7 +107,9 @@ public enum MartyPrompts {
             ("constraint.gearMesh.interference", "The teeth overlap: use more teeth on the small gear, or more teeth difference between ring and planet."),
             ("constraint.gearMesh.parentRotates", "A planet on a turning carrier needs \"carrier\" named in its gearMesh."),
             ("constraint.underdetermined", "Some gear joint has no solved speed: add a gearMesh to it, an input drive, or a fixed constraint."),
-            ("constraint.conflict", "Two constraints give one joint different speeds: remove the extra input, fixed or mesh. A part with no joint is already fixed: to free it, give it a joint (for a component part, \"<instance>.<inner id>\": {\"joint\": {\"revolute\": [0, 0, 1]}})."),
+            // Hints match by prefix, so the more specific reason comes first.
+            ("constraint.conflict.drive", "A gear whose speed the gear meshes solve cannot also have its own follow or crank drive: remove that drive."),
+            ("constraint.conflict", "Two constraints give one joint different speeds: remove the extra input, fixed or mesh. A gear with no joint turns only with its parent; with no turning parent it stays still. To let it turn on its own, give it a joint: in a document, on the component's use entry, \"set\": {\"<inner id>\": {\"joint\": {\"revolute\": [0, 0, 1]}}}; in a follow-up patch, \"parts\": {\"<instance>.<inner id>\": {\"joint\": {\"revolute\": [0, 0, 1]}}}."),
             ("component.set.id", "Each entry in a component's set is an object of fields (not null), without id or use."),
             ("assembly.title", "The title is 1 to 80 Unicode code points, not blank, with no <, >, :// or control or format characters."),
             ("step.say", "Each step's say is 1 to 240 Unicode code points, not blank, with no <, >, :// or control or format characters (write \"less than\", not <)."),
@@ -149,13 +151,25 @@ public enum MartyPrompts {
         """
     }
 
+    /// For a follow-up that the engine could not model: no numbers beyond the report before, no arithmetic on the
+    /// learner's own what-if values.
+    public static func answerRefusedSystem() -> String {
+        """
+        \(role)
+
+        Answer the learner's follow-up in 2 to 4 short sentences, in plain words. This model cannot show the change they \
+        asked about: say so plainly. You may explain the idea in general words. Give no number except the numbers in the \
+        engine report below, and do no arithmetic. Reply with the answer text only.
+        """
+    }
+
     public static func answerUser(followUp: String, before: String, after: String?, patch: String? = nil, ratiosChanged: Bool = false,
-                                  refused: String? = nil) -> String {
+                                  refused: String? = nil, engineSawAPatch: Bool = true) -> String {
         var s = "Learner asks: \(followUp)\n\nEngine report before:\n\(before)\n\n"
         if let refused {
-            return s + "The engine refused every change that was tried (last reason: \(refused)), so this model cannot show the "
-                + "what-if. Say so plainly. You may explain the idea in general words, but give no new numbers: use only "
-                + "numbers from the report before.\n"
+            return s + (engineSawAPatch
+                ? "The engine refused every change that was tried (last reason: \(refused)), so this model cannot show the what-if.\n"
+                : "No change could be checked by the engine (last problem: \(refused)), so this model cannot show the what-if.\n")
         }
         guard let after else { return s + "No model change.\n" }
         if let patch { s += "The change you made (sizes you set may be stated):\n\(patch)\n\n" }

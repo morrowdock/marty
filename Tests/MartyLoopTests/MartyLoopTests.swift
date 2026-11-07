@@ -172,7 +172,41 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(f["changed"] as? Bool, false)
         XCTAssertEqual(f["answer"] as? String, "This model cannot show that change.")
         XCTAssertTrue(model.prompts[4].user.contains("refused every change"), model.prompts[4].user)
+        XCTAssertTrue(model.prompts[4].system.contains("do no arithmetic"), "the refused case has its own system prompt")
         XCTAssertTrue(model.prompts[4].user.contains("component.param.range.wheelTeeth"))
+    }
+
+    /// A refused patch, then an adapter failure: no answer call, ok false.
+    func testRefusedThenAdapterFailureWritesNoAnswer() throws {
+        let plan = #"{"components": ["spurPair"], "primitives": []}"#
+        let good = #"{"document": \#(Self.spurReduction)}"#
+        let bad = #"{"patch": {"parts": {"pair": {"with": {"wheelTeeth": 999}}}}}"#
+        let model = ScriptedAdapter(replies: [plan, good, bad])
+        var options = MartyLoop.Options()
+        options.followUp = "What if the wheel had 999 teeth?"
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: options).run(question: "q")
+        let f = try XCTUnwrap(r["followUp"] as? [String: Any])
+        XCTAssertEqual(f["ok"] as? Bool, false)
+        XCTAssertNil(f["answer"])
+        XCTAssertEqual(model.prompts.count, 4, "plan, author, two follow-up calls; no answer call")
+    }
+
+    /// Only text-only patches: the engine never saw a change, and the answer prompt says so.
+    func testNoCheckedChangeIsWordedHonestly() throws {
+        let plan = #"{"components": ["spurPair"], "primitives": []}"#
+        let good = #"{"document": \#(Self.spurReduction)}"#
+        let textOnly = #"{"patch": {"title": "Wheel held"}}"#
+        let model = ScriptedAdapter(replies: [plan, good, textOnly, textOnly, "This model cannot show that."])
+        var options = MartyLoop.Options()
+        options.repairs = 1
+        options.followUp = "What if the wheel were held?"
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        _ = try MartyLoop(model: model, out: out, options: options).run(question: "q")
+        XCTAssertTrue(model.prompts[4].user.contains("No change could be checked"), model.prompts[4].user)
+        XCTAssertTrue(model.prompts[4].system.contains("do no arithmetic"))
     }
 
     func testEmptyFollowUpIsSkipped() throws {

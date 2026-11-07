@@ -272,10 +272,12 @@ public final class MartyLoop {
         result["modelled"] = modelled
         let lastReason = attempts.last?["reason"] as? String
         guard modelled || (lastReason != nil && lastReason != "adapter") else { result["ok"] = false; return result }
-        let (answer, i) = ask("answer", attempt: 0, system: MartyPrompts.answerSystem(),
+        // Did the engine see any patch? json and followup.textOnly never reach it.
+        let engineSawAPatch = attempts.contains { !["json", "followup.textOnly", "adapter"].contains($0["reason"] as? String ?? "") }
+        let (answer, i) = ask("answer", attempt: 0, system: modelled ? MartyPrompts.answerSystem() : MartyPrompts.answerRefusedSystem(),
                               user: MartyPrompts.answerUser(followUp: followUp, before: before, after: after.map { Self.compact(Self.summary($0)) },
                                                             patch: acceptedPatch.map { Self.compact($0) }, ratiosChanged: ratiosChanged,
-                                                            refused: modelled ? nil : lastReason))
+                                                            refused: modelled ? nil : lastReason, engineSawAPatch: engineSawAPatch))
         note(i, ["ok": answer != nil])
         result["ok"] = answer != nil
         result["answer"] = answer.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) as Any } ?? NSNull()

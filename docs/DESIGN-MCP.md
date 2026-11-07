@@ -103,8 +103,9 @@ engine's own budgets apply (32 KiB and 256 statements per stream, 24 beats, 12
 commands and 8 checks per beat). After a budget refusal (reported in that
 call's events, for example `lesson.bytes`) the engine ignores the stream until
 it ends. Later calls that send statements then give `ok: false` with
-`lesson.stream.exhausted`; an empty or whitespace chunk gives `ok: true` with
-`exhausted: true`; `end` starts over. Marty always passes input to the engine
+`lesson.stream.exhausted` (also when the call has `end: true`, which then
+starts over); an empty chunk, or one of only spaces, tabs, CR and LF, gives
+`ok: true` with `exhausted: true`. Marty always passes input to the engine
 and reads `exhausted` from what the engine did, so a fresh stream that the
 engine starts is never blocked. One call returns at most 512
 events (`truncatedEvents` counts the rest). The opt-in `rotate2d` template
