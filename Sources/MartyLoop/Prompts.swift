@@ -146,9 +146,9 @@ public enum MartyPrompts {
             ("check.failed", "A claim in the step is false: the engine solved a different value. Change or remove the claim, or change the model."),
             ("check.fact", "A claim names no fact. Use a fact name the engine solved."),
             ("joint.idle", "A jointed part that nothing moves: give it a drive (input, follow or crank), a gearMesh or a fixed constraint, or remove its joint."),
-            ("frame.axis.off", "The part's turn axis runs through its own origin along its joint vector and misses its own shape. The part's at, rot and parent move axis and shape together, so they cannot fix this: move the shape onto the axis (the shape entry's own at), change the joint vector, or add \"offAxis\": true if it turns about an outside axis on purpose."),
-            ("expect.axis", "The part's joint axis in the world is not the one its expect states: check its rot and its parent's rot."),
-            ("expect.up", "The part's local +Z in the world is not the one its expect states: check its rot and its parent's rot."),
+            ("frame.axis.off", "The part's turn axis runs through its own origin along its joint vector and misses its own shape. The part's at, rot and parent move axis and shape together, so they cannot fix this: move the shape onto the axis (the shape entry's own at), change the joint vector only if it points the wrong way, or add \"offAxis\": true if it turns about an outside axis on purpose."),
+            ("expect.axis", "The part's joint axis in the world is not the one its expect states: check its joint vector, its rot and the rot of every ancestor (a component use entry's rot too)."),
+            ("expect.up", "The part's local +Z in the world is not the one its expect states: check its rot and the rot of every ancestor (a component use entry's rot too)."),
         ]
         return table
     }()
