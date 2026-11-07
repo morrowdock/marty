@@ -63,15 +63,24 @@ public enum Bench {
             // Rows that could not run are not model results: they count in errors only.
             let inScope = runs.filter { $0["scope"] as? String == "in" && $0["error"] == nil }
             let seconds = results.compactMap { $0["seconds"] as? Double }.sorted()
-            return ["format": "marty.bench-summary/v1", "questionsFile": file.lastPathComponent, "questionsSha256": sha,
-                    "model": model, "prompts": MartyPrompts.version,
-                    "engine": ["repository": MartyPin.engineRepository, "revision": MartyPin.engineRevision],
-                    "options": ["repairs": options.repairs, "render": options.render, "followUps": followUps],
-                    "totals": ["questions": runs.count, "accepted": accepted.count, "errors": runs.filter { $0["error"] != nil }.count,
-                               "inScope": inScope.count, "inScopeAccepted": inScope.filter { $0["accepted"] as? Bool == true }.count,
-                               "firstTry": results.filter { $0["firstTry"] as? Bool == true }.count,
-                               "medianSeconds": seconds.isEmpty ? 0 : seconds[seconds.count / 2]],
-                    "runs": runs]
+            // Built in small typed parts: one large heterogeneous literal is too slow to type-check in release builds.
+            var totals: [String: Any] = [:]
+            totals["questions"] = runs.count
+            totals["accepted"] = accepted.count
+            totals["errors"] = runs.count - results.count
+            totals["inScope"] = inScope.count
+            totals["inScopeAccepted"] = inScope.filter { $0["accepted"] as? Bool == true }.count
+            totals["firstTry"] = results.filter { $0["firstTry"] as? Bool == true }.count
+            totals["medianSeconds"] = seconds.isEmpty ? 0.0 : seconds[seconds.count / 2]
+            let engine: [String: Any] = ["repository": MartyPin.engineRepository, "revision": MartyPin.engineRevision]
+            let opts: [String: Any] = ["repairs": options.repairs, "render": options.render, "followUps": followUps]
+            var out: [String: Any] = ["format": "marty.bench-summary/v1", "questionsFile": file.lastPathComponent,
+                                      "questionsSha256": sha, "model": model, "prompts": MartyPrompts.version]
+            out["engine"] = engine
+            out["options"] = opts
+            out["totals"] = totals
+            out["runs"] = runs
+            return out
         }
         for q in chosen {
             var o = options

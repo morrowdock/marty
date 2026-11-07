@@ -50,6 +50,10 @@ jobs:
       - name: Build
         run: |
           if [ -f Package.swift ]; then swift build --jobs 2; else echo "No Package.swift yet"; fi
+      - name: Release build
+        # The docs tell users to build with -c release; the optimizer type-checks differently, so build it too.
+        run: |
+          if [ -f Package.swift ]; then swift build -c release --jobs 2; else echo "No Package.swift yet"; fi
       - name: Test
         run: |
           if [ -f Package.swift ] && [ -d Tests ]; then swift test --jobs 2; else echo "No tests yet"; fi

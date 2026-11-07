@@ -221,6 +221,32 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(model.prompts.count, 2, "two plan attempts, then stop")
         XCTAssertEqual(r["adapterErrors"] as? [String], ["adapter.scripted.empty", "adapter.scripted.empty"])
         XCTAssertEqual(r["accepted"] as? Bool, false)
+        XCTAssertEqual(MartyJSON.data(r["attempts"] ?? []), MartyJSON.data([["ok": false, "reason": "adapter"]]))
+    }
+
+    /// An adapter failure on the first plan call and a plan on the second: the run goes on (the model was reached).
+    final class FlakyAdapter: ModelAdapter {
+        let id = "flaky"
+        var replies: [String?]
+        init(_ r: [String?]) { replies = r }
+        func reply(system: String, user: String) throws -> ModelReply {
+            guard !replies.isEmpty, let t = replies.removeFirst() else { throw AdapterError(reason: "adapter.timeout", detail: "test") }
+            return ModelReply(text: t, seconds: 0)
+        }
+    }
+
+    func testMixedPlanFailures() throws {
+        let doc = #"{"document": \#(Self.spurReduction)}"#
+        // adapter failure, then a plan: continues and is accepted; the adapter error is still recorded.
+        let out1 = tempOut(); defer { try? FileManager.default.removeItem(at: out1) }
+        let r1 = try MartyLoop(model: FlakyAdapter([nil, #"{"components": []}"#, doc]), out: out1, options: .init()).run(question: "q")
+        XCTAssertEqual(r1["accepted"] as? Bool, true)
+        XCTAssertEqual(r1["adapterErrors"] as? [String], ["adapter.timeout"])
+        // not JSON, then an adapter failure: no plan was received, so the run stops.
+        let out2 = tempOut(); defer { try? FileManager.default.removeItem(at: out2) }
+        let r2 = try MartyLoop(model: FlakyAdapter(["not json", nil, doc]), out: out2, options: .init()).run(question: "q")
+        XCTAssertEqual(r2["accepted"] as? Bool, false)
+        XCTAssertEqual(MartyJSON.data(r2["attempts"] ?? []), MartyJSON.data([["ok": false, "reason": "adapter"]]))
     }
 
     func testBadOptionsAreRefusedBeforeAnyModelCall() throws {

@@ -49,9 +49,12 @@ Model text is only parsed as JSON and given to the engine. It is never run.
 
 ## Exit codes
 
-`marty ask`: 0 accepted, 1 not accepted, 2 usage or setup error, 3 a model call
-failed in the adapter (the output line lists `adapterErrors`). `marty bench`: 0,
-or 1 when any row is an error row (see bench/README.md); 2 for usage or setup.
+`marty ask`: 0 accepted, 1 not accepted, 2 usage, setup or a run that threw
+(for example the `claude` command is missing; then there is no receipt), 3 a
+model call failed in the adapter (the output line lists `adapterErrors`).
+`marty bench`: 0, or 1 when any row is an error row (a missing `claude` command
+is an error row too; see bench/README.md); 2 for usage or setup errors before
+the first question.
 
 ## Model adapters
 
@@ -83,7 +86,7 @@ One `receipt.json` per run, with sorted keys:
 | `attempts` | One entry per author or repair attempt: `ok`, `reason`, `part`, `ref`, `component`. |
 | `accepted`, `final` | Whether a document was accepted, and its title, part ids, ratios, checks, `ref`, triangles and steps. |
 | `render`, `lesson` | Render `ok`, `reason` (when it failed), directory, file digests and timing; `lesson.json`. |
-| `adapterErrors` | Reasons of model calls that failed in the adapter (for example `adapter.timeout`). Present only when one failed. If both plan calls fail in the adapter, the run stops there. |
+| `adapterErrors` | Reasons of model calls that failed in the adapter (for example `adapter.timeout`). Present only when one failed. If the last plan call fails in the adapter (no plan was received), the run stops there. |
 | `followUp` | The question, its attempts, whether the model changed, the report after the change and the answer. |
 | `calls` | Every model call: phase, attempt, prompt files with sizes and digests, reply file, seconds, adapter facts (tokens, cost equivalent) and the engine outcome. |
 | `seconds`, `modelSeconds`, `contextBytes` | Wall time, model time and prompt sizes. |
