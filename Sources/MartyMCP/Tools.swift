@@ -29,6 +29,10 @@ enum Schema {
         "type": "string",
         "description": "`ref` from an earlier result (sha256:...), in place of `document`. The server keeps the last 32 documents.",
     ]
+    static let strict: [String: Any] = [
+        "type": "boolean",
+        "description": "The engine's strict profile for model authors (default true): also refuse a jointed part that nothing moves (joint.idle.<id>) and a turn axis that misses its own part (frame.axis.off.<id>). false gives the plain profile, where these are only warnings.",
+    ]
     static let components: [String: Any] = [
         "type": "array", "maxItems": MartyLimits.componentsPerRequest,
         "items": ["anyOf": objectOrString],
@@ -47,8 +51,8 @@ enum Tools {
              properties: ["id": ["type": "string", "maxLength": MartyLimits.idLength], "components": Schema.components],
              required: ["id"], readOnly: true),
         Tool(name: "check", title: "Check a document",
-             description: "Check a solid assembly document with the engine. Returns ok, or the exact refusal reason (one stable token) and part. An accepted document gives parts, triangles, steps, solved gear ratios, mesh and gear checks, and a ref for later calls. Repair from the reason, then check again.",
-             properties: ["document": Schema.document, "ref": Schema.ref, "components": Schema.components],
+             description: "Check a solid assembly document with the engine. Returns ok, or the exact refusal reason (one stable token) and part. An accepted document gives parts, triangles, steps (v2 captions filled from facts), solved gear ratios, mesh and gear checks, and a ref for later calls. Every report also has the engine's honesty data: warnings, facts (value, unit, text, truth tier, source), the tier legend, stepTiers, stepFacts, notChecked and readBack (each part's world position, motion and frame in plain words: compare it with what you meant). Repair from the reason, then check again.",
+             properties: ["document": Schema.document, "ref": Schema.ref, "components": Schema.components, "strict": Schema.strict],
              required: [], readOnly: true),
         Tool(name: "component_check", title: "Check a component definition",
              description: "Validate a new component definition, compile it alone, instantiate it with `with` values and run the engine checks. Returns the catalog entry and a ready `use` entry.",
@@ -61,7 +65,7 @@ enum Tools {
              properties: ["document": Schema.document, "ref": Schema.ref,
                           "patch": ["anyOf": Schema.objectOrString, "description": "The patch (at most 16 KiB)."],
                           "return_document": ["type": "boolean", "description": "Also return the patched document (default false)."],
-                          "components": Schema.components],
+                          "components": Schema.components, "strict": Schema.strict],
              required: ["patch"], readOnly: true),
         Tool(name: "render", title: "Render a document",
              description: "Render an accepted document: hero.png, exploded.png, one captioned still per step, snapshot.json and manifest.json (and loop.gif when loop is true). Returns the output directory and every file with its SHA-256 digest. A document that check refuses (also check.meshOpen or check.gearsInterpenetrate) is not rendered; the result is its check report.",
@@ -98,12 +102,14 @@ enum Tools {
         case "explain":
             return try engine.explain(id: try string(args["id"], "id")!, components: components)
         case "check":
-            return try engine.check(document: args["document"], ref: try string(args["ref"], "ref"), components: components)
+            return try engine.check(document: args["document"], ref: try string(args["ref"], "ref"), components: components,
+                                    strict: try bool(args["strict"], "strict") ?? true)
         case "component_check":
             return try engine.componentCheck(definition: args["definition"]!, with: try numbers(args["with"], "with"), components: components)
         case "patch":
             return try engine.patch(document: args["document"], ref: try string(args["ref"], "ref"), patch: args["patch"]!,
-                                    components: components, returnDocument: try bool(args["return_document"], "return_document") ?? false)
+                                    components: components, returnDocument: try bool(args["return_document"], "return_document") ?? false,
+                                    strict: try bool(args["strict"], "strict") ?? true)
         case "lesson_check":
             return try engine.lessonCheck(lesson: args["lesson"]!)
         case "lesson_stream":

@@ -55,11 +55,17 @@ extension MartyEngine {
         defer { if !finished { try? FileManager.default.removeItem(at: tmp) } }
 
         let started = Date()
-        let result = try Self.renderFiles(doc, ref: docRef, into: tmp, width: width, height: height, loop: loop)
-        let manifest: [String: Any] = ["engine": MartyPin.engineRevision, "format": Self.renderFormat, "ref": docRef, "title": doc.title,
-                                       "parts": doc.assembly.parts.count, "steps": doc.steps.count,
-                                       "checks": report["checks"] ?? [String: Any](), "outputs": result.files]
-        let manifestData = MartyJSON.data(manifest)
+        let sourceName = "document " + docRef.prefix(19)
+        let source = MGSolidSource(data: json.canonicalData)
+        let result = try Self.renderFiles(doc, sourceName: sourceName, source: source, into: tmp, width: width, height: height, loop: loop)
+        // The engine's manifest (`MGSolidRenderPlan.manifest`), with Marty's render format and ref beside it.
+        let outputs = result.files.compactMap { MGJSON(any: $0) }
+        guard case .object(var m) = try MGSolidRenderPlan.manifest(doc, sourceName: sourceName, source: source, framesRendered: result.frames,
+                                                                   secondsPerFrame: result.frames > 0 ? result.seconds / Double(result.frames) : 0,
+                                                                   outputs: outputs, engine: Self.engineIdentity) else { throw ToolError("render.manifest") }
+        m["format"] = .string(Self.renderFormat)
+        m["ref"] = .string(docRef)
+        let manifestData = Self.MJ(MGJSON.object(m))
         try manifestData.write(to: tmp.appendingPathComponent("manifest.json"))
         do { try FileManager.default.moveItem(at: tmp, to: out) }
         catch {
@@ -86,60 +92,56 @@ extension MartyEngine {
     }
 
     /// Changes whenever Marty's render sequence or manifest changes, so an old result is never reused for a new format.
-    public static let renderFormat = "marty-render/1"
+    public static let renderFormat = "marty-render/2"
 
-    static func renderFiles(_ doc: MGSolidDocument, ref: String, into out: URL, width: Int, height: Int, loop: Bool)
-        throws -> (files: [[String: Any]], frames: Int, seconds: Double) {
+    /// Takes the engine's render plan (`MGSolidRenderPlan`): captioned stills, the optional loop GIF and the snapshot.
+    static func renderFiles(_ doc: MGSolidDocument, sourceName: String, source: MGSolidSource, into out: URL, width: Int, height: Int,
+                            loop: Bool) throws -> (files: [[String: Any]], frames: Int, seconds: Double) {
         _ = NSApplication.shared
         let r = MGSolidRenderer(assembly: doc.assembly)
         let aspect = Double(width) / Double(height)
-        let footer = "Rendered by the MartyGraphics solid engine (\(MartyPin.engineRevision.prefix(8))) from \(ref.prefix(19))"
+        let plan = MGSolidRenderPlan(doc, sourceName: sourceName, source: source, loop: loop)
         var files: [[String: Any]] = []
         var seconds = 0.0, frames = 0
-        func shot(_ params: MGPoseParameters, preset: String, orbit: Double = 0, highlight: [String] = [], margin: Double = 0.8) throws -> CGImage {
-            let p = MGSolidCamera.presets[preset] ?? MGSolidCamera.presets["hero"]!
-            r.highlight(Set(highlight), dimOthers: !highlight.isEmpty)
-            r.apply(params)
-            r.frame(params, explodeRange: [0, params.explode], yaw: p.yaw + orbit, pitch: p.pitch, aspect: aspect, margin: margin)
+        func shot(_ s: MGSolidShot) throws -> CGImage {
+            let p = MGSolidCamera.presets[s.preset] ?? MGSolidCamera.presets["hero"]!
+            // Each step shows its own section cuts and ghosts; other shots show the plain scene.
+            r.show(doc.view(step: s.step))
+            r.highlight(Set(s.highlight), dimOthers: !s.highlight.isEmpty)
+            r.apply(s.params)
+            r.frame(s.params, explodeRange: [0, s.params.explode], yaw: p.yaw + s.orbit, pitch: p.pitch, aspect: aspect, margin: s.margin)
             let t0 = Date()
             guard let img = r.render(width: width, height: height) else { throw ToolError("render.metal", "no Metal device") }
             seconds += Date().timeIntervalSince(t0); frames += 1
             return img
         }
-        func save(_ img: CGImage, _ name: String) throws {
-            let u = out.appendingPathComponent(name); try writePNG(img, u)
-            let d = try Data(contentsOf: u)
-            files.append(["file": name, "bytes": d.count, "sha256": MartyJSON.sha256(d), "width": img.width, "height": img.height])
+        func record(_ name: String, _ fields: [String: Any]) throws {
+            let d = try Data(contentsOf: out.appendingPathComponent(name))
+            files.append(fields.merging(["file": name, "bytes": d.count, "sha256": MartyJSON.sha256(d)]) { a, _ in a })
         }
-        try save(caption(try shot(doc.defaults, preset: "hero"), title: doc.title, text: nil, footer: footer), "hero.png")
-        try save(caption(try shot(MGPoseParameters(input: doc.defaults.input, explode: 1), preset: "hero", margin: 0.92),
-                         title: doc.title + " · exploded", text: nil, footer: footer), "exploded.png")
-        for (i, step) in doc.steps.enumerated() {
-            let params = MGPoseParameters(input: doc.defaults.input + step.spin * 2 * .pi, explode: step.explode ?? doc.defaults.explode)
-            let img = try shot(params, preset: step.camera ?? "hero", orbit: step.orbit, highlight: step.highlight)
-            try save(caption(img, title: doc.title, text: "\(i + 1). \(step.say)", footer: footer), "step-\(i + 1).png")
+        for s in plan.stills {
+            let img = caption(try shot(s), title: s.title ?? doc.title, text: s.caption, footer: plan.footer)
+            try writePNG(img, out.appendingPathComponent(s.file))
+            try record(s.file, ["width": img.width, "height": img.height])
         }
-        if loop {
-            let n = 120, gifURL = out.appendingPathComponent("loop.gif")
+        if !plan.loop.isEmpty {
+            let n = plan.loop.count, gifURL = out.appendingPathComponent("loop.gif"), delay = MGSolidRenderPlan.loopDelaySeconds
             guard let gif = CGImageDestinationCreateWithURL(gifURL as CFURL, UTType.gif.identifier as CFString, n, nil) else { throw ToolError("render.gif") }
             CGImageDestinationSetProperties(gif, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary)
-            for k in 0..<n {
-                let t = Double(k) / Double(n)
-                let e = t > 0.4 && t < 0.9 ? 0.5 - 0.5 * cos((t - 0.4) / 0.5 * 2 * .pi) : 0
-                let img = try shot(MGPoseParameters(input: doc.defaults.input + t * 2 * .pi, explode: e), preset: "hero", orbit: t * 360, margin: 0.86)
-                CGImageDestinationAddImage(gif, scaled(img, width: 640),
-                                           [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.1, kCGImagePropertyGIFUnclampedDelayTime: 0.1]] as CFDictionary)
+            for s in plan.loop {
+                CGImageDestinationAddImage(gif, scaled(try shot(s), width: MGSolidRenderPlan.loopWidth),
+                                           [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: delay, kCGImagePropertyGIFUnclampedDelayTime: delay]] as CFDictionary)
             }
             guard CGImageDestinationFinalize(gif) else { throw ToolError("render.gif") }
-            let d = try Data(contentsOf: gifURL)
-            files.append(["file": "loop.gif", "bytes": d.count, "sha256": MartyJSON.sha256(d), "width": 640, "frames": n, "delaySeconds": 0.1, "loopSeconds": 12.0])
+            try record("loop.gif", ["width": MGSolidRenderPlan.loopWidth, "frames": n, "delaySeconds": delay, "loopSeconds": MGSolidRenderPlan.loopSeconds])
         }
-        let snapURL = out.appendingPathComponent("snapshot.json")
-        try MGSolidSnapshot.make(doc.assembly, params: doc.defaults).jsonData().write(to: snapURL)
-        let sd = try Data(contentsOf: snapURL)
-        files.append(["file": "snapshot.json", "bytes": sd.count, "sha256": MartyJSON.sha256(sd)])
+        try MGSolidRenderPlan.snapshot(doc).jsonData().write(to: out.appendingPathComponent("snapshot.json"))
+        try record("snapshot.json", [:])
         return (files, frames, seconds)
     }
+
+    /// Sorted-key JSON of an engine value.
+    static func MJ(_ j: MGJSON) -> Data { MartyJSON.data(j.any) }
 
     static func caption(_ image: CGImage, title: String, text: String?, footer: String) -> CGImage {
         let w = image.width, h = image.height
