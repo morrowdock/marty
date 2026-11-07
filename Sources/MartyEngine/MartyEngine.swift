@@ -81,7 +81,7 @@ public final class MartyEngine {
     static func report(_ doc: MGSolidDocument, strict: Bool = false, json: MGJSON? = nil) -> [String: Any] {
         let source = json.map { MGSolidSource(data: $0.canonicalData) }
         let r = MGSolidReport.make(doc, profile: strict ? .strict : .standard, source: source, engine: engineIdentity)
-        var out = r.json.any as? [String: Any] ?? ["ok": false, "reason": "report.encoding"]
+        var out = plain(r.json) ?? ["ok": false, "reason": "report.encoding"]
         if out["part"] == nil { out["part"] = NSNull() }
         out["partIds"] = doc.assembly.parts.map(\.id)
         return out
@@ -90,7 +90,13 @@ public final class MartyEngine {
     static func refusedReport(_ issue: MGSolidIssue, strict: Bool, json: MGJSON?) -> [String: Any] {
         let source = json.map { MGSolidSource(data: $0.canonicalData) }
         let r = MGSolidReport.refused(issue, profile: strict ? .strict : .standard, source: source, engine: engineIdentity)
-        return r.json.any as? [String: Any] ?? ["ok": false, "reason": issue.reason]
+        return plain(r.json) ?? ["ok": false, "reason": issue.reason]
+    }
+
+    /// An engine report as Foundation JSON values (numbers as NSNumber, as an MCP client reads them), so in-process
+    /// callers see the same types as clients do.
+    static func plain(_ j: MGJSON) -> [String: Any]? {
+        (try? JSONSerialization.jsonObject(with: j.canonicalData)) as? [String: Any]
     }
 
     func checkJSON(_ json: MGJSON, _ lib: MGSolidLibrary, strict: Bool = false) -> (report: [String: Any], doc: MGSolidDocument?) {
