@@ -1,0 +1,27 @@
+{
+  "checks" : {
+    "gearPairs" : 0,
+    "meshesClosed" : true,
+    "openMeshes" : [
+
+    ]
+  },
+  "file" : {
+    "lines" : 8,
+    "sha256" : "7aec224b6150842674a558ef95e6ae7eafeff36cab65b3fdc0ef215063964cb9"
+  },
+  "ok" : true,
+  "parts" : 4,
+  "ratios" : {
+    "engine.crank" : 1
+  },
+  "reason" : null,
+  "steps" : [
+    "A slider-crank turns spinning motion into back-and-forth motion, as in an engine or a pump.",
+    "Input: the crank turns. Its pin travels in a circle of radius 18 mm.",
+    "The connecting rod (62 mm) links the crank pin to the piston and pushes and pulls it.",
+    "The piston slides along a straight line. Its stroke is twice the crank radius: 36 mm per turn."
+  ],
+  "title" : "Slider-crank: rotation to back-and-forth",
+  "triangles" : 596
+}

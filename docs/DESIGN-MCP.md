@@ -1,6 +1,6 @@
 # Design note: the Marty MCP tool set
 
-Status: draft, 2026-11-06. Engine pin: MartyGraphics `main` at
+Status: implemented in `marty-mcp` 0.1.0 (2026-11-06), except the later tools. Engine pin: MartyGraphics `main` at
 `76104deae44a186ccf29a43db9e091f088f12103`.
 
 ## Goal
@@ -21,14 +21,23 @@ no judgment of their own: every number in a result comes from the engine.
    can differ between GPUs and operating system versions.
 2. **Bounded.** A request line is at most 1 MiB. A document is at most the
    engine limit (64 KiB). A component definition is at most 16 KiB, and a
-   request carries at most 8 of them. A patch is at most 16 KiB. Larger input
-   is refused before it is parsed.
+   request carries at most 8 of them. A patch is at most 16 KiB. A line over
+   1 MiB is refused before it is parsed. A document, component or patch sent
+   as a string is measured as sent, before it is parsed. One sent as a JSON
+   object is parsed with the request and then measured in its canonical
+   (compact, sorted-key) form; `source.bytes` in a result is that canonical
+   size.
 3. **No network and no shell.** The server reads JSON-RPC from standard input
    and writes to standard output. It never opens a socket and never runs a
    process. Model text is only data for the engine parser.
 4. **Writes only to its own directory.** `render` writes into a new
-   subdirectory of the output root that the server got at launch
-   (`--output-dir`). A tool argument can never choose a path.
+   subdirectory `render-<digest>` of the output root: `--output-dir`, or by
+   default `~/Library/Caches/marty-mcp/renders` (`--no-render` turns `render`
+   off). A tool argument can never choose a path. The digest covers the engine
+   pin, Marty's render format version, the document, the components, the size
+   and the loop flag, so the same request reuses the same directory. A
+   process that is killed during a render can leave a `.partial-*` directory;
+   it is safe to delete.
 5. **Refusal is a result, not an error.** A document that the engine refuses
    gives `ok: false` with `reason` (a stable dotted token, for example
    `constraint.gearMesh.distance`) and `part`. A tool error (`isError: true`)
@@ -62,7 +71,7 @@ depends on what is in the cache.
 
 **Patch format.** `patch` uses the engine's own patch,
 `MGSolidParser.applying(_:to:)`. Its keys are `params`, `parts` (merge fields
-by part id; `null` removes a field; `instance.part` merges into that `use`
+by part id; for a plain part, `null` removes a field; `instance.part` merges into that `use`
 entry's `set`; the instance id edits the `use` entry itself), `constraints`
 and `steps` (each replaces the whole list) and `title`. Other keys are refused
 with `patch.unknown.<key>`. The engine patches only a compiled document, so the
@@ -71,9 +80,16 @@ and the base's own reason; a refused patch gives `stage: "patch"`.
 
 **Primitives.** The engine has no public list of primitive kinds and their
 keys. Marty keeps that list, taken from docs/SOLID-3D.md at the pin, and tests
-hold it to the engine: every example must be accepted, every missing required
-key must be named in the refusal, and every optional key must be known to the
-parser.
+hold it to the engine: every example must be accepted; for shapes, and for the
+drives and constraints with object bodies (`follow`, `crankSlider`,
+`crankRod`, `gearMesh`), every missing required key must be named in the
+refusal, an unknown key must be refused, and every optional key must be known
+to the parser.
+
+**Render refuses what check refuses.** `render` runs the same report as
+`check` and renders only an accepted document, so it also refuses
+`check.meshOpen` and `check.gearsInterpenetrate`. The engine's own CLI render
+does not run those two checks.
 
 Later tools, when the engine supports them:
 
@@ -99,7 +115,10 @@ render sequence (captions, step stills, the loop GIF and the manifest) is also
 only in the CLI, and it is the larger copy. Marty must copy both, and a copy
 can drift. Request to the engine coordinator: move both into the library (for
 example `MGSolidReport.make(doc)` and a render sequence type), so the CLI and
-Marty use one implementation. Until then, Marty keeps its copies small and
+Marty use one implementation. One difference: Marty keeps render time out of
+`manifest.json` (it is in the tool result), so the manifest of a render is
+reproducible; the CLI writes `renderSecondsPerFrame` into its manifest. A shared
+render sequence should return the time beside the manifest. Until then, Marty keeps its copies small and
 tests them against the same example models as the CLI.
 
 ## Transport
@@ -107,10 +126,13 @@ tests them against the same example models as the CLI.
 - JSON-RPC 2.0, one message per line on standard input and output (MCP stdio
   transport). Logs go to standard error only.
 - Methods: `initialize`, `notifications/initialized`, `ping`, `tools/list`,
-  `tools/call`. Other methods give `-32601`.
+  `tools/call`. Other requests give `-32601`. An unknown tool name in
+  `tools/call` gives `-32602`. A `null` argument means "not given". Unknown notifications (for
+  example `notifications/cancelled`) are ignored.
 - Protocol versions: the server answers with the client's version when it
-  supports it (2025-11-25, 2025-06-18 or 2025-03-26), else with 2025-11-25.
-  A tools-only server uses the same messages in all three.
+  supports it (2025-11-25 or 2025-06-18), else with 2025-11-25. Both use the
+  same messages for a tools-only server. 2025-03-26 is not offered: it
+  requires JSON-RPC batches and has no `structuredContent`.
 - Results have both `content` (one text item with the JSON) and
   `structuredContent` (the same JSON as an object).
 - Requests are handled one at a time, in order, on the main thread. Rendering

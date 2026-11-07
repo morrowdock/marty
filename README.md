@@ -8,19 +8,20 @@ them yet.
 
 ## Goal
 
-None of this works yet. This is what Marty is being built to do.
+The MCP server works (early preview). The teaching loop is not built yet.
+This is what Marty is being built to do.
 
 You ask a learning question, for example "How does a planetary gearbox
 reduce speed?". Marty will then:
 
-1. Plans a short lesson.
-2. Finds parts in the MartyGraphics component library.
-3. Writes a 3D scene document (and defines a missing component when it must).
-4. Asks the engine to check the scene. The engine solves the motion, checks
+1. Plan a short lesson.
+2. Find parts in the MartyGraphics component library.
+3. Write a 3D scene document (and defines a missing component when it must).
+4. Ask the engine to check the scene. The engine solves the motion, checks
    every number and refuses a wrong scene with an exact reason.
-5. Repairs the scene from those reasons (at most 3 times).
-6. Renders the scene and teaches it beat by beat.
-7. Answers follow-up questions, such as "What if the sun gear had more teeth?".
+5. Repair the scene from those reasons (at most 3 times).
+6. Render the scene and teach it beat by beat.
+7. Answer follow-up questions, such as "What if the sun gear had more teeth?".
 
 The engine is the source of truth. It never guesses. Marty is the teacher on
 top of it. The aim is that any model (Claude, GPT, Gemini or a small local
@@ -31,7 +32,7 @@ the model. This is not tested yet.
 
 | Part | Status |
 | --- | --- |
-| MCP server (`marty-mcp`): engine tools for any MCP client | Designed ([docs/DESIGN-MCP.md](docs/DESIGN-MCP.md)) |
+| MCP server (`marty-mcp`): engine tools for any MCP client | Early preview: `catalog`, `explain`, `check`, `component_check`, `patch`, `render` ([setup](docs/MCP-CLIENTS.md)) |
 | Marty loop: plan, author, check, repair, render, teach | Planned |
 | Bench: development questions for prompt-to-3D lessons | Planned |
 

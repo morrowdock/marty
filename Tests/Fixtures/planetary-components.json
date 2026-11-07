@@ -1,0 +1,12 @@
+{"v": 1, "kind": "assembly", "title": "Planetary gear set (from components)", "units": "mm",
+ "parts": [
+  {"id": "base", "use": "housingBase", "at": [0, 0, -1]},
+  {"id": "stage", "use": "planetaryStage", "with": {"sunTeeth": 24, "planetTeeth": 18, "planets": 3, "module": 2, "width": 13}}
+ ],
+ "steps": [
+  {"say": "Three planet gears ride on a carrier between a sun gear and a fixed ring gear.", "camera": "hero"},
+  {"say": "Input: the brass sun gear (24 teeth) turns.", "highlight": ["stage.input"], "spin": 1},
+  {"say": "Each planet (18 teeth) meshes with the sun and rolls inside the fixed ring (60 teeth).", "highlight": ["stage.planet"], "spin": 1},
+  {"say": "Output: the carrier turns 24 / (24 + 60) = 2/7 of a turn per sun turn, in the same direction.", "highlight": ["stage.output"], "spin": 1},
+  {"say": "Exploded along the shaft axis: base, ring, sun, planets and carrier.", "explode": 1, "camera": "iso"}
+ ]}
