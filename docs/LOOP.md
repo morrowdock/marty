@@ -29,8 +29,12 @@ the MCP server uses), so a run needs no MCP client.
 7. **Follow-up** (with `--follow-up` or in `bench`). The model gets the checked
    document and the engine report, and answers with an engine patch (or `null`
    when nothing must change). The engine checks the patch, with at most 3
-   repairs. Then the model writes a short answer from the engine reports before
-   and after the change.
+   repairs. A patch that changes only `title` and `steps` is refused
+   (`followup.textOnly`): it would narrate a change that the engine never
+   solved. Then the model writes a short answer from the engine reports before
+   and after the change, the accepted change itself, and whether the solved
+   ratios changed. An empty follow-up (the out-of-scope bench questions have
+   none) means no follow-up turn.
 
 Model text is only parsed as JSON and given to the engine. It is never run.
 
