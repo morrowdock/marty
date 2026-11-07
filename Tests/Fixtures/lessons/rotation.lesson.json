@@ -1,0 +1,18 @@
+{"v":1,"kind":"lesson","title":"Rotating a triangle",
+ "scene":{"v":1,"template":"rotate2d","params":{"pts":[[2,1],[4,1],[2,3]],"angle":0}},
+ "beats":[
+  {"say":"This is triangle ABC. Each label shows a corner's coordinates.",
+   "ops":[{"op":"add","item":{"id":"hiA","k":"highlight","target":"vA","label":"A"}}]},
+  {"say":"Now we turn the triangle about the origin O by {theta}.",
+   "ops":[{"op":"animate","param":"angle","to":90,"dur":1.5}]},
+  {"say":"A moved from ({ax0}, {ay0}) to ({ax}, {ay}). Its distance to O is still {ra}.",
+   "ops":[{"op":"set","id":"hiA","key":"label","value":"A after the turn"}],
+   "check":[{"value":"ax","eq":-1},{"value":"ay","eq":2},{"value":"ra","eq":2.24}]},
+  {"say":"Your turn. Drag the slider. The engine moves the triangle and updates every label.",
+   "ops":[{"op":"remove","id":"hiA"},
+          {"op":"bind","control":{"id":"angle","k":"slider","param":"angle","min":0,"max":360,"step":5,"label":"Angle"}}]},
+  {"say":"At {theta} every coordinate changes sign. A is now at ({ax}, {ay}).",
+   "ops":[{"op":"animate","param":"angle","to":180,"dur":1.5},
+          {"op":"add","item":{"id":"hiShape","k":"highlight","target":"shape","label":"half a turn"}}],
+   "check":[{"value":"ax","eq":-2},{"value":"ay","eq":-1}]}
+ ]}

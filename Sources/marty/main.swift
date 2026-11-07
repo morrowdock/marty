@@ -66,7 +66,8 @@ func fail(_ s: String) -> Never { FileHandle.standardError.write(Data((s + "\n")
         let r = try MartyLoop(model: model, out: outURL, options: options).run(question: subject)
         var line: [String: Any] = ["accepted": r["accepted"] ?? false, "attempts": (r["attempts"] as? [Any])?.count ?? 0,
                                    "seconds": r["seconds"] ?? 0, "receipt": out + "/receipt.json"]
-        // Exit codes: 0 accepted, 1 not accepted, 2 usage or setup error, 3 a model call failed in the adapter.
+        // Exit codes: 0 accepted, 1 not accepted, 2 usage, setup or a run that threw (no receipt), 3 a model call failed
+        // in the adapter.
         if let errs = r["adapterErrors"] as? [String], !errs.isEmpty { line["adapterErrors"] = errs; print(MartyJSON.string(line)); return 3 }
         print(MartyJSON.string(line))
         return (r["accepted"] as? Bool) == true ? 0 : 1

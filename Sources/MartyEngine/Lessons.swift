@@ -1,0 +1,109 @@
+// SPDX-License-Identifier: Apache-2.0
+import Foundation
+import MartyGraphics
+
+/// Beat-by-beat lessons (MartyGraphics `MGLesson` / `MGLessonSession`, docs/LESSONS.md at the pin).
+/// `lessonCheck` loads a whole lesson document into a fresh session; `lessonStream` feeds statements into a session the
+/// server keeps, so a model can write a lesson one statement at a time and see each refusal at once.
+/// Sessions use immediate pacing and a manual clock, so every result is deterministic.
+extension MartyEngine {
+    /// At most this many stream sessions are kept; the oldest is dropped first.
+    public nonisolated static let maxLessonSessions = 8
+    /// Bytes per `lesson_stream` call (the engine's own stream budget is 32 KiB in all).
+    public nonisolated static let maxChunkBytes = MGLessonLimits.lessonBytes
+
+    /// The engine's opt-in geometry pack (`rotate2d`), registered once per process.
+    static let geometryRegistered: Bool = {
+        do { try MGPacks.register(MGGeometryPack.pack); return true } catch { return MGPacks.pack(ofTemplate: "rotate2d") != nil }
+    }()
+
+    static func issue(_ i: MGLessonIssue) -> [String: Any] {
+        ["reason": i.reason, "beat": i.beat as Any, "statement": i.statement as Any, "command": i.command as Any,
+         "origin": i.origin.rawValue, "detail": i.detail as Any]
+    }
+
+    static func event(_ e: MGLessonEvent) -> [String: Any] {
+        var out: [String: Any] = ["event": e.name]
+        switch e {
+        case .accepted(let n): out["statement"] = n
+        case .refused(let i): out.merge(issue(i)) { a, _ in a }
+        case .lineQueued(let k, let text): out["beat"] = k; out["text"] = text
+        case .lineDue(let k, let text, let changed): out["beat"] = k; out["text"] = text; out["changed"] = changed
+        case .lineStarted(let k), .lineEnded(let k), .beatPresented(let k): out["beat"] = k
+        case .firstPresented, .streamEnded, .lessonComplete: break
+        }
+        return out
+    }
+
+    /// What the learner would see now: the beat cursor, engine values (number and formatted text) and controls.
+    static func board(_ s: MGLessonSession) -> [String: Any] {
+        guard let st = s.state else { return ["beat": NSNull(), "values": [String: Any](), "controls": [Any]()] }
+        var values: [String: Any] = [:]
+        for (name, v) in st.scene.values { values[name] = ["value": v.value, "unit": v.unit, "text": v.text] }
+        let controls: [[String: Any]] = st.controls.map {
+            ["id": $0.id, "kind": $0.kind, "param": $0.param, "min": $0.min, "max": $0.max, "step": $0.step,
+             "label": $0.label, "value": st.value(of: $0) as Any]
+        }
+        return ["beat": st.beat, "values": values, "controls": controls, "title": s.title as Any, "complete": s.isComplete]
+    }
+
+    public func lessonCheck(lesson: Any) throws -> [String: Any] {
+        _ = Self.geometryRegistered
+        let json: MGJSON
+        switch Decode.json(lesson, limit: 2 * MGLessonLimits.lessonBytes, tooLarge: "lesson.bytes") {
+        // The engine's own words for unreadable or oversized lesson input.
+        case .failure(let r): return ["ok": false, "reason": r.reason == "json" ? "lesson.json" : r.reason]
+        case .success(let j): json = j
+        }
+        let parsed: MGLesson
+        switch MGLesson.parse(json: json) {
+        case .failure(let i): return (["ok": false] as [String: Any]).merging(Self.issue(i)) { a, _ in a }
+        case .success(let l): parsed = l
+        }
+        var session = MGLessonSession(pacing: .immediate, clock: MGManualClock())
+        switch session.load(parsed) {
+        case .failure(let i):
+            // All or nothing: the first problem refuses the whole lesson, with its location.
+            return (["ok": false, "statementBytes": parsed.statementStream.utf8.count] as [String: Any]).merging(Self.issue(i)) { a, _ in a }
+        case .success:
+            _ = session.finishNow()
+        }
+        let events = session.events
+        let lines: [[String: Any]] = events.compactMap {
+            if case .lineQueued(let k, let text) = $0 { return ["beat": k, "text": text] }
+            return nil
+        }
+        return ["ok": true, "reason": NSNull(), "title": parsed.title as Any, "beats": parsed.beats.count, "lines": lines,
+                "board": Self.board(session), "statementBytes": parsed.statementStream.utf8.count,
+                "events": events.map(\.name)]
+    }
+
+    /// Feeds `chunk` (raw statement text, any split) into session `id`, or into a new session when `id` is nil.
+    /// `end` ends the stream (`endStream()`, then `finishNow()`), which presents every complete beat.
+    public func lessonStream(session id: String?, chunk: String, end: Bool) throws -> [String: Any] {
+        _ = Self.geometryRegistered
+        guard chunk.utf8.count <= Self.maxChunkBytes else {
+            throw ToolError("lesson.chunk.bytes", "at most \(Self.maxChunkBytes) bytes per call; the whole stream is at most 32 KiB")
+        }
+        let key: String
+        var session: MGLessonSession
+        if let id {
+            guard let i = lessonSessions.firstIndex(where: { $0.id == id }) else {
+                throw ToolError("lesson.session.unknown", "this server does not hold \(id.prefix(40)); start a new session without `session`")
+            }
+            key = id
+            session = lessonSessions.remove(at: i).session
+        } else {
+            lessonSessionCounter += 1
+            key = "lesson-\(lessonSessionCounter)"
+            session = MGLessonSession(pacing: .immediate, clock: MGManualClock())
+        }
+        var events = session.feed(chunk)
+        if end { events += session.endStream(); events += session.finishNow() }
+        lessonSessions.append((key, session))
+        if lessonSessions.count > Self.maxLessonSessions { lessonSessions.removeFirst(lessonSessions.count - Self.maxLessonSessions) }
+        let refused = events.contains { if case .refused = $0 { return true }; return false }
+        return ["ok": !refused, "session": key, "events": events.map(Self.event), "board": Self.board(session),
+                "waitingBeats": session.waitingBeats, "unfinishedBytes": session.unfinishedInput.count]
+    }
+}

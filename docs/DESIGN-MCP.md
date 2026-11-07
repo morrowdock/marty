@@ -1,7 +1,7 @@
 # Design note: the Marty MCP tool set
 
 Status: implemented in `marty-mcp` 0.1.0 (2026-11-06), except the later tools. Engine pin: MartyGraphics `main` at
-`76104deae44a186ccf29a43db9e091f088f12103`.
+`31a47ba141a208eaf76b38fc9df5cecc7703487e` (adds PR #20, lessons; the solid engine is unchanged from 76104dea).
 
 ## Goal
 
@@ -68,6 +68,8 @@ depends on what is in the cache.
 | `component_check` | `definition`; `with` (optional values) | `ok`, `reason`, `part`, the catalog entry, a ready `use` entry and the instance checks. |
 | `patch` | `document` or `ref`; `patch` (the engine format, below); `components` (optional) | The `check` result of the patched document, its new `ref`, and the patched document when `return_document` is true. |
 | `render` | `document` or `ref`; `components`; `size` (default 1280x800, at most 1920x1200); `loop` (default false) | `ok`, the output directory, the file names (hero, exploded, one still per step, optional loop GIF, snapshot, manifest) and their SHA-256 digests. |
+| `lesson_check` | `lesson` (a lesson document, MartyGraphics docs/LESSONS.md) | All or nothing, in a fresh engine session: `ok`, or the reason with `beat`, `statement`, `command`, `detail`. Accepted: each beat's line with `{placeholders}` filled from engine values, and the final `board` (beat cursor, engine values with their formatted text, controls). |
+| `lesson_stream` | `chunk` (statement text, any split, at most 32 KiB); `session` (optional); `end` (optional) | The session id, this call's events (`accepted`, `refused` with reason and location, `lineQueued` with filled text, `beatPresented`, `streamEnded`, ...), the `board`, beats waiting and unfinished bytes. `ok` is false when this call had a refusal. |
 
 **Patch format.** `patch` uses the engine's own patch,
 `MGSolidParser.applying(_:to:)`. Its keys are `params`, `parts` (merge fields
@@ -98,11 +100,14 @@ Later tools, when the engine supports them:
   `tiers` (Solved, Built or Described for each part), `warnings` (frame
   lints) and `readBack` (each part's world position, axis and parent frame in
   plain words). `strict: true` maps to the engine's strict mode.
-- **Lessons** (MartyGraphics PR #20). `lesson_check` checks a lesson
-  document and returns its beats. `lesson_stream` takes statements one at a
-  time and returns, for each, accepted or refused with a reason, and the
-  timing events. The session state lives in the server under a session id,
-  with a bound on sessions and statements.
+**Lessons.** Both lesson tools use the engine's own session
+(`MGLessonSession`) with immediate pacing and a manual clock, so results hold
+no time and are deterministic. The server keeps at most 8 stream sessions
+(the oldest is dropped; an unknown or dropped id gives the tool error
+`lesson.session.unknown`). The engine's own budgets apply (32 KiB and 256
+statements per stream, 24 beats, 12 commands and 8 checks per beat). The
+opt-in `rotate2d` template (`MGGeometryPack`) is registered at start. Lessons
+are 2D in this engine phase; solid lessons are not in the engine yet.
 
 Until a feature is in the pinned engine, the server does not offer the tool or
 the field. The server never imitates an engine feature.

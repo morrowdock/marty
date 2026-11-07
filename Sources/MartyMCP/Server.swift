@@ -66,8 +66,9 @@ public final class MCPServer {
     static let instructions = """
         MartyGraphics engine tools. The engine is the source of truth: it solves motion, checks every number and refuses \
         a wrong document with one stable reason token and the part. Workflow: catalog -> explain (as needed) -> write a \
-        document -> check -> repair from the exact reason -> render. Use patch for what-if questions. Never state a number \
-        that the engine did not report.
+        document -> check -> repair from the exact reason -> render. Use patch for what-if questions. For a 2D \
+        beat-by-beat lesson, use lesson_check (whole document) or lesson_stream (one statement at a time). Never state a \
+        number that the engine did not report.
         """
 
     /// The answer to a line over the request bound (`LineSplitter` gives nil for it).
