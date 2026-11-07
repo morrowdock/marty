@@ -147,6 +147,7 @@ public enum MartyPrompts {
             ("text.placeholder", "A placeholder names no fact, or its form is wrong. Use a fact name the engine solved, as {name} or {name|mod}."),
             ("text.sign", "The abs modifier needs a claim in the same step that proves the sign: {\"value\": \"<fact>\", \"lt\": 0} or \"gt\": 0."),
             ("text.rounding", "That value would print as 0: use {name|frac} or {name|inv}."),
+            ("step.check", "A step's check is a list of 1 to 8 claims: [{\"value\": \"<fact>\", \"eq\" | \"lt\" | \"gt\": number}] (v2 only)."),
             ("check.failed", "A claim in the step is false: the engine solved a different value. Change or remove the claim, or change the model."),
             ("check.fact", "A claim names no fact. Use a fact name the engine solved."),
             ("joint.idle", "A jointed part that nothing moves: give it a drive (input, follow or crank), a gearMesh or a fixed constraint, or remove its joint."),
