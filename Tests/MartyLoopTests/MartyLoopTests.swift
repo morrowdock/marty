@@ -300,10 +300,9 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(m.prompts[2].user.contains("s: world centre"), m.prompts[2].user)
     }
 
-    /// An expect mismatch inside a component definition sent as a string: the read-back still comes.
-    func testExpectInAStringComponentGetsTheReadBack() throws {
-        let def = #"{\"v\": 1, \"kind\": \"component\", \"id\": \"spinner\", \"title\": \"Spinner\", \"about\": \"A driven shaft.\", \"parts\": [{\"id\": \"s\", \"name\": \"Shaft\", \"shape\": {\"shaft\": {\"radius\": 4, \"length\": 20}}, \"joint\": {\"revolute\": [0, 0, 1]}, \"drive\": {\"input\": 1}, \"expect\": {\"axisWorld\": [1, 0, 0]}}]}"#
-        let doc = #"{"document": {"v": 2, "kind": "assembly", "title": "Spinner", "units": "mm", "parts": [{"id": "u", "use": "spinner"}]}, "components": ["\#(def)"]}"#
+    /// An expect mismatch inside a use entry's set: the read-back still comes (from a copy without it).
+    func testExpectInASetEntryGetsTheReadBack() throws {
+        let doc = #"{"document": {"v": 2, "kind": "assembly", "title": "Shaft", "units": "mm", "parts": [{"id": "u", "use": "shaftWithBearing", "set": {"shaft": {"expect": {"axisWorld": [1, 0, 0]}}}}]}}"#
         let (m, r) = try prompts([#"{"components": []}"#, doc, #"{"document": \#(Self.spurReduction)}"#])
         let reason = (r["attempts"] as? [[String: Any]])?.first?["reason"] as? String ?? ""
         XCTAssertTrue(reason.hasPrefix("expect.axis"), reason)

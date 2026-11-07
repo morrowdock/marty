@@ -107,8 +107,8 @@ public final class MartyLoop {
 
     /// A refusal can come before the report exists (captions, claims and `expect` are checked while the document
     /// compiles). Marty then asks the engine about a copy without the parts that were refused: without steps and with a
-    /// plain title for the facts (facts do not depend on captions); without `expect` (top-level parts, use-entry `set`
-    /// entries, component definition parts) and also without steps and with a plain title for the read-back, because
+    /// plain title for the facts (facts do not depend on captions); without `expect` (the document's parts and use-entry `set`
+    /// entries) and also without steps and with a plain title for the read-back, because
     /// `expect` is checked before captions. Plain profile, so a strict warning cannot hide them. Nil when that copy is
     /// refused too.
     func strippedReport(_ document: Any, _ components: [Any], captions: Bool, expectations: Bool) -> [String: Any]? {
@@ -118,20 +118,10 @@ public final class MartyLoop {
         else { return nil }
         // Captions are checked after `expect`, so the expect copy drops them too: a second error cannot hide the read-back.
         if captions || expectations { doc.removeValue(forKey: "steps"); doc["title"] = "Facts" }
-        var comps = components
-        if expectations {
-            if let parts = doc["parts"] as? [[String: Any]] { doc["parts"] = parts.map(Self.withoutExpect) }
-            // expect is legal in a use entry's set and in component definition parts too.
-            comps = components.map { c -> Any in
-                var d: [String: Any]
-                if let o = c as? [String: Any] { d = o }
-                else if let s = c as? String, let o = (try? JSONSerialization.jsonObject(with: Data(s.utf8))) as? [String: Any] { d = o }
-                else { return c }
-                if let parts = d["parts"] as? [[String: Any]] { d["parts"] = parts.map(Self.withoutExpect) }
-                return d
-            }
-        }
-        guard let r = try? engine.check(document: doc, ref: nil, components: comps, strict: false), r["facts"] != nil else { return nil }
+        // expect is a v2 part key: legal on the document's parts and in a use entry's set (applied under the document's
+        // keys). Component definitions are v1 and cannot hold it.
+        if expectations, let parts = doc["parts"] as? [[String: Any]] { doc["parts"] = parts.map(Self.withoutExpect) }
+        guard let r = try? engine.check(document: doc, ref: nil, components: components, strict: false), r["facts"] != nil else { return nil }
         return r
     }
 
