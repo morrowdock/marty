@@ -212,6 +212,19 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(model.prompts[4].system.contains("do no arithmetic"))
     }
 
+    /// The compound-train pattern in the constraint.underdetermined hint is accepted by the engine (strict) and solves.
+    func testCompoundTrainHintPatternIsTrue() throws {
+        let doc: [String: Any] = ["v": 2, "kind": "assembly", "title": "Two stages", "units": "mm", "parts": [
+            ["id": "s1", "use": "spurPair"],
+            ["id": "s2", "use": "spurPair", "at": [48, 0, 14],
+             "set": ["pinion": ["parent": "s1.output", "at": [0, 0, 14], "joint": NSNull(), "drive": NSNull()]]]]]
+        let r = try MartyEngine(outputRoot: nil).check(document: doc, ref: nil, components: [], strict: true)
+        XCTAssertEqual(r["ok"] as? Bool, true, "\(r["reason"] ?? "") \(r["part"] ?? "")")
+        let ratios = try XCTUnwrap(r["ratios"] as? [String: Double])
+        XCTAssertEqual(try XCTUnwrap(ratios["s2.wheel"]), 1.0 / 9.0, accuracy: 1e-9, "\(ratios)")
+        XCTAssertTrue(MartyPrompts.hint(for: "constraint.underdetermined")?.contains("s1.output") == true)
+    }
+
     func testSpecificHintsWinOverGeneralOnes() {
         XCTAssertTrue(MartyPrompts.hint(for: "constraint.conflict.drive")?.contains("follow or crank drive") == true)
         XCTAssertTrue(MartyPrompts.hint(for: "constraint.conflict")?.contains("turns only with its parent") == true)

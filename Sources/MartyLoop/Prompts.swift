@@ -5,7 +5,7 @@ import Foundation
 /// author step sees a short format guide plus `explain` entries for the parts the plan chose. The receipt records the
 /// size and SHA-256 of every prompt, so a change in context is always measured.
 public enum MartyPrompts {
-    public static let version = "marty-prompts/3"
+    public static let version = "marty-prompts/4"
 
     static let role = """
         You are Marty, a teacher who explains how things work with checked 3D models. A deterministic engine \
@@ -55,6 +55,9 @@ public enum MartyPrompts {
           "gearMesh" constraints: {"gearMesh": {"a": "<gear>", "b": "<gear>", "carrier": "<carrier, for planets>"}}.
           Meshing gears share one module. Centre distance: module × (z1 + z2) / 2 for two external gears,
           module × (zRing − zPlanet) / 2 for a planet in a ring. {"fixed": "<part>"} holds a joint still.
+        - A meshed gear gets its speed only from an input drive, its meshes, a fixed constraint or a turning parent: never
+          give it a follow or crank drive. A compound gear (two gears on one shaft) is a child with no joint and no drive
+          of the gear it turns with.
         - Every joint must move: give it a drive (input, follow or crank), a gearMesh or a fixed constraint, or remove it
           (strict check: joint.idle.<id>). A turn axis runs through the part's own origin along its joint vector and
           must pass through the part's own shape (frame.axis.off.<id>): put the shape on the axis (the shape entry's own
@@ -65,7 +68,7 @@ public enum MartyPrompts {
         - Numbers in a step's say come ONLY from engine facts: write {fact} or {fact|mod} and the engine fills it.
           Any number character in a say is refused, also ½, ² or ₂ (text.number.step.<n>). Facts: <part>.teeth, <part>.module, <part>.speed
           (turns per input turn, signed, relative to its parent), <part>.worldSpeed, <part>.travel (stroke of a sliding
-          part), <part>.crankRadius, <part>.rodLength, count.<repeated part>, <instance>.ratio; component parts and
+          part), <part>.crankRadius and <part>.rodLength (both on the part with the crankSlider drive, the piston), count.<repeated part>, <instance>.ratio; component parts and
           anchors work ({unit.output.speed}, {unit.part.teeth}). Modifiers: frac (exact fraction, "2/7") and inv (1/x)
           need a value without a unit; pct and deg apply to speeds and ratios; frac, pct and deg end a chain; abs drops
           the sign and needs a claim in the same step that proves it ("lt": 0 or "gt": 0).
@@ -128,10 +131,11 @@ public enum MartyPrompts {
             ("constraint.gearMesh.module", "Meshing gears must have the same module."),
             ("constraint.gearMesh.interference", "The teeth overlap: use more teeth on the small gear, or more teeth difference between ring and planet."),
             ("constraint.gearMesh.parentRotates", "A planet on a turning carrier needs \"carrier\" named in its gearMesh."),
-            ("constraint.underdetermined", "Some gear joint has no solved speed: add a gearMesh to it, an input drive, or a fixed constraint."),
+            ("constraint.underdetermined", "A gear joint has no solved speed. The gear solve uses only input drives, gearMesh and fixed constraints and turning parents; a follow or crank drive is not part of it, so never drive a meshed gear with follow. For a second stage, key its pinion to the first wheel: a child with no joint and no drive, on the second spurPair use entry \"set\": {\"pinion\": {\"parent\": \"s1.output\", \"at\": [0, 0, 14], \"joint\": null, \"drive\": null}}."),
             // Hints match by prefix, so the more specific reason comes first.
             ("constraint.conflict.drive", "A part whose speed the gear solve gives (a meshed gear, a turning carrier, or a part in a fixed constraint) cannot also have its own follow or crank drive: remove that drive."),
             ("constraint.conflict", "Two constraints give one joint different speeds: remove the extra input, fixed or mesh. A gear with no joint turns only with its parent; with no turning parent it stays still. To let it turn on its own, give it a joint: in a document, on the component's use entry, \"set\": {\"<inner id>\": {\"joint\": {\"revolute\": [0, 0, 1]}}}; in a follow-up patch, \"parts\": {\"<instance>.<inner id>\": {\"joint\": {\"revolute\": [0, 0, 1]}}}."),
+            ("component.use.unknown", "A use entry takes only id, use, with, at, rot, parent and set. Put fields of an inner part (drive, joint, material, expect) inside set."),
             ("component.set.repeat", "A repeated part is edited through its base id, which changes every copy; one copy cannot be edited alone. In a document's use entry: \"set\": {\"planet\": {...}}; in a follow-up patch: \"parts\": {\"stage.planet\": {...}} (not stage.planet1)."),
             ("component.set.id", "Each entry in a component's set is an object of fields (not null), without id or use."),
             ("assembly.title", "The title is 1 to 80 Unicode code points, not blank, with no <, >, :// or control or format characters."),
