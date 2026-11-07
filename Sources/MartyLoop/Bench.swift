@@ -65,7 +65,7 @@ public enum Bench {
                     "model": model, "prompts": MartyPrompts.version,
                     "engine": ["repository": MartyPin.engineRepository, "revision": MartyPin.engineRevision],
                     "options": ["repairs": options.repairs, "render": options.render, "followUps": followUps],
-                    "totals": ["questions": runs.count, "accepted": accepted.count,
+                    "totals": ["questions": runs.count, "accepted": accepted.count, "errors": runs.filter { $0["error"] != nil }.count,
                                "inScope": inScope.count, "inScopeAccepted": inScope.filter { $0["accepted"] as? Bool == true }.count,
                                "firstTry": runs.filter { $0["firstTry"] as? Bool == true }.count,
                                "medianSeconds": seconds.isEmpty ? 0 : seconds[seconds.count / 2]],
@@ -82,7 +82,7 @@ public enum Bench {
                 r = try MartyLoop(model: adapter, out: out.appendingPathComponent(q.id, isDirectory: true), options: o).run(question: q.prompt)
             } catch {
                 runs.append(["id": q.id, "scope": q.scope, "category": q.category, "accepted": false, "attempts": 0,
-                             "firstTry": false, "error": "\(error)"])
+                             "firstTry": false, "reason": (error as? AdapterError)?.reason ?? "bench.error", "error": "\(error)"])
                 try JSONSerialization.data(withJSONObject: MartyJSON.sanitized(summary()), options: [.prettyPrinted, .sortedKeys])
                     .write(to: out.appendingPathComponent("summary.json"))
                 continue

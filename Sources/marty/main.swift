@@ -51,7 +51,8 @@ func fail(_ s: String) -> Never { FileHandle.standardError.write(Data((s + "\n")
             let s = try Bench.run(file: URL(fileURLWithPath: subject), ids: ids, makeModel: { try ClaudeCLIAdapter(model: modelID) },
                                   out: outURL, options: options, followUps: followUps)
             print(MartyJSON.string(["totals": s["totals"] ?? [String: Any](), "summary": out + "/summary.json"]))
-            return 0
+            // A question that could not run at all (no model CLI, a broken run) is an infrastructure failure.
+            return ((s["totals"] as? [String: Any])?["errors"] as? Int ?? 0) > 0 ? 1 : 0
         }
         let model: ModelAdapter
         if let s = scripted {

@@ -36,7 +36,7 @@ The protocol amendments of the original eval are copied unchanged:
   tools, no MCP servers, no user or project settings and a minimal environment
   (no API key). The context is what the Marty loop sends (the receipt records
   the size and SHA-256 of every prompt) plus the Claude Code CLI's own fixed
-  context, about 640 tokens in a probe on 2026-11-07.
+  context, about 640 tokens in a probe on 2026-11-06.
 - Plan, author, check with the engine, at most 3 repairs from the exact refusal
   reason, then the follow-up as an engine patch.
 - Record everything: one receipt per question (`marty.run-receipt/v1`) and a
@@ -50,6 +50,11 @@ B="$(swift build -c release --show-bin-path)"
 
 The `claude-cli` adapter uses the local Claude Code CLI (`claude -p`) and the
 account that is logged in there. It needs no API key.
+
+A question that cannot run at all (for example the model CLI is missing) is a
+row with `error` and a one-token `reason`; `totals.errors` counts them, and
+`marty bench` then exits with status 1, so an infrastructure failure never
+reads as a model result.
 
 ## What is published
 

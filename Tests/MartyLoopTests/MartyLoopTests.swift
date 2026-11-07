@@ -174,6 +174,9 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(with["sunTeeth"] as? Int, 30, "a parameter the patch did not name stays")
         XCTAssertEqual(with["planets"] as? Int, 4)
         XCTAssertNil(with["planetTeeth"], "null removes a parameter")
+        // A patch that swaps the component keeps only its own with values.
+        let swap = try XCTUnwrap(MartyLoop.mergingWith(["parts": ["stage": ["use": "otherStage", "with": ["a": 1]]]], base: base) as? [String: Any])
+        XCTAssertEqual(MartyJSON.data(((swap["parts"] as? [String: Any])?["stage"] as? [String: Any])?["with"] ?? [:]), MartyJSON.data(["a": 1]))
         // Not a use entry, or no with: unchanged.
         let other: [String: Any] = ["parts": ["gear": ["material": "brass"]]]
         XCTAssertEqual(MartyJSON.data(MartyLoop.mergingWith(other, base: base)), MartyJSON.data(other))
@@ -190,6 +193,24 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(attempts.first?["component"] as? Int, 0)
         XCTAssertTrue(model.prompts[2].user.contains("on part `components[0]"), model.prompts[2].user)
         XCTAssertEqual(r["accepted"] as? Bool, true)
+    }
+
+    /// A render that fails is recorded in the receipt; the checked lesson still stands.
+    func testRenderFailureIsRecorded() throws {
+        var o = MartyLoop.Options()
+        o.render = true
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let model = ScriptedAdapter(replies: [#"{"components": []}"#, #"{"document": \#(Self.spurReduction)}"#])
+        let loop = try MartyLoop(model: model, out: out, options: o)
+        // A file where the render directory must go makes the render fail before any GPU work.
+        try Data("x".utf8).write(to: out.appendingPathComponent("render"))
+        let r = try loop.run(question: "q")
+        XCTAssertEqual(r["accepted"] as? Bool, true)
+        XCTAssertEqual((r["render"] as? [String: Any])?["ok"] as? Bool, false)
+        XCTAssertNotNil((r["render"] as? [String: Any])?["error"] as? String)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: out.appendingPathComponent("lesson.json").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: out.appendingPathComponent("receipt.json").path))
     }
 
     func testBadOptionsAreRefusedBeforeAnyModelCall() throws {
@@ -215,6 +236,8 @@ final class MartyLoopTests: XCTestCase {
         let runs = try XCTUnwrap(s["runs"] as? [[String: Any]])
         XCTAssertEqual(runs.count, 2)
         XCTAssertNotNil(runs[0]["error"])
+        XCTAssertEqual(runs[0]["reason"] as? String, "adapter.claude.missing")
+        XCTAssertEqual((s["totals"] as? [String: Any])?["errors"] as? Int, 1)
         XCTAssertEqual(runs[1]["accepted"] as? Bool, true)
         XCTAssertThrowsError(try Bench.run(file: file, ids: ["A", "A"], makeModel: { ScriptedAdapter(replies: []) },
                                            out: dir.appendingPathComponent("run2"), options: .init(), followUps: false))
@@ -228,8 +251,8 @@ final class MartyLoopTests: XCTestCase {
         try XCTSkipIf(files.isEmpty, "engine checkout not found at \(dir.path)")
         let source = try files.filter { $0.hasSuffix(".swift") }.map { try String(contentsOf: dir.appendingPathComponent($0), encoding: .utf8) }.joined()
         for key in MartyPrompts.hintKeys {
-            let last = key.split(separator: ".").last.map(String.init) ?? key
-            XCTAssertTrue(source.contains("\"\(key)") || source.contains(".\(last)\"") || source.contains(".\(last).") , "hint key \(key) is not in the engine source")
+            // The full reason as a string literal (a prefix like "ref.unknown.\\(id)" also starts this way).
+            XCTAssertTrue(source.contains("\"\(key)"), "hint key \(key) is not a reason literal in the engine source")
         }
     }
 }

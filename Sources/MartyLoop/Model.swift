@@ -56,7 +56,14 @@ public struct ClaudeCLIAdapter: ModelAdapter {
 
     /// The child gets only these variables. In particular no ANTHROPIC_API_KEY (which would bill the paid API instead
     /// of the logged-in subscription) and nothing from a parent Claude Code session.
-    static let environmentAllowlist = ["HOME", "PATH", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE"]
+    /// Kept: what the subscription login needs (keychain via HOME/USER, or a `claude setup-token` token in
+    /// CLAUDE_CODE_OAUTH_TOKEN, and CLAUDE_CONFIG_DIR), proxies and CA certificates, and the locale.
+    static let environmentAllowlist = ["HOME", "PATH", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE",
+                                       "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR",
+                                       "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy",
+                                       "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE"]
+    /// After the child exits, how long to wait for its pipes to close (a grandchild can keep them open).
+    static let drainGrace: TimeInterval = 5
     /// Largest reply envelope read from the child; the rest is drained and dropped.
     static let maxOutputBytes = 8 << 20
 
@@ -86,10 +93,11 @@ public struct ClaudeCLIAdapter: ModelAdapter {
         let t0 = Date()
         do { try p.run() } catch { try? fm.removeItem(at: work); try? fm.removeItem(at: ctx); throw error }
 
-        // Everything that can block runs on the group, so one timeout covers writing, reading and the exit.
+        // Reading and writing run on their own threads; the timeout is on the child's exit. Only the writer closes stdin.
         final class Box: @unchecked Sendable { var out = Data(), err = Data() }
         let box = Box()
-        let group = DispatchGroup()
+        let group = DispatchGroup()     // the two pipe readers
+        let exited = DispatchGroup()    // the child's exit
         func drain(_ h: FileHandle, _ keep: @escaping (Data) -> Void) {
             group.enter()
             DispatchQueue.global().async {
@@ -105,23 +113,23 @@ public struct ClaudeCLIAdapter: ModelAdapter {
         let lock = NSLock()
         drain(stdout.fileHandleForReading) { d in lock.lock(); box.out.append(d); lock.unlock() }
         drain(stderr.fileHandleForReading) { d in lock.lock(); if box.err.count < 4096 { box.err.append(d.prefix(4096)) }; lock.unlock() }
-        group.enter()
         DispatchQueue.global().async {
+            // EPIPE (the child exited without reading) ends the write; F_SETNOSIGPIPE keeps it from being a signal.
             try? stdin.fileHandleForWriting.write(contentsOf: Data(user.utf8))
             try? stdin.fileHandleForWriting.close()
-            group.leave()
         }
-        group.enter()
-        DispatchQueue.global().async { p.waitUntilExit(); group.leave() }
+        exited.enter()
+        DispatchQueue.global().async { p.waitUntilExit(); exited.leave() }
 
-        let timedOut = group.wait(timeout: .now() + timeout) == .timedOut
+        let timedOut = exited.wait(timeout: .now() + timeout) == .timedOut
         if timedOut {
             p.terminate()
-            if group.wait(timeout: .now() + 5) == .timedOut { kill(p.processIdentifier, SIGKILL) }
-            try? stdin.fileHandleForWriting.close()
-            _ = group.wait(timeout: .now() + 5)
+            // Signal only a child that has not exited yet, so a reaped PID (possibly reused) is never hit.
+            if exited.wait(timeout: .now() + 5) == .timedOut, p.isRunning { kill(p.processIdentifier, SIGKILL) }
+            _ = exited.wait(timeout: .now() + 5)
         }
-        // The child has exited (or was killed) before its directories go.
+        // The child is gone; give its pipes a short grace, then use what was read (a grandchild may hold them open).
+        _ = group.wait(timeout: .now() + Self.drainGrace)
         try? fm.removeItem(at: work); try? fm.removeItem(at: ctx)
         if timedOut { throw AdapterError(reason: "adapter.timeout", detail: "no answer in \(Int(timeout)) s") }
         let seconds = Date().timeIntervalSince(t0)

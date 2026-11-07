@@ -108,9 +108,9 @@ public enum MartyPrompts {
             ("constraint.gearMesh.parentRotates", "A planet on a turning carrier needs \"carrier\" named in its gearMesh."),
             ("constraint.underdetermined", "Some gear joint has no solved speed: add a gearMesh to it, an input drive, or a fixed constraint."),
             ("constraint.conflict", "Two constraints give one joint different speeds: remove the extra input, fixed or mesh."),
-            ("assembly.title", "The title is 1 to 80 characters, with no <, >, :// or control characters."),
-            ("step.say", "Each step's say is 1 to 240 characters, with no <, >, :// or control characters (write \"less than\", not <)."),
-            ("part.name", "A part name is 1 to 60 characters, with no <, >, :// or control characters."),
+            ("assembly.title", "The title is 1 to 80 Unicode code points, not blank, with no <, >, :// or control or format characters."),
+            ("step.say", "Each step's say is 1 to 240 Unicode code points, not blank, with no <, >, :// or control or format characters (write \"less than\", not <)."),
+            ("part.name", "A part name is 1 to 60 Unicode code points, not blank, with no <, >, :// or control or format characters."),
             ("ref.unknown", "An id that is used is not defined. Inner component parts are \"<instance>.<inner id>\"."),
             ("json", "The reply was not one valid JSON object."),
         ]

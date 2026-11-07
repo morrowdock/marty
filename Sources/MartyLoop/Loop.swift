@@ -281,6 +281,8 @@ extension MartyLoop {
         for (id, edit) in edits {
             guard var e = edit as? [String: Any], let newWith = e["with"] as? [String: Any],
                   let basePart = parts.first(where: { $0["id"] as? String == id && $0["use"] != nil }) else { continue }
+            // A patch that swaps the component starts from that component's own defaults.
+            if let use = e["use"] as? String, use != basePart["use"] as? String { continue }
             var w = basePart["with"] as? [String: Any] ?? [:]
             for (k, v) in newWith { if v is NSNull { w.removeValue(forKey: k) } else { w[k] = v } }
             e["with"] = w
