@@ -12,7 +12,7 @@ public final class MartyEngine {
     /// Where `render` writes. `nil` turns `render` off.
     public let outputRoot: URL?
     private var cache: [(ref: String, json: MGJSON)] = []
-    /// Lesson stream sessions (`lesson_stream`), oldest first, at most `maxLessonSessions`.
+    /// Lesson stream sessions (`lesson_stream`), least recently used first, at most `maxLessonSessions`.
     var lessonSessions: [(id: String, session: MGLessonSession, exhausted: Bool)] = []
     var lessonSessionCounter = 0
 

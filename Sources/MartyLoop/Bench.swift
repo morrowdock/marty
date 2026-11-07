@@ -104,7 +104,7 @@ public enum Bench {
                                       "firstTry": (attempts.first?["ok"] as? Bool) == true,
                                       "reasons": attempts.map { $0["reason"] ?? NSNull() }, "seconds": r["seconds"] ?? 0,
                                       "inScopePlanned": ((r["plan"] as? [String: Any])?["reply"] as? [String: Any])?["inScope"] ?? NSNull()]
-            if let f = r["followUp"] as? [String: Any] { row["followUp"] = ["ok": f["ok"] ?? false, "changed": f["changed"] ?? false] }
+            if let f = r["followUp"] as? [String: Any] { row["followUp"] = ["ok": f["ok"] ?? false, "changed": f["changed"] ?? false, "modelled": f["modelled"] ?? false] }
             // A model call that failed in the adapter makes the row an infrastructure error, not a model result.
             if let errs = r["adapterErrors"] as? [String], let first = errs.first {
                 row["error"] = "a model call failed in the adapter: \(errs.joined(separator: ", "))"

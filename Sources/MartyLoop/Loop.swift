@@ -266,10 +266,21 @@ public final class MartyLoop {
             ratiosChanged = MartyJSON.data(after["ratios"] ?? [String: Any]()) != MartyJSON.data(report["ratios"] ?? [String: Any]())
             result["ratiosChanged"] = ratiosChanged
         }
-        guard after != nil || noChange else { result["ok"] = false; return result }
-        let (answer, i) = ask("answer", attempt: 0, system: MartyPrompts.answerSystem(),
+        // modelled: the engine solved the change (or none was needed). When it refused every change, the learner still
+        // gets an honest answer that says the model cannot show it, with no new numbers.
+        let modelled = after != nil || noChange
+        result["modelled"] = modelled
+        let lastReason = attempts.last?["reason"] as? String
+        guard modelled || (lastReason != nil && lastReason != "adapter") else { result["ok"] = false; return result }
+        // Did the engine see any patch? json and followup.textOnly never reach it.
+        let marty: Set<String> = ["json", "followup.textOnly", "adapter"]
+        let engineSawAPatch = attempts.contains { !marty.contains($0["reason"] as? String ?? "") }
+        // Show the engine's own last reason when there is one (a later bad reply is Marty's json, not the engine's).
+        let shownReason = engineSawAPatch ? (attempts.last { !marty.contains($0["reason"] as? String ?? "") }?["reason"] as? String ?? lastReason) : lastReason
+        let (answer, i) = ask("answer", attempt: 0, system: modelled ? MartyPrompts.answerSystem() : MartyPrompts.answerRefusedSystem(),
                               user: MartyPrompts.answerUser(followUp: followUp, before: before, after: after.map { Self.compact(Self.summary($0)) },
-                                                            patch: acceptedPatch.map { Self.compact($0) }, ratiosChanged: ratiosChanged))
+                                                            patch: acceptedPatch.map { Self.compact($0) }, ratiosChanged: ratiosChanged,
+                                                            refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAPatch))
         note(i, ["ok": answer != nil])
         result["ok"] = answer != nil
         result["answer"] = answer.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) as Any } ?? NSNull()

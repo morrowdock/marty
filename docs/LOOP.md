@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-06. Prompts `marty-prompts/1`. Engine pin as in
+Status: early preview, 2026-11-06. Prompts `marty-prompts/2`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -42,7 +42,13 @@ the MCP server uses), so a run needs no MCP client.
    solved. Then the model writes a short answer from the engine reports before
    and after the change, the accepted change itself, and whether the solved
    ratios changed. The answer is model text and is marked so
-   (`answerSource`). An empty follow-up (the out-of-scope bench questions have
+   (`answerSource`). `modelled` says whether the engine solved the change (or
+   none was needed). When the engine refused every change, the model still
+   answers, with a separate system prompt: it says plainly that the model
+   cannot show the what-if, gives no number beyond the report before and does
+   no arithmetic. When no patch even reached the engine (only `json` or
+   `followup.textOnly` problems), the prompt says "no change could be checked"
+   instead of "the engine refused". Prompt set `marty-prompts/2`. An empty follow-up (the out-of-scope bench questions have
    none) means no follow-up turn.
 
 Model text is only parsed as JSON and given to the engine. It is never run.
@@ -87,7 +93,7 @@ One `receipt.json` per run, with sorted keys:
 | `accepted`, `final` | Whether a document was accepted, and its title, part ids, ratios, checks, `ref`, triangles and steps. |
 | `render`, `lesson` | Render `ok`, `reason` (when it failed), directory, file digests and timing; `lesson.json`. |
 | `adapterErrors` | Reasons of model calls that failed in the adapter (for example `adapter.timeout`). Present only when one failed. If the last plan call fails in the adapter (no plan was received), the run stops there. |
-| `followUp` | The question, its attempts, whether the model changed, the report after the change and the answer. |
+| `followUp` | The question, its attempts, `changed` (the engine accepted a patch), `modelled` (the engine solved the change, or none was needed), `ratiosChanged`, the report after the change, the answer and `answerSource`. `ok` means an answer was written: also an honest "this model cannot show it" when `modelled` is false. `ok` is false when no answer was written (for example an adapter failure). |
 | `calls` | Every model call: phase, attempt, prompt files with sizes and digests, reply file, seconds, adapter facts (tokens, cost equivalent) and the engine outcome. |
 | `seconds`, `modelSeconds`, `contextBytes` | Wall time, model time and prompt sizes. |
 
