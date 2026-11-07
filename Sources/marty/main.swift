@@ -15,6 +15,8 @@ let usage = """
 func fail(_ s: String) -> Never { FileHandle.standardError.write(Data((s + "\n").utf8)); exit(2) }
 
 @MainActor func main() -> Int32 {
+    // A model process that exits early must not kill marty with SIGPIPE.
+    signal(SIGPIPE, SIG_IGN)
     var args = Array(CommandLine.arguments.dropFirst())
     guard let command = args.first, ["ask", "bench"].contains(command), args.count >= 2 else { fail(usage) }
     args.removeFirst()
@@ -33,7 +35,9 @@ func fail(_ s: String) -> Never { FileHandle.standardError.write(Data((s + "\n")
         case "--ids" where command == "bench": ids = value().split(separator: ",").map(String.init)
         case "--no-follow-up" where command == "bench": followUps = false
         case "--render": options.render = true
-        case "--size": options.size = value()
+        case "--size":
+            options.size = value()
+            guard MartyEngine.parseSize(options.size) != nil else { fail("--size is WIDTHxHEIGHT, width 320-1920 and height 200-1200") }
         case "--repairs":
             guard let n = Int(value()), (0...3).contains(n) else { fail("--repairs is 0-3") }
             options.repairs = n

@@ -24,16 +24,22 @@ the MCP server uses), so a run needs no MCP client.
 5. **Render** (with `--render`). Stills for every step, a snapshot and a
    manifest, through the engine renderer.
 6. **Teach.** The checked steps are the beats. `lesson.json` holds each beat's
-   text, its still, the solved ratios and the honesty note. Marty adds no
-   number to the lesson that the engine did not report.
+   text, its still, the solved ratios and the honesty note, and a `sources`
+   entry that says where each comes from. The beats are model text: the engine
+   checks their length and characters, but not the numbers in them (engine
+   facts and number checks in captions come with MartyGraphics open-vocabulary
+   phase 1). The `facts` are engine values. Marty adds no number of its own.
 7. **Follow-up** (with `--follow-up` or in `bench`). The model gets the checked
    document and the engine report, and answers with an engine patch (or `null`
    when nothing must change). The engine checks the patch, with at most 3
-   repairs. A patch that changes only `title` and `steps` is refused
+   repairs. The engine replaces a part field as a whole, so Marty merges a
+   patch's `with` into the instance's current `with` first (only the asked
+   parameter changes). A patch that changes only `title` and `steps` is refused
    (`followup.textOnly`): it would narrate a change that the engine never
    solved. Then the model writes a short answer from the engine reports before
    and after the change, the accepted change itself, and whether the solved
-   ratios changed. An empty follow-up (the out-of-scope bench questions have
+   ratios changed. The answer is model text and is marked so
+   (`answerSource`). An empty follow-up (the out-of-scope bench questions have
    none) means no follow-up turn.
 
 Model text is only parsed as JSON and given to the engine. It is never run.
@@ -42,7 +48,7 @@ Model text is only parsed as JSON and given to the engine. It is never run.
 
 | Adapter | Use |
 | --- | --- |
-| `claude-cli:<model>` | The local Claude Code CLI in print mode (`claude -p`), with the account that is logged in there. Every call is a new process in a new empty directory, with no tools, no MCP servers, no slash commands and no session persistence. The prompt goes in on standard input. |
+| `claude-cli:<model>` | The local Claude Code CLI in print mode (`claude -p`), with the account that is logged in there. Every call is a new process in a new empty directory, with no tools, no MCP servers, no slash commands, no user/project/local settings (so no hooks or plugins) and no session persistence. The child gets only HOME, PATH, USER, LOGNAME, TMPDIR and locale variables, so an exported `ANTHROPIC_API_KEY` is never used. The prompt goes in on standard input. One timeout (default 900 s) covers writing, reading and the exit; then SIGTERM, and SIGKILL after 5 s. The CLI adds its own fixed context of about 640 tokens. |
 | `scripted` | Replays fixed replies. For tests, and to replay a recorded run. |
 
 An adapter is one function: system prompt and user message in, text out. Other

@@ -46,12 +46,19 @@ public struct ClaudeCLIAdapter: ModelAdapter {
 
     static func findInPath(_ name: String) -> URL? {
         let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
-        for dir in path.split(separator: ":") where !dir.isEmpty {
+        // Absolute PATH entries only: a relative entry would resolve against the current directory.
+        for dir in path.split(separator: ":") where dir.hasPrefix("/") {
             let u = URL(fileURLWithPath: String(dir)).appendingPathComponent(name)
             if FileManager.default.isExecutableFile(atPath: u.path) { return u }
         }
         return nil
     }
+
+    /// The child gets only these variables. In particular no ANTHROPIC_API_KEY (which would bill the paid API instead
+    /// of the logged-in subscription) and nothing from a parent Claude Code session.
+    static let environmentAllowlist = ["HOME", "PATH", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE"]
+    /// Largest reply envelope read from the child; the rest is drained and dropped.
+    static let maxOutputBytes = 8 << 20
 
     public func reply(system: String, user: String) throws -> ModelReply {
         let fm = FileManager.default
@@ -59,32 +66,66 @@ public struct ClaudeCLIAdapter: ModelAdapter {
         let ctx = fm.temporaryDirectory.appendingPathComponent("marty-prompt-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: work, withIntermediateDirectories: false)
         try fm.createDirectory(at: ctx, withIntermediateDirectories: false)
-        defer { try? fm.removeItem(at: work); try? fm.removeItem(at: ctx) }
         let systemFile = ctx.appendingPathComponent("system.txt")
         try Data(system.utf8).write(to: systemFile)
 
         let p = Process()
         p.executableURL = executable
         p.currentDirectoryURL = work
+        let env = ProcessInfo.processInfo.environment
+        p.environment = env.filter { Self.environmentAllowlist.contains($0.key) }
+        // No tools, no MCP servers, no slash commands, no user/project/local settings (so no hooks or plugins),
+        // no session file. The system prompt replaces Claude Code's own.
         p.arguments = ["-p", "--model", model, "--tools", "", "--strict-mcp-config", "--disable-slash-commands",
-                       "--no-session-persistence", "--output-format", "json", "--system-prompt-file", systemFile.path]
+                       "--setting-sources", "", "--no-session-persistence", "--output-format", "json",
+                       "--system-prompt-file", systemFile.path]
         let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
         p.standardInput = stdin; p.standardOutput = stdout; p.standardError = stderr
+        // A child that exits without reading must give us EPIPE, not a SIGPIPE that kills this process.
+        _ = fcntl(stdin.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         let t0 = Date()
-        try p.run()
-        // Read both pipes while the process runs, so a large answer cannot fill a pipe and stall it.
-        var out = Data(), err = Data()
+        do { try p.run() } catch { try? fm.removeItem(at: work); try? fm.removeItem(at: ctx); throw error }
+
+        // Everything that can block runs on the group, so one timeout covers writing, reading and the exit.
+        final class Box: @unchecked Sendable { var out = Data(), err = Data() }
+        let box = Box()
         let group = DispatchGroup()
-        group.enter(); DispatchQueue.global().async { out = stdout.fileHandleForReading.readDataToEndOfFile(); group.leave() }
-        group.enter(); DispatchQueue.global().async { err = stderr.fileHandleForReading.readDataToEndOfFile(); group.leave() }
-        stdin.fileHandleForWriting.write(Data(user.utf8))
-        try? stdin.fileHandleForWriting.close()
-        if group.wait(timeout: .now() + timeout) == .timedOut {
-            p.terminate()
-            throw AdapterError(reason: "adapter.timeout", detail: "no answer in \(Int(timeout)) s")
+        func drain(_ h: FileHandle, _ keep: @escaping (Data) -> Void) {
+            group.enter()
+            DispatchQueue.global().async {
+                var kept = 0
+                while true {
+                    let d = h.availableData
+                    if d.isEmpty { break }
+                    if kept < Self.maxOutputBytes { let part = d.prefix(Self.maxOutputBytes - kept); keep(part); kept += part.count }
+                }
+                group.leave()
+            }
         }
-        p.waitUntilExit()
+        let lock = NSLock()
+        drain(stdout.fileHandleForReading) { d in lock.lock(); box.out.append(d); lock.unlock() }
+        drain(stderr.fileHandleForReading) { d in lock.lock(); if box.err.count < 4096 { box.err.append(d.prefix(4096)) }; lock.unlock() }
+        group.enter()
+        DispatchQueue.global().async {
+            try? stdin.fileHandleForWriting.write(contentsOf: Data(user.utf8))
+            try? stdin.fileHandleForWriting.close()
+            group.leave()
+        }
+        group.enter()
+        DispatchQueue.global().async { p.waitUntilExit(); group.leave() }
+
+        let timedOut = group.wait(timeout: .now() + timeout) == .timedOut
+        if timedOut {
+            p.terminate()
+            if group.wait(timeout: .now() + 5) == .timedOut { kill(p.processIdentifier, SIGKILL) }
+            try? stdin.fileHandleForWriting.close()
+            _ = group.wait(timeout: .now() + 5)
+        }
+        // The child has exited (or was killed) before its directories go.
+        try? fm.removeItem(at: work); try? fm.removeItem(at: ctx)
+        if timedOut { throw AdapterError(reason: "adapter.timeout", detail: "no answer in \(Int(timeout)) s") }
         let seconds = Date().timeIntervalSince(t0)
+        lock.lock(); let out = box.out, err = box.err; lock.unlock()
         guard let env = try? JSONSerialization.jsonObject(with: out) as? [String: Any] else {
             throw AdapterError(reason: "adapter.output", detail: "exit \(p.terminationStatus): " + String(decoding: err.suffix(400), as: UTF8.self))
         }

@@ -14,13 +14,8 @@ extension MartyEngine {
         guard let root = outputRoot else { throw ToolError("render.disabled", "this server was started with --no-render") }
         var width = 1280, height = 800
         if let s = size {
-            let parts = s.split(separator: "x", omittingEmptySubsequences: false)
-            let digits = parts.allSatisfy { !$0.isEmpty && $0.count <= 4 && $0.unicodeScalars.allSatisfy { ("0"..."9").contains($0) } }
-            let p = digits ? parts.compactMap { Int($0) } : []
-            guard p.count == 2, MartyLimits.renderWidth.contains(p[0]), MartyLimits.renderHeight.contains(p[1]) else {
-                throw ToolError("args.size", "size is WIDTHxHEIGHT, width 320-1920 and height 200-1200")
-            }
-            width = p[0]; height = p[1]
+            guard let p = Self.parseSize(s) else { throw ToolError("args.size", "size is WIDTHxHEIGHT, width 320-1920 and height 200-1200") }
+            (width, height) = p
         }
         let lib: MGSolidLibrary
         switch try library(components) { case .failure(let r): return r.report; case .success(let l): lib = l }
@@ -79,6 +74,15 @@ extension MartyEngine {
         return ["ok": true, "ref": docRef, "directory": out.path, "files": files, "reused": false,
                 "timing": ["seconds": Date().timeIntervalSince(started), "framesRendered": result.frames,
                            "renderSecondsPerFrame": result.frames > 0 ? result.seconds / Double(result.frames) : 0]]
+    }
+
+    /// `WIDTHxHEIGHT` in ASCII digits within the render bounds, or nil.
+    public nonisolated static func parseSize(_ s: String) -> (Int, Int)? {
+        let parts = s.split(separator: "x", omittingEmptySubsequences: false)
+        guard parts.count == 2, parts.allSatisfy({ !$0.isEmpty && $0.count <= 4 && $0.unicodeScalars.allSatisfy { ("0"..."9").contains($0) } }),
+              let w = Int(parts[0]), let h = Int(parts[1]),
+              MartyLimits.renderWidth.contains(w), MartyLimits.renderHeight.contains(h) else { return nil }
+        return (w, h)
     }
 
     /// Changes whenever Marty's render sequence or manifest changes, so an old result is never reused for a new format.

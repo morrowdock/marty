@@ -27,6 +27,12 @@ public final class MartyLoop {
 
     /// `out` must not exist; its parent must. Renders go to `out/render`.
     public init(model: ModelAdapter, out: URL, options: Options) throws {
+        // Check options before any model call is paid for.
+        guard (0...3).contains(options.repairs) else { throw AdapterError(reason: "loop.repairs", detail: "repairs is 0-3") }
+        guard MartyEngine.parseSize(options.size) != nil else {
+            throw AdapterError(reason: "loop.size", detail: "size is WIDTHxHEIGHT, width 320-1920 and height 200-1200")
+        }
+        guard (options.followUp?.utf8.count ?? 0) <= 2000 else { throw AdapterError(reason: "loop.followUp", detail: "at most 2000 bytes") }
         let fm = FileManager.default
         do { try fm.createDirectory(at: out, withIntermediateDirectories: false) }
         catch { throw AdapterError(reason: "loop.out", detail: "cannot create a NEW directory at \(out.path)") }
@@ -50,7 +56,7 @@ public final class MartyLoop {
         write(user, stem + "-user.txt")
         var call: [String: Any] = ["n": n, "phase": phase, "attempt": attempt,
                                    "system": ["file": "calls/system-\(sysSHA.prefix(12)).txt", "bytes": system.utf8.count, "sha256": sysSHA],
-                                   "user": ["file": stem + "-user.txt", "bytes": user.utf8.count]]
+                                   "user": ["file": stem + "-user.txt", "bytes": user.utf8.count, "sha256": MartyJSON.sha256(Data(user.utf8))]]
         do {
             let r = try model.reply(system: system, user: user)
             write(r.text, stem + "-reply.txt")
@@ -107,7 +113,8 @@ public final class MartyLoop {
             note(i, ["ok": false, "reason": text == nil ? "adapter" : "plan.json"])
         }
         let wanted = ((plan["components"] as? [String] ?? []) + (plan["primitives"] as? [String] ?? []))
-        let chosen = Array(wanted.filter { known.contains($0) }.prefix(Self.maxPlanIds))
+        var seen = Set<String>()
+        let chosen = Array(wanted.filter { known.contains($0) && seen.insert($0).inserted }.prefix(Self.maxPlanIds))
         receipt["plan"] = ["reply": plan, "chosen": chosen, "dropped": wanted.filter { !chosen.contains($0) }]
 
         // 2. Author with the chosen parts explained (component entries without their full definitions).
@@ -132,8 +139,10 @@ public final class MartyLoop {
             if let reply { document = reply["document"] ?? (reply["kind"] != nil ? reply as Any : nil) }
             let components = reply?["components"] as? [Any] ?? []
             var report: [String: Any]
-            if let document {
-                do { report = try engine.check(document: document, ref: nil, components: Array(components.prefix(MartyLimits.componentsPerRequest))) }
+            if components.count > MartyLimits.componentsPerRequest {
+                report = ["ok": false, "reason": "components.count", "part": NSNull()]
+            } else if let document {
+                do { report = try engine.check(document: document, ref: nil, components: components) }
                 catch let e as ToolError { report = ["ok": false, "reason": e.reason] }
             } else {
                 report = ["ok": false, "reason": "json", "part": NSNull()]
@@ -155,16 +164,24 @@ public final class MartyLoop {
             // 3. Render.
             var stills: [String: String] = [:]
             if options.render {
-                let r = try engine.render(document: nil, ref: ref, components: acceptedComponents, size: options.size, loop: false)
-                receipt["render"] = ["ok": r["ok"] ?? false, "directory": r["directory"] ?? NSNull(), "files": r["files"] ?? [Any](), "timing": r["timing"] ?? NSNull()]
-                if let dir = r["directory"] as? String, let files = r["files"] as? [[String: Any]] {
-                    for f in files { if let name = f["file"] as? String { stills[name] = dir + "/" + name } }
+                // A render failure (for example no Metal device) is recorded; the checked lesson still stands.
+                do {
+                    let r = try engine.render(document: nil, ref: ref, components: acceptedComponents, size: options.size, loop: false)
+                    receipt["render"] = ["ok": r["ok"] ?? false, "directory": r["directory"] ?? NSNull(), "files": r["files"] ?? [Any](), "timing": r["timing"] ?? NSNull()]
+                    if let dir = r["directory"] as? String, let files = r["files"] as? [[String: Any]] {
+                        for f in files { if let name = f["file"] as? String { stills[name] = dir + "/" + name } }
+                    }
+                } catch {
+                    receipt["render"] = ["ok": false, "error": "\(error)"]
                 }
             }
-            // 4. Teach: the checked steps are the beats; the numbers come from the engine report.
+            // 4. Teach: the beats are the model's step texts (the engine checks their length and characters, not their
+            // numbers); the facts are the engine's solved values. Each is labelled with where it comes from.
             let says = report["steps"] as? [String] ?? []
             let lesson: [String: Any] = [
                 "title": report["title"] ?? "", "ref": ref, "honesty": plan["honesty"] ?? "",
+                "sources": ["beats": "model text; the engine checked length and characters, not the numbers in it",
+                            "facts": "engine: solved by MartyGraphics", "honesty": "model text from the plan"],
                 "facts": ["ratios": report["ratios"] ?? [String: Any]()],
                 "beats": says.enumerated().map { i, s -> [String: Any] in
                     ["n": i + 1, "say": s, "still": stills["step-\(i + 1).png"].map { $0 as Any } ?? NSNull()]
@@ -202,7 +219,7 @@ public final class MartyLoop {
         var acceptedPatch: Any? = nil
         for attempt in 0...options.repairs {
             let (text, i) = ask("followup", attempt: attempt, system: system, user: user)
-            guard let text else { note(i, ["ok": false, "reason": "adapter"]); break }
+            guard let text else { note(i, ["ok": false, "reason": "adapter"]); attempts.append(["ok": false, "reason": "adapter"]); break }
             guard let reply = ReplyJSON.object(text), reply.keys.contains("patch") else {
                 note(i, ["ok": false, "reason": "json"]); attempts.append(["ok": false, "reason": "json"])
                 user += "\n\nYour reply was not one JSON object with a \"patch\" key. Reply again."
@@ -221,10 +238,11 @@ public final class MartyLoop {
                 continue
             }
             var r: [String: Any]
-            do { r = try engine.patch(document: nil, ref: ref, patch: patch, components: components, returnDocument: false) }
+            let merged = Self.mergingWith(patch, base: docText)
+            do { r = try engine.patch(document: nil, ref: ref, patch: merged, components: components, returnDocument: false) }
             catch let e as ToolError { r = ["ok": false, "reason": e.reason] }
             note(i, Self.outcome(r)); attempts.append(Self.outcome(r))
-            if (r["ok"] as? Bool) == true { after = r; acceptedPatch = patch; break }
+            if (r["ok"] as? Bool) == true { after = r; acceptedPatch = merged; break }
             let reason = r["reason"] as? String ?? "unknown"
             user = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp)
                 + "\n\nYour previous reply:\n\(text)\n\nThe engine refused the patch with reason `\(reason)`"
@@ -246,7 +264,30 @@ public final class MartyLoop {
         note(i, ["ok": answer != nil])
         result["ok"] = answer != nil
         result["answer"] = answer.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) as Any } ?? NSNull()
+        result["answerSource"] = "model text written from the engine reports; its numbers are not checked"
         return result
+    }
+}
+
+extension MartyLoop {
+    /// The engine replaces a part field as a whole, so `{"stage": {"with": {"planets": 4}}}` would reset every other
+    /// parameter of `stage` to its default. A model means "change planets"; merge its `with` into the base document's
+    /// `with` (a null value removes a parameter) so only what was asked changes.
+    static func mergingWith(_ patch: Any, base docText: String) -> Any {
+        guard var p = patch as? [String: Any], let edits = p["parts"] as? [String: Any],
+              let doc = try? JSONSerialization.jsonObject(with: Data(docText.utf8)) as? [String: Any],
+              let parts = doc["parts"] as? [[String: Any]] else { return patch }
+        var out = edits
+        for (id, edit) in edits {
+            guard var e = edit as? [String: Any], let newWith = e["with"] as? [String: Any],
+                  let basePart = parts.first(where: { $0["id"] as? String == id && $0["use"] != nil }) else { continue }
+            var w = basePart["with"] as? [String: Any] ?? [:]
+            for (k, v) in newWith { if v is NSNull { w.removeValue(forKey: k) } else { w[k] = v } }
+            e["with"] = w
+            out[id] = e
+        }
+        p["parts"] = out
+        return p
     }
 }
 

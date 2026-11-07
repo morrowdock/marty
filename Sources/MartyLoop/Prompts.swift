@@ -53,6 +53,7 @@ public enum MartyPrompts {
           "gearMesh" constraints: {"gearMesh": {"a": "<gear>", "b": "<gear>", "carrier": "<carrier, for planets>"}}.
           Meshing gears share one module. Centre distance: module × (z1 + z2) / 2 for two external gears,
           module × (zRing − zPlanet) / 2 for a planet in a ring. {"fixed": "<part>"} holds a joint still.
+        - Text (title, name, say) may not hold <, >, :// or control characters; write "less than" instead of <.
         - Step: {"say": "<= 240 chars, one or two short sentences", "highlight": [ids], "explode": 0..1,
           "camera": "<preset>", "orbit": degrees, "spin": input turns}. At most 16 steps.
         - Materials: brushedSteel, polishedSteel, darkSteel, blackOxide, brass, bronze, aluminum, rubber, glass,
@@ -93,8 +94,13 @@ public enum MartyPrompts {
         return s + "\n\nFix the cause and reply with the corrected JSON object only (same reply format)."
     }
 
-    /// Short, exact facts for common refusals. They restate engine rules from docs/SOLID-3D.md; they never guess a fix.
-    public static func hint(for reason: String) -> String? {
+    /// Short facts for common refusals. Each restates an engine rule from docs/SOLID-3D.md and the parser at the pin;
+    /// where a rule has one usual cause, the hint names it.
+    public static func hint(for reason: String) -> String? { hints.first { reason.hasPrefix($0.0) }?.1 }
+
+    public static var hintKeys: [String] { hints.map(\.0) }
+
+    static let hints: [(String, String)] = {
         let table: [(String, String)] = [
             ("constraint.gearMesh.distance", "Centre distance must be module × (z1 + z2) / 2 for external gears, module × (zRing − zPlanet) / 2 inside a ring, measured between the gear centres in world space."),
             ("constraint.gearMesh.module", "Meshing gears must have the same module."),
@@ -102,14 +108,14 @@ public enum MartyPrompts {
             ("constraint.gearMesh.parentRotates", "A planet on a turning carrier needs \"carrier\" named in its gearMesh."),
             ("constraint.underdetermined", "Some gear joint has no solved speed: add a gearMesh to it, an input drive, or a fixed constraint."),
             ("constraint.conflict", "Two constraints give one joint different speeds: remove the extra input, fixed or mesh."),
-            ("assembly.title", "The title is at most 80 characters."),
-            ("step.say", "Each step's say is at most 240 characters."),
-            ("part.name", "A part name is at most 60 characters."),
+            ("assembly.title", "The title is 1 to 80 characters, with no <, >, :// or control characters."),
+            ("step.say", "Each step's say is 1 to 240 characters, with no <, >, :// or control characters (write \"less than\", not <)."),
+            ("part.name", "A part name is 1 to 60 characters, with no <, >, :// or control characters."),
             ("ref.unknown", "An id that is used is not defined. Inner component parts are \"<instance>.<inner id>\"."),
             ("json", "The reply was not one valid JSON object."),
         ]
-        return table.first { reason.hasPrefix($0.0) }?.1
-    }
+        return table
+    }()
 
     // MARK: follow-up
 
@@ -119,7 +125,8 @@ public enum MartyPrompts {
 
         Follow-up: the learner asks a what-if question about the checked model. Change the model with a patch, so \
         the engine solves the new case. Patch keys: "params", "parts" (merge fields by part id; null removes a field; \
-        "<instance>" edits a component use, for example {"parts": {"stage": {"with": {"planets": 4}}}}), \
+        "<instance>" edits a component use, for example {"parts": {"stage": {"with": {"planets": 4}}}}; Marty keeps the \
+        other "with" values), \
         "constraints" and "steps" (replace the whole list), "title".
 
         Reply with ONE JSON object only, no prose and no code fences:

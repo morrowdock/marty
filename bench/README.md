@@ -13,8 +13,9 @@ MartyGraphics "prompt-to-3D eval v1", copied byte for byte.
   blades, turbomachinery, machines) and 10 out-of-scope questions. For an
   out-of-scope question, the expected answer is an honest refusal or a clearly
   labelled schematic.
-- Each question has a follow-up (a what-if change) and the machine checks that a
-  correct model must pass.
+- Each in-scope question has a follow-up (a what-if change); the out-of-scope
+  questions have none. Every question lists the machine checks that a correct
+  model must pass. The checks are for graders and never reach a prompt.
 
 **This is a development set, not held-out evidence.** It was pre-registered
 before the engine work. Its results have been used to change the engine, the
@@ -31,9 +32,11 @@ The protocol amendments of the original eval are copied unchanged:
 
 ## Protocol (Marty loop)
 
-- A fresh model process per question, in an empty working directory, with no
-  tools. The context is only what the Marty loop sends (the receipt records the
-  size and SHA-256 of every prompt).
+- A fresh model process per call, in an empty working directory, with no
+  tools, no MCP servers, no user or project settings and a minimal environment
+  (no API key). The context is what the Marty loop sends (the receipt records
+  the size and SHA-256 of every prompt) plus the Claude Code CLI's own fixed
+  context, about 640 tokens in a probe on 2026-11-07.
 - Plan, author, check with the engine, at most 3 repairs from the exact refusal
   reason, then the follow-up as an engine patch.
 - Record everything: one receipt per question (`marty.run-receipt/v1`) and a

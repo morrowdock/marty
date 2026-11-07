@@ -21,14 +21,20 @@ public enum Bench {
               let list = root["questions"] as? [[String: Any]] else {
             throw AdapterError(reason: "bench.format", detail: "expected {\"questions\": [...]}")
         }
+        guard list.count <= 500 else { throw AdapterError(reason: "bench.count", detail: "at most 500 questions") }
         var seen = Set<String>()
+        func short(_ v: Any?, _ max: Int) -> String? { (v as? String).flatMap { $0.utf8.count <= max ? $0 : nil } }
         let questions = try list.map { q -> Question in
             guard let id = q["id"] as? String, id.range(of: #"^[A-Za-z0-9_-]{1,32}$"#, options: .regularExpression) != nil,
                   let prompt = q["prompt"] as? String, !prompt.isEmpty, prompt.utf8.count <= 2000, seen.insert(id).inserted else {
                 throw AdapterError(reason: "bench.question", detail: "each question needs a unique id and a prompt of 1-2000 bytes")
             }
-            return Question(id: id, prompt: prompt, followUp: q["followUp"] as? String,
-                            scope: q["scope"] as? String ?? "in", category: q["category"] as? String ?? "")
+            guard q["followUp"] == nil || short(q["followUp"], 2000) != nil,
+                  q["scope"] == nil || short(q["scope"], 64) != nil, q["category"] == nil || short(q["category"], 64) != nil else {
+                throw AdapterError(reason: "bench.question", detail: "\(id): followUp is at most 2000 bytes, scope and category at most 64")
+            }
+            return Question(id: id, prompt: prompt, followUp: short(q["followUp"], 2000),
+                            scope: short(q["scope"], 64) ?? "in", category: short(q["category"], 64) ?? "")
         }
         return (questions, MartyJSON.sha256(data))
     }
@@ -37,6 +43,10 @@ public enum Bench {
     public static func run(file: URL, ids: [String]?, makeModel: () throws -> ModelAdapter, out: URL,
                            options: MartyLoop.Options, followUps: Bool) throws -> [String: Any] {
         let (all, sha) = try load(file)
+        if let ids, Set(ids).count != ids.count { throw AdapterError(reason: "bench.id", detail: "an id is listed twice") }
+        guard MartyEngine.parseSize(options.size) != nil, (0...3).contains(options.repairs) else {
+            throw AdapterError(reason: "bench.options", detail: "size is WIDTHxHEIGHT within 320-1920 x 200-1200; repairs 0-3")
+        }
         let chosen = try ids.map { want in
             try want.map { id in
                 guard let q = all.first(where: { $0.id == id }) else { throw AdapterError(reason: "bench.id", detail: id) }
@@ -62,12 +72,21 @@ public enum Bench {
                     "runs": runs]
         }
         for q in chosen {
-            let adapter = try makeModel()
-            model = adapter.id
             var o = options
             o.followUp = followUps ? q.followUp : nil
-            let loop = try MartyLoop(model: adapter, out: out.appendingPathComponent(q.id, isDirectory: true), options: o)
-            let r = try loop.run(question: q.prompt)
+            // One failing question (adapter missing, a broken run) is a row in the summary, not the end of the bench.
+            let r: [String: Any]
+            do {
+                let adapter = try makeModel()
+                model = adapter.id
+                r = try MartyLoop(model: adapter, out: out.appendingPathComponent(q.id, isDirectory: true), options: o).run(question: q.prompt)
+            } catch {
+                runs.append(["id": q.id, "scope": q.scope, "category": q.category, "accepted": false, "attempts": 0,
+                             "firstTry": false, "error": "\(error)"])
+                try JSONSerialization.data(withJSONObject: MartyJSON.sanitized(summary()), options: [.prettyPrinted, .sortedKeys])
+                    .write(to: out.appendingPathComponent("summary.json"))
+                continue
+            }
             let attempts = r["attempts"] as? [[String: Any]] ?? []
             var row: [String: Any] = ["id": q.id, "scope": q.scope, "category": q.category,
                                       "accepted": r["accepted"] ?? false, "attempts": attempts.count,

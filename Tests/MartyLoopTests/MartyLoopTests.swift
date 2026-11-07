@@ -166,4 +166,108 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertNil(r["followUp"])
         XCTAssertEqual(model.prompts.count, 2)
     }
+
+    func testWithIsMergedIntoTheInstance() throws {
+        let base = #"{"parts":[{"id":"stage","use":"planetaryStage","with":{"sunTeeth":30,"planetTeeth":18}}]}"#
+        let merged = try XCTUnwrap(MartyLoop.mergingWith(["parts": ["stage": ["with": ["planets": 4, "planetTeeth": NSNull()]]]], base: base) as? [String: Any])
+        let with = try XCTUnwrap(((merged["parts"] as? [String: Any])?["stage"] as? [String: Any])?["with"] as? [String: Any])
+        XCTAssertEqual(with["sunTeeth"] as? Int, 30, "a parameter the patch did not name stays")
+        XCTAssertEqual(with["planets"] as? Int, 4)
+        XCTAssertNil(with["planetTeeth"], "null removes a parameter")
+        // Not a use entry, or no with: unchanged.
+        let other: [String: Any] = ["parts": ["gear": ["material": "brass"]]]
+        XCTAssertEqual(MartyJSON.data(MartyLoop.mergingWith(other, base: base)), MartyJSON.data(other))
+    }
+
+    func testComponentRefusalNamesTheComponent() throws {
+        let plan = #"{"components": [], "primitives": []}"#
+        let bad = #"{"document": \#(Self.spurReduction), "components": [{"v": 1, "kind": "component"}]}"#
+        let model = ScriptedAdapter(replies: [plan, bad, #"{"document": \#(Self.spurReduction)}"#])
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: .init()).run(question: "q")
+        let attempts = try XCTUnwrap(r["attempts"] as? [[String: Any]])
+        XCTAssertEqual(attempts.first?["component"] as? Int, 0)
+        XCTAssertTrue(model.prompts[2].user.contains("on part `components[0]"), model.prompts[2].user)
+        XCTAssertEqual(r["accepted"] as? Bool, true)
+    }
+
+    func testBadOptionsAreRefusedBeforeAnyModelCall() throws {
+        var o = MartyLoop.Options()
+        o.size = "foo"
+        let model = ScriptedAdapter(replies: [])
+        XCTAssertThrowsError(try MartyLoop(model: model, out: tempOut(), options: o))
+        XCTAssertTrue(model.prompts.isEmpty)
+    }
+
+    func testBenchKeepsGoingAfterAFailedQuestion() throws {
+        let dir = tempOut()
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("q.json")
+        try Data(#"{"questions": [{"id": "A", "prompt": "one"}, {"id": "B", "prompt": "two"}]}"#.utf8).write(to: file)
+        var n = 0
+        let s = try Bench.run(file: file, ids: nil, makeModel: {
+            n += 1
+            if n == 1 { throw AdapterError(reason: "adapter.claude.missing", detail: "test") }
+            return ScriptedAdapter(replies: [#"{"components": []}"#, #"{"document": \#(Self.spurReduction)}"#])
+        }, out: dir.appendingPathComponent("run"), options: .init(), followUps: false)
+        let runs = try XCTUnwrap(s["runs"] as? [[String: Any]])
+        XCTAssertEqual(runs.count, 2)
+        XCTAssertNotNil(runs[0]["error"])
+        XCTAssertEqual(runs[1]["accepted"] as? Bool, true)
+        XCTAssertThrowsError(try Bench.run(file: file, ids: ["A", "A"], makeModel: { ScriptedAdapter(replies: []) },
+                                           out: dir.appendingPathComponent("run2"), options: .init(), followUps: false))
+    }
+
+    /// Every hint key is a refusal reason that the pinned engine source really contains.
+    func testHintKeysAreEngineReasons() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let dir = root.appendingPathComponent(".build/checkouts/martygraphics/Sources/MartyGraphics/Solid")
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        try XCTSkipIf(files.isEmpty, "engine checkout not found at \(dir.path)")
+        let source = try files.filter { $0.hasSuffix(".swift") }.map { try String(contentsOf: dir.appendingPathComponent($0), encoding: .utf8) }.joined()
+        for key in MartyPrompts.hintKeys {
+            let last = key.split(separator: ".").last.map(String.init) ?? key
+            XCTAssertTrue(source.contains("\"\(key)") || source.contains(".\(last)\"") || source.contains(".\(last).") , "hint key \(key) is not in the engine source")
+        }
+    }
+}
+
+/// The CLI adapter's process handling, with small fake executables in place of `claude`.
+final class ClaudeAdapterProcessTests: XCTestCase {
+    func fake(_ script: String) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("marty-fake-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false)
+        let u = dir.appendingPathComponent("claude")
+        try Data(("#!/bin/sh\n" + script + "\n").utf8).write(to: u)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: u.path)
+        return u
+    }
+
+    func testReplyAndMinimalEnvironment() throws {
+        setenv("ANTHROPIC_API_KEY", "must-not-reach-the-child", 1)
+        defer { unsetenv("ANTHROPIC_API_KEY") }
+        let exe = try fake(#"cat >/dev/null; printf '{"result":"key=%s","is_error":false,"usage":{"input_tokens":3}}' "${ANTHROPIC_API_KEY:-none}""#)
+        let r = try ClaudeCLIAdapter(model: "claude-haiku-5-5", executable: exe, timeout: 30).reply(system: "s", user: "u")
+        XCTAssertEqual(r.text, "key=none")
+        XCTAssertEqual((r.meta["usage"] as? [String: Any])?["input_tokens"] as? Int, 3)
+    }
+
+    func testTimeoutKillsAHungChild() throws {
+        let exe = try fake("trap '' TERM; sleep 60")
+        let t0 = Date()
+        XCTAssertThrowsError(try ClaudeCLIAdapter(model: "m", executable: exe, timeout: 1).reply(system: "s", user: "u")) {
+            XCTAssertEqual(($0 as? AdapterError)?.reason, "adapter.timeout")
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(t0), 20)
+    }
+
+    func testChildThatExitsWithoutReadingIsAnError() throws {
+        let exe = try fake("exit 3")
+        let big = String(repeating: "x", count: 1 << 20)
+        XCTAssertThrowsError(try ClaudeCLIAdapter(model: "m", executable: exe, timeout: 30).reply(system: "s", user: big)) {
+            XCTAssertEqual(($0 as? AdapterError)?.reason, "adapter.output")
+        }
+    }
 }
