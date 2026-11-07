@@ -28,8 +28,12 @@ the MCP server uses), so a run needs no MCP client.
    rule (for example the centre-distance formula). A caption or claim refusal
    also gets the list of facts the engine solved for the model (when the
    refusal comes before the report, Marty checks the same document without its
-   steps to get them). A frame or idle-joint refusal also gets the engine's
-   read-back. At most 3 repairs.
+   steps and with a plain title to get them). A frame, idle-joint or `expect`
+   refusal also gets the engine's read-back (for `expect`, from the same
+   document without its `expect` entries). Only what the engine returned is
+   attached; at most 80 facts and 48 read-back lines. At most 3 repairs. A
+   follow-up patch refused for a caption or a claim gets the facts of the
+   changed model (the same patch with steps cleared).
 5. **Render** (with `--render`). Stills for every step, a snapshot and a
    manifest, through the engine renderer. A render that fails (for example
    with no Metal device) is recorded in the receipt; the checked lesson still

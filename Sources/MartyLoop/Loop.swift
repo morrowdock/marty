@@ -105,17 +105,35 @@ public final class MartyLoop {
         return Array(lines.prefix(limit)) + (lines.count > limit ? ["(\(lines.count - limit) more)"] : [])
     }
 
-    /// Caption and claim refusals happen before the report exists, so the facts come from the same document checked
-    /// without its steps (the engine still solves every fact). Nil when that document is refused too.
-    func factsWithoutSteps(_ document: Any, _ components: [Any]) -> String? {
+    /// A refusal can come before the report exists (captions, claims and `expect` are checked while the document
+    /// compiles). Marty then asks the engine about a copy without the parts that were refused: without steps and with a
+    /// plain title for the facts (facts do not depend on captions), without `expect` for the read-back. Plain profile,
+    /// so a strict warning cannot hide them. Nil when that copy is refused too.
+    func strippedReport(_ document: Any, _ components: [Any], captions: Bool, expectations: Bool) -> [String: Any]? {
         var doc: [String: Any]
         if let d = document as? [String: Any] { doc = d }
         else if let s = document as? String, let d = (try? JSONSerialization.jsonObject(with: Data(s.utf8))) as? [String: Any] { doc = d }
         else { return nil }
-        doc.removeValue(forKey: "steps")
-        guard let r = try? engine.check(document: doc, ref: nil, components: components, strict: false),
-              let lines = Self.factLines(r, limit: 80) else { return nil }
-        return lines.joined(separator: "\n")
+        if captions { doc.removeValue(forKey: "steps"); doc["title"] = "Facts" }
+        if expectations, let parts = doc["parts"] as? [[String: Any]] {
+            doc["parts"] = parts.map { p -> [String: Any] in var p = p; p.removeValue(forKey: "expect"); return p }
+        }
+        guard let r = try? engine.check(document: doc, ref: nil, components: components, strict: false), r["facts"] != nil else { return nil }
+        return r
+    }
+
+    /// The facts block and read-back block for a repair prompt, from the report or from a stripped copy.
+    func repairContext(reason: String, report: [String: Any], document: Any?, components: [Any]) -> (facts: String?, readBack: String?) {
+        var facts: String? = nil, readBack: String? = nil
+        if ["text.", "check.failed", "check.fact"].contains(where: { reason.hasPrefix($0) }) {
+            let source = report["facts"] != nil ? report : document.flatMap { strippedReport($0, components, captions: true, expectations: false) }
+            facts = source.flatMap { Self.factLines($0, limit: 80) }?.joined(separator: "\n")
+        }
+        if ["frame.", "joint.idle", "expect."].contains(where: { reason.hasPrefix($0) }) {
+            let source = report["readBack"] != nil ? report : document.flatMap { strippedReport($0, components, captions: false, expectations: true) }
+            readBack = (source?["readBack"] as? [String]).map { Array($0.prefix(48)).joined(separator: "\n") }
+        }
+        return (facts, readBack)
     }
 
     // MARK: the loop
@@ -186,14 +204,9 @@ public final class MartyLoop {
             let reason = report["reason"] as? String ?? "unknown"
             var part = report["part"] as? String
             if let c = report["component"] as? Int { part = "components[\(c)]" + (part.map { " / \($0)" } ?? "") }
-            // Engine context for the repair: the facts for caption and claim refusals, the read-back for frame refusals.
-            var facts: String? = nil, readBack: String? = nil
-            if ["text.", "check.failed", "check.fact"].contains(where: { reason.hasPrefix($0) }) {
-                facts = Self.factLines(report, limit: 80)?.joined(separator: "\n") ?? document.flatMap { factsWithoutSteps($0, components) }
-            }
-            if ["frame.", "joint.idle", "expect."].contains(where: { reason.hasPrefix($0) }), let rb = report["readBack"] as? [String] {
-                readBack = Array(rb.prefix(48)).joined(separator: "\n")
-            }
+            // Engine context for the repair: the facts for caption and claim refusals, the read-back for frame,
+            // idle-joint and expect refusals. Only what the engine actually returned is attached.
+            let (facts, readBack) = repairContext(reason: reason, report: report, document: document, components: components)
             user = MartyPrompts.repairUser(question: question, plan: planText, previous: text, reason: reason, part: part,
                                            hint: MartyPrompts.hint(for: reason), facts: facts, readBack: readBack)
         }
@@ -291,10 +304,19 @@ public final class MartyLoop {
             note(i, Self.outcome(r)); attempts.append(Self.outcome(r))
             if (r["ok"] as? Bool) == true { after = r; acceptedPatch = merged; break }
             let reason = r["reason"] as? String ?? "unknown"
+            // Facts of the changed model: the same patch with steps cleared and a plain title, plain profile.
+            var facts: String? = nil
+            if ["text.", "check.failed", "check.fact"].contains(where: { reason.hasPrefix($0) }), var p = merged as? [String: Any] {
+                p["steps"] = [Any](); p["title"] = "Facts"
+                if let fr = try? engine.patch(document: nil, ref: ref, patch: p, components: components, returnDocument: false, strict: false) {
+                    facts = Self.factLines(fr, limit: 80)?.joined(separator: "\n")
+                }
+            }
             user = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp)
                 + "\n\nYour previous reply:\n\(text)\n\nThe engine refused the patch with reason `\(reason)`"
                 + ((r["part"] as? String).map { " on part `\($0)`" } ?? "") + "." + (MartyPrompts.hint(for: reason).map { " \($0)" } ?? "")
-                + " Reply with a corrected JSON object only."
+                + (facts.map { "\n\nFacts the engine solved for the changed model (name: value):\n\($0)" } ?? "")
+                + "\n\nReply with a corrected JSON object only."
         }
         result["attempts"] = attempts
         result["changed"] = after != nil
