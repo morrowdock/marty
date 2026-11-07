@@ -108,7 +108,7 @@ public enum MartyPrompts {
             ("constraint.gearMesh.parentRotates", "A planet on a turning carrier needs \"carrier\" named in its gearMesh."),
             ("constraint.underdetermined", "Some gear joint has no solved speed: add a gearMesh to it, an input drive, or a fixed constraint."),
             // Hints match by prefix, so the more specific reason comes first.
-            ("constraint.conflict.drive", "A gear whose speed the gear meshes solve cannot also have its own follow or crank drive: remove that drive."),
+            ("constraint.conflict.drive", "A part whose speed the gear solve gives (a meshed gear, a turning carrier, or a part in a fixed constraint) cannot also have its own follow or crank drive: remove that drive."),
             ("constraint.conflict", "Two constraints give one joint different speeds: remove the extra input, fixed or mesh. A gear with no joint turns only with its parent; with no turning parent it stays still. To let it turn on its own, give it a joint: in a document, on the component's use entry, \"set\": {\"<inner id>\": {\"joint\": {\"revolute\": [0, 0, 1]}}}; in a follow-up patch, \"parts\": {\"<instance>.<inner id>\": {\"joint\": {\"revolute\": [0, 0, 1]}}}."),
             ("component.set.id", "Each entry in a component's set is an object of fields (not null), without id or use."),
             ("assembly.title", "The title is 1 to 80 Unicode code points, not blank, with no <, >, :// or control or format characters."),

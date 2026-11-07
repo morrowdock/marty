@@ -209,6 +209,26 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(model.prompts[4].system.contains("do no arithmetic"))
     }
 
+    func testSpecificHintsWinOverGeneralOnes() {
+        XCTAssertTrue(MartyPrompts.hint(for: "constraint.conflict.drive")?.contains("follow or crank drive") == true)
+        XCTAssertTrue(MartyPrompts.hint(for: "constraint.conflict")?.contains("turns only with its parent") == true)
+    }
+
+    /// An engine refusal, then a bad reply: the answer prompt names the engine's reason, not Marty's json.
+    func testRefusedAnswerShowsTheEngineReason() throws {
+        let plan = #"{"components": ["spurPair"], "primitives": []}"#
+        let good = #"{"document": \#(Self.spurReduction)}"#
+        let bad = #"{"patch": {"parts": {"pair": {"with": {"wheelTeeth": 999}}}}}"#
+        let model = ScriptedAdapter(replies: [plan, good, bad, "not json", "This model cannot show that."])
+        var options = MartyLoop.Options()
+        options.repairs = 1
+        options.followUp = "What if the wheel had 999 teeth?"
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        _ = try MartyLoop(model: model, out: out, options: options).run(question: "q")
+        XCTAssertTrue(model.prompts[4].user.contains("last reason: component.param.range.wheelTeeth"), model.prompts[4].user)
+    }
+
     func testEmptyFollowUpIsSkipped() throws {
         let plan = #"{"components": [], "primitives": []}"#
         let model = ScriptedAdapter(replies: [plan, #"{"document": \#(Self.spurReduction)}"#])

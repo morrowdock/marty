@@ -273,11 +273,14 @@ public final class MartyLoop {
         let lastReason = attempts.last?["reason"] as? String
         guard modelled || (lastReason != nil && lastReason != "adapter") else { result["ok"] = false; return result }
         // Did the engine see any patch? json and followup.textOnly never reach it.
-        let engineSawAPatch = attempts.contains { !["json", "followup.textOnly", "adapter"].contains($0["reason"] as? String ?? "") }
+        let marty: Set<String> = ["json", "followup.textOnly", "adapter"]
+        let engineSawAPatch = attempts.contains { !marty.contains($0["reason"] as? String ?? "") }
+        // Show the engine's own last reason when there is one (a later bad reply is Marty's json, not the engine's).
+        let shownReason = engineSawAPatch ? (attempts.last { !marty.contains($0["reason"] as? String ?? "") }?["reason"] as? String ?? lastReason) : lastReason
         let (answer, i) = ask("answer", attempt: 0, system: modelled ? MartyPrompts.answerSystem() : MartyPrompts.answerRefusedSystem(),
                               user: MartyPrompts.answerUser(followUp: followUp, before: before, after: after.map { Self.compact(Self.summary($0)) },
                                                             patch: acceptedPatch.map { Self.compact($0) }, ratiosChanged: ratiosChanged,
-                                                            refused: modelled ? nil : lastReason, engineSawAPatch: engineSawAPatch))
+                                                            refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAPatch))
         note(i, ["ok": answer != nil])
         result["ok"] = answer != nil
         result["answer"] = answer.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) as Any } ?? NSNull()
