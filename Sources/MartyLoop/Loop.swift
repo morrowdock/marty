@@ -24,6 +24,8 @@ public final class MartyLoop {
     let out: URL
     var calls: [[String: Any]] = []
     var savedSystems: Set<String> = []
+    /// Reasons of model calls that failed in the adapter (timeout, not logged in, ...): infrastructure, not the model.
+    var adapterErrors: [String] = []
 
     /// `out` must not exist; its parent must. Renders go to `out/render`.
     public init(model: ModelAdapter, out: URL, options: Options) throws {
@@ -67,6 +69,7 @@ public final class MartyLoop {
             return (r.text, calls.count - 1)
         } catch {
             call["error"] = "\(error)"
+            adapterErrors.append((error as? AdapterError)?.reason ?? "adapter")
             calls.append(call)
             return (nil, calls.count - 1)
         }
@@ -167,7 +170,8 @@ public final class MartyLoop {
                 // A render failure (for example no Metal device) is recorded; the checked lesson still stands.
                 do {
                     let r = try engine.render(document: nil, ref: ref, components: acceptedComponents, size: options.size, loop: false)
-                    receipt["render"] = ["ok": r["ok"] ?? false, "directory": r["directory"] ?? NSNull(), "files": r["files"] ?? [Any](), "timing": r["timing"] ?? NSNull()]
+                    receipt["render"] = ["ok": r["ok"] ?? false, "reason": r["reason"] ?? NSNull(), "directory": r["directory"] ?? NSNull(),
+                                         "files": r["files"] ?? [Any](), "timing": r["timing"] ?? NSNull()]
                     if let dir = r["directory"] as? String, let files = r["files"] as? [[String: Any]] {
                         for f in files { if let name = f["file"] as? String { stills[name] = dir + "/" + name } }
                     }
@@ -199,6 +203,7 @@ public final class MartyLoop {
 
         let finished = Date()
         receipt["seconds"] = (finished.timeIntervalSince(started) * 10).rounded() / 10
+        if !adapterErrors.isEmpty { receipt["adapterErrors"] = adapterErrors }
         receipt["calls"] = calls
         receipt["modelSeconds"] = ((calls.compactMap { $0["seconds"] as? Double }.reduce(0, +)) * 10).rounded() / 10
         receipt["contextBytes"] = ["plan": planSystem.utf8.count, "author": authorSystem.utf8.count]

@@ -238,6 +238,16 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertNotNil(runs[0]["error"])
         XCTAssertEqual(runs[0]["reason"] as? String, "adapter.claude.missing")
         XCTAssertEqual((s["totals"] as? [String: Any])?["errors"] as? Int, 1)
+
+        // A model call that fails inside the run (here the scripted adapter runs dry) is an error row too.
+        let s2 = try Bench.run(file: file, ids: ["A"], makeModel: { ScriptedAdapter(replies: [#"{"components": []}"#]) },
+                               out: dir.appendingPathComponent("run3"), options: .init(), followUps: false)
+        let row = try XCTUnwrap((s2["runs"] as? [[String: Any]])?.first)
+        XCTAssertEqual(row["reason"] as? String, "adapter.scripted.empty")
+        XCTAssertNotNil(row["error"])
+        let t2 = try XCTUnwrap(s2["totals"] as? [String: Any])
+        XCTAssertEqual(t2["errors"] as? Int, 1)
+        XCTAssertEqual(t2["inScope"] as? Int, 0, "an error row is not a model result")
         XCTAssertEqual(runs[1]["accepted"] as? Bool, true)
         XCTAssertThrowsError(try Bench.run(file: file, ids: ["A", "A"], makeModel: { ScriptedAdapter(replies: []) },
                                            out: dir.appendingPathComponent("run2"), options: .init(), followUps: false))

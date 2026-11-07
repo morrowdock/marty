@@ -128,8 +128,8 @@ public struct ClaudeCLIAdapter: ModelAdapter {
             if exited.wait(timeout: .now() + 5) == .timedOut, p.isRunning { kill(p.processIdentifier, SIGKILL) }
             _ = exited.wait(timeout: .now() + 5)
         }
-        // The child is gone; give its pipes a short grace, then use what was read (a grandchild may hold them open).
-        _ = group.wait(timeout: .now() + Self.drainGrace)
+        // After a normal exit, give the pipes a short grace, then use what was read (a grandchild may hold them open).
+        if !timedOut { _ = group.wait(timeout: .now() + Self.drainGrace) }
         try? fm.removeItem(at: work); try? fm.removeItem(at: ctx)
         if timedOut { throw AdapterError(reason: "adapter.timeout", detail: "no answer in \(Int(timeout)) s") }
         let seconds = Date().timeIntervalSince(t0)

@@ -51,10 +51,13 @@ B="$(swift build -c release --show-bin-path)"
 The `claude-cli` adapter uses the local Claude Code CLI (`claude -p`) and the
 account that is logged in there. It needs no API key.
 
-A question that cannot run at all (for example the model CLI is missing) is a
-row with `error` and a one-token `reason`; `totals.errors` counts them, and
-`marty bench` then exits with status 1, so an infrastructure failure never
-reads as a model result.
+A question that cannot run (the model CLI is missing) or where a model call
+fails in the adapter (not logged in, a timeout, no network) is a row with
+`error` and a one-token `reason`, for example `adapter.timeout`. Such rows
+count in `totals.errors`, not in `accepted`, `inScope` or `inScopeAccepted`,
+and `marty bench` then exits with status 1, so an infrastructure failure never
+reads as a model result. Every receipt lists its adapter failures in
+`adapterErrors`.
 
 ## What is published
 

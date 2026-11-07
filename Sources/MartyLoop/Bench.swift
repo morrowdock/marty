@@ -58,16 +58,18 @@ public enum Bench {
         var runs: [[String: Any]] = []
         var model = ""
         func summary() -> [String: Any] {
-            let accepted = runs.filter { $0["accepted"] as? Bool == true }
-            let inScope = runs.filter { $0["scope"] as? String == "in" }
-            let seconds = runs.compactMap { $0["seconds"] as? Double }.sorted()
+            let results = runs.filter { $0["error"] == nil }
+            let accepted = results.filter { $0["accepted"] as? Bool == true }
+            // Rows that could not run are not model results: they count in errors only.
+            let inScope = runs.filter { $0["scope"] as? String == "in" && $0["error"] == nil }
+            let seconds = results.compactMap { $0["seconds"] as? Double }.sorted()
             return ["format": "marty.bench-summary/v1", "questionsFile": file.lastPathComponent, "questionsSha256": sha,
                     "model": model, "prompts": MartyPrompts.version,
                     "engine": ["repository": MartyPin.engineRepository, "revision": MartyPin.engineRevision],
                     "options": ["repairs": options.repairs, "render": options.render, "followUps": followUps],
                     "totals": ["questions": runs.count, "accepted": accepted.count, "errors": runs.filter { $0["error"] != nil }.count,
                                "inScope": inScope.count, "inScopeAccepted": inScope.filter { $0["accepted"] as? Bool == true }.count,
-                               "firstTry": runs.filter { $0["firstTry"] as? Bool == true }.count,
+                               "firstTry": results.filter { $0["firstTry"] as? Bool == true }.count,
                                "medianSeconds": seconds.isEmpty ? 0 : seconds[seconds.count / 2]],
                     "runs": runs]
         }
@@ -82,7 +84,7 @@ public enum Bench {
                 r = try MartyLoop(model: adapter, out: out.appendingPathComponent(q.id, isDirectory: true), options: o).run(question: q.prompt)
             } catch {
                 runs.append(["id": q.id, "scope": q.scope, "category": q.category, "accepted": false, "attempts": 0,
-                             "firstTry": false, "reason": (error as? AdapterError)?.reason ?? "bench.error", "error": "\(error)"])
+                             "firstTry": false, "reason": (error as? AdapterError)?.reason ?? (error as? ToolError)?.reason ?? "bench.error", "error": "\(error)"])
                 try JSONSerialization.data(withJSONObject: MartyJSON.sanitized(summary()), options: [.prettyPrinted, .sortedKeys])
                     .write(to: out.appendingPathComponent("summary.json"))
                 continue
@@ -94,6 +96,11 @@ public enum Bench {
                                       "reasons": attempts.map { $0["reason"] ?? NSNull() }, "seconds": r["seconds"] ?? 0,
                                       "inScopePlanned": ((r["plan"] as? [String: Any])?["reply"] as? [String: Any])?["inScope"] ?? NSNull()]
             if let f = r["followUp"] as? [String: Any] { row["followUp"] = ["ok": f["ok"] ?? false, "changed": f["changed"] ?? false] }
+            // A model call that failed in the adapter makes the row an infrastructure error, not a model result.
+            if let errs = r["adapterErrors"] as? [String], let first = errs.first {
+                row["error"] = "a model call failed in the adapter: \(errs.joined(separator: ", "))"
+                row["reason"] = first
+            }
             runs.append(row)
             // Write the summary after each question, so a stopped run keeps what it finished.
             let data = try JSONSerialization.data(withJSONObject: MartyJSON.sanitized(summary()), options: [.prettyPrinted, .sortedKeys])
