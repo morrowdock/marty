@@ -11,8 +11,11 @@ final class MartyLoopTests: XCTestCase {
     }
 
     func testPromptExamplesAreAccepted() throws {
-        let r = try MartyEngine(outputRoot: nil).check(document: MartyExamples.formatExample, ref: nil, components: [])
-        XCTAssertEqual(r["ok"] as? Bool, true, "\(r)")
+        let r = try MartyEngine(outputRoot: nil).check(document: MartyExamples.formatExample, ref: nil, components: [], strict: true)
+        XCTAssertEqual(r["ok"] as? Bool, true, "\(r["reason"] ?? "")")
+        XCTAssertEqual((r["warnings"] as? [Any])?.count, 0, "\(r["warnings"] ?? "")")
+        XCTAssertEqual(r["version"] as? Int, 2)
+        XCTAssertTrue((r["steps"] as? [String] ?? []).contains { $0.contains("makes 1 turn") }, "the placeholder is filled by the engine")
     }
 
     /// A gear reduction document, as a model might write it (test data only; not a prompt example).
@@ -227,6 +230,37 @@ final class MartyLoopTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: out) }
         _ = try MartyLoop(model: model, out: out, options: options).run(question: "q")
         XCTAssertTrue(model.prompts[4].user.contains("last reason: component.param.range.wheelTeeth"), model.prompts[4].user)
+    }
+
+    /// A typed number in a v2 caption: the repair prompt carries the engine's facts for that model.
+    func testCaptionRefusalRepairGetsTheFacts() throws {
+        let plan = #"{"components": ["spurPair"], "primitives": []}"#
+        let typed = #"{"document": {"v": 2, "kind": "assembly", "title": "Pair", "units": "mm", "parts": [{"id": "pair", "use": "spurPair"}], "steps": [{"say": "The wheel has 36 teeth."}]}}"#
+        let fixed = #"{"document": {"v": 2, "kind": "assembly", "title": "Pair", "units": "mm", "parts": [{"id": "pair", "use": "spurPair"}], "steps": [{"say": "The wheel has {pair.wheel.teeth} teeth."}]}}"#
+        let model = ScriptedAdapter(replies: [plan, typed, fixed])
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: .init()).run(question: "q")
+        let attempts = try XCTUnwrap(r["attempts"] as? [[String: Any]])
+        XCTAssertEqual(attempts.first?["reason"] as? String, "text.number.step.1")
+        XCTAssertTrue(model.prompts[2].user.contains("pair.wheel.teeth: 36"), model.prompts[2].user)
+        XCTAssertEqual(r["accepted"] as? Bool, true)
+        XCTAssertEqual(((r["final"] as? [String: Any])?["steps"] as? [String])?.first, "The wheel has 36 teeth.")
+        let lesson = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: out.appendingPathComponent("lesson.json"))) as? [String: Any])
+        XCTAssertEqual(lesson["version"] as? Int, 2)
+    }
+
+    /// An idle joint is refused in strict mode, and the repair prompt carries the engine's read-back.
+    func testIdleJointRepairGetsTheReadBack() throws {
+        let plan = #"{"components": [], "primitives": []}"#
+        let idle = #"{"document": {"v": 2, "kind": "assembly", "title": "Shaft", "units": "mm", "parts": [{"id": "s", "name": "Shaft", "shape": {"shaft": {"radius": 4, "length": 20}}, "joint": {"revolute": [0, 0, 1]}}]}}"#
+        let model = ScriptedAdapter(replies: [plan, idle, #"{"document": \#(Self.spurReduction)}"#])
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: .init()).run(question: "q")
+        XCTAssertEqual((r["attempts"] as? [[String: Any]])?.first?["reason"] as? String, "joint.idle.s")
+        XCTAssertTrue(model.prompts[2].user.contains("Engine read-back"), model.prompts[2].user)
+        XCTAssertTrue(model.prompts[2].user.contains("s: world centre"), model.prompts[2].user)
     }
 
     func testEmptyFollowUpIsSkipped() throws {

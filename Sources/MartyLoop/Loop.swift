@@ -84,13 +84,38 @@ public final class MartyLoop {
 
     static func compact(_ o: Any) -> String { MartyJSON.string(o) }
 
-    /// The parts of a report a model needs to reason: title, part ids, solved ratios and the gear check.
+    /// The parts of a report a model needs to reason: title, part ids, solved ratios, the facts (as the learner would read
+    /// them, with their tier) and the gear check.
     static func summary(_ r: [String: Any]) -> [String: Any] {
         var s: [String: Any] = [:]
         for k in ["ok", "reason", "part", "title", "partIds", "ratios"] { if let v = r[k] { s[k] = v } }
+        if let f = factLines(r, limit: 80) { s["facts"] = f }
         // Only pass/fail checks: clearances are engine checks, not teaching facts, and they invite noise in answers.
         if let c = r["checks"] as? [String: Any] { s["checks"] = c.filter { ["gearPairs", "gearsEngage", "meshesClosed"].contains($0.key) } }
         return s
+    }
+
+    /// `name: text (tier)` for each engine fact, sorted, at most `limit`; nil when the report has none.
+    static func factLines(_ r: [String: Any], limit: Int) -> [String]? {
+        guard let facts = r["facts"] as? [String: Any], !facts.isEmpty else { return nil }
+        let lines = facts.keys.sorted().map { k -> String in
+            let f = facts[k] as? [String: Any] ?? [:]
+            return "\(k): \(f["text"] as? String ?? "?") (\(f["tier"] as? String ?? "?"))"
+        }
+        return Array(lines.prefix(limit)) + (lines.count > limit ? ["(\(lines.count - limit) more)"] : [])
+    }
+
+    /// Caption and claim refusals happen before the report exists, so the facts come from the same document checked
+    /// without its steps (the engine still solves every fact). Nil when that document is refused too.
+    func factsWithoutSteps(_ document: Any, _ components: [Any]) -> String? {
+        var doc: [String: Any]
+        if let d = document as? [String: Any] { doc = d }
+        else if let s = document as? String, let d = (try? JSONSerialization.jsonObject(with: Data(s.utf8))) as? [String: Any] { doc = d }
+        else { return nil }
+        doc.removeValue(forKey: "steps")
+        guard let r = try? engine.check(document: doc, ref: nil, components: components, strict: false),
+              let lines = Self.factLines(r, limit: 80) else { return nil }
+        return lines.joined(separator: "\n")
     }
 
     // MARK: the loop
@@ -149,7 +174,8 @@ public final class MartyLoop {
             if components.count > MartyLimits.componentsPerRequest {
                 report = ["ok": false, "reason": "components.count", "part": NSNull()]
             } else if let document {
-                do { report = try engine.check(document: document, ref: nil, components: components) }
+                // Strict, as the engine recommends for model authors.
+                do { report = try engine.check(document: document, ref: nil, components: components, strict: true) }
                 catch let e as ToolError { report = ["ok": false, "reason": e.reason] }
             } else {
                 report = ["ok": false, "reason": "json", "part": NSNull()]
@@ -160,8 +186,16 @@ public final class MartyLoop {
             let reason = report["reason"] as? String ?? "unknown"
             var part = report["part"] as? String
             if let c = report["component"] as? Int { part = "components[\(c)]" + (part.map { " / \($0)" } ?? "") }
+            // Engine context for the repair: the facts for caption and claim refusals, the read-back for frame refusals.
+            var facts: String? = nil, readBack: String? = nil
+            if ["text.", "check.failed", "check.fact"].contains(where: { reason.hasPrefix($0) }) {
+                facts = Self.factLines(report, limit: 80)?.joined(separator: "\n") ?? document.flatMap { factsWithoutSteps($0, components) }
+            }
+            if ["frame.", "joint.idle", "expect."].contains(where: { reason.hasPrefix($0) }), let rb = report["readBack"] as? [String] {
+                readBack = Array(rb.prefix(48)).joined(separator: "\n")
+            }
             user = MartyPrompts.repairUser(question: question, plan: planText, previous: text, reason: reason, part: part,
-                                           hint: MartyPrompts.hint(for: reason))
+                                           hint: MartyPrompts.hint(for: reason), facts: facts, readBack: readBack)
         }
         receipt["attempts"] = attempts
         receipt["accepted"] = accepted != nil
@@ -183,16 +217,20 @@ public final class MartyLoop {
                     receipt["render"] = ["ok": false, "reason": (error as? ToolError)?.reason ?? "render.error", "error": "\(error)"]
                 }
             }
-            // 4. Teach: the beats are the model's step texts (the engine checks their length and characters, not their
-            // numbers); the facts are the engine's solved values. Each is labelled with where it comes from.
+            // 4. Teach: the beats are the engine-filled captions; in a v2 document every number in them comes from a fact
+            // (rule N1), except steps marked unchecked. Each beat carries the tier the engine computed.
             let says = report["steps"] as? [String] ?? []
+            let tiers = report["stepTiers"] as? [Any] ?? []
             let lesson: [String: Any] = [
                 "title": report["title"] ?? "", "ref": ref, "honesty": plan["honesty"] ?? "",
-                "sources": ["beats": "model text; the engine checked length and characters, not the numbers in it",
+                "version": report["version"] ?? 1,
+                "sources": ["beats": "model words; in a v2 document every number in a caption is an engine fact (rule N1), except steps marked unchecked; see each beat's tier",
                             "facts": "engine: solved by MartyGraphics", "honesty": "model text from the plan"],
-                "facts": ["ratios": report["ratios"] ?? [String: Any]()],
+                "facts": ["ratios": report["ratios"] ?? [String: Any](), "facts": report["facts"] ?? [String: Any]()],
+                "legend": (report["legend"] as? [String: Any])?["text"] ?? NSNull(),
                 "beats": says.enumerated().map { i, s -> [String: Any] in
-                    ["n": i + 1, "say": s, "still": stills["step-\(i + 1).png"].map { $0 as Any } ?? NSNull()]
+                    ["n": i + 1, "say": s, "tier": i < tiers.count ? tiers[i] : NSNull(),
+                     "still": stills["step-\(i + 1).png"].map { $0 as Any } ?? NSNull()]
                 },
             ]
             try MartyJSON.data(lesson).write(to: out.appendingPathComponent("lesson.json"))
@@ -248,7 +286,7 @@ public final class MartyLoop {
             }
             var r: [String: Any]
             let merged = Self.mergingWith(patch, base: docText)
-            do { r = try engine.patch(document: nil, ref: ref, patch: merged, components: components, returnDocument: false) }
+            do { r = try engine.patch(document: nil, ref: ref, patch: merged, components: components, returnDocument: false, strict: true) }
             catch let e as ToolError { r = ["ok": false, "reason": e.reason] }
             note(i, Self.outcome(r)); attempts.append(Self.outcome(r))
             if (r["ok"] as? Bool) == true { after = r; acceptedPatch = merged; break }
@@ -316,5 +354,5 @@ extension MartyLoop {
 /// Small accepted documents used as format examples in prompts. Tests check each one with the engine.
 /// The example is about no bench subject (no gears, cranks or blades), so it shows the format without giving away an answer.
 public enum MartyExamples {
-    public static let formatExample = #"{"v":1,"kind":"assembly","title":"A shaft held in two bearings","units":"mm","parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}},{"id":"label","name":"Name plate","material":"plastic.teal","shape":{"box":{"size":[40,4,14],"chamfer":0.5}},"at":[0,-70,7]}],"steps":[{"say":"Two bearings hold a shaft in line so that it can turn freely.","camera":"hero"},{"say":"Input: the shaft turns. The bearings and the base stay still.","highlight":["shaft.input"],"spin":1},{"say":"Exploded: the base, the bearings and the shaft.","explode":1,"camera":"iso"}]}"#
+    public static let formatExample = #"{"v":2,"kind":"assembly","title":"A shaft held in two bearings","units":"mm","parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}},{"id":"label","name":"Name plate","material":"plastic.teal","shape":{"box":{"size":[40,4,14],"chamfer":0.5}},"at":[0,-70,7]}],"steps":[{"say":"Two bearings hold a shaft in line so that it can turn freely.","camera":"hero"},{"say":"Input: the shaft makes {shaft.input.speed} turn for each input turn. The bearings and the base stay still.","highlight":["shaft.input"],"spin":1,"check":[{"value":"shaft.input.speed","eq":1}]},{"say":"Exploded: the base, the bearings and the shaft.","explode":1,"camera":"iso"}]}"#
 }

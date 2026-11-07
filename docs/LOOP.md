@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-06. Prompts `marty-prompts/2`. Engine pin as in
+Status: early preview, 2026-11-06. Prompts `marty-prompts/3`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -14,23 +14,32 @@ the MCP server uses), so a run needs no MCP client.
    beats, the component and primitive ids that it wants, and what the model
    cannot show (`honesty`). The loop keeps at most 6 ids that the catalog knows
    and records the ids it dropped.
-2. **Author.** The model gets a short format guide, the `explain` entries of the
+2. **Author.** The model writes a v2 document (MartyGraphics open
+   vocabulary 1): every number in a caption is a `{fact}` placeholder that the
+   engine fills (rule N1), and claims in a step are proved by the engine. It
+   gets a short format guide, the `explain` entries of the
    chosen ids (components without their full definitions) and one small
    accepted example. It answers with `{"document": ..., "components": [...]}`.
-3. **Check.** The engine checks the document. An accepted document gets a `ref`.
+3. **Check.** The engine checks the document in its strict profile (also
+   refuses idle joints and turn axes that miss their part). An accepted
+   document gets a `ref`.
 4. **Repair.** A refused document goes back to the model with the exact reason,
    the part, and, for common reasons, a one-line fact that restates the engine
-   rule (for example the centre-distance formula). At most 3 repairs.
+   rule (for example the centre-distance formula). A caption or claim refusal
+   also gets the list of facts the engine solved for the model (when the
+   refusal comes before the report, Marty checks the same document without its
+   steps to get them). A frame or idle-joint refusal also gets the engine's
+   read-back. At most 3 repairs.
 5. **Render** (with `--render`). Stills for every step, a snapshot and a
    manifest, through the engine renderer. A render that fails (for example
    with no Metal device) is recorded in the receipt; the checked lesson still
    stands.
 6. **Teach.** The checked steps are the beats. `lesson.json` holds each beat's
-   text, its still, the solved ratios and the honesty note, and a `sources`
-   entry that says where each comes from. The beats are model text: the engine
-   checks their length and characters, but not the numbers in them (engine
-   facts and number checks in captions come with MartyGraphics open-vocabulary
-   phase 1). The `facts` are engine values. Marty adds no number of its own.
+   engine-filled text, its tier (the engine's `stepTiers`), its still, the
+   engine facts and ratios, the legend line, the honesty note and a `sources`
+   entry that says where each comes from. In a v2 document every number in a
+   caption is an engine fact (rule N1), except a step marked `unchecked`; the
+   words are the model's. Marty adds no number of its own.
 7. **Follow-up** (with `--follow-up` or in `bench`). The model gets the checked
    document and the engine report, and answers with an engine patch (or `null`
    when nothing must change). The engine checks the patch, with at most 3
