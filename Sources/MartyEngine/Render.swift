@@ -59,7 +59,11 @@ extension MartyEngine {
         let source = MGSolidSource(data: json.canonicalData)
         let result = try Self.renderFiles(doc, sourceName: sourceName, source: source, into: tmp, width: width, height: height, loop: loop)
         // The engine's manifest (`MGSolidRenderPlan.manifest`), with Marty's render format and ref beside it.
-        let outputs = result.files.compactMap { MGJSON(any: $0) }
+        // Every file record must convert; never drop one silently.
+        let outputs = try result.files.map { f -> MGJSON in
+            guard let j = MGJSON(any: f) else { throw ToolError("render.manifest", "a file record could not be encoded") }
+            return j
+        }
         guard case .object(var m) = try MGSolidRenderPlan.manifest(doc, sourceName: sourceName, source: source, framesRendered: result.frames,
                                                                    secondsPerFrame: result.frames > 0 ? result.seconds / Double(result.frames) : 0,
                                                                    outputs: outputs, engine: Self.engineIdentity) else { throw ToolError("render.manifest") }

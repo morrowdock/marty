@@ -91,6 +91,28 @@ final class MCPServerTests: XCTestCase {
         XCTAssertEqual(what.result["ok"] as? Bool, true, "\(what.result)")
     }
 
+    /// check is strict by default for MCP clients; strict: false gives the plain profile. `file` is the canonical JSON.
+    func testStrictDefaultAndFile() throws {
+        let s = MCPServer(engine: MartyEngine(outputRoot: nil))
+        let idle: [String: Any] = ["v": 1, "kind": "assembly", "title": "Idle", "units": "mm",
+                                   "parts": [["id": "s", "shape": ["shaft": ["radius": 4, "length": 20]], "joint": ["revolute": [0, 0, 1]]]]]
+        let strict = try call(s, "check", ["document": idle]).result
+        XCTAssertEqual(strict["ok"] as? Bool, false)
+        XCTAssertEqual(strict["reason"] as? String, "joint.idle.s")
+        XCTAssertEqual(strict["strict"] as? Bool, true)
+        let plain = try call(s, "check", ["document": idle, "strict": false]).result
+        XCTAssertEqual(plain["ok"] as? Bool, true)
+        XCTAssertEqual(plain["strict"] as? Bool, false)
+        let ref = try XCTUnwrap(plain["ref"] as? String)
+        XCTAssertEqual((plain["file"] as? [String: Any])?["sha256"] as? String, String(ref.dropFirst(7)))
+        XCTAssertNotNil(plain["engine"] as? [String: Any])
+        // A patch refusal has the check refusal's shape plus stage and baseRef.
+        let bad = try call(s, "patch", ["ref": ref, "patch": ["colour": "red"]]).result
+        XCTAssertEqual(bad["stage"] as? String, "patch")
+        XCTAssertNotNil(bad["engine"] as? [String: Any])
+        XCTAssertNotNil(bad["strict"])
+    }
+
     func testLineSplitter() {
         var s = LineSplitter(limit: 8)
         XCTAssertEqual(s.feed(Data("abc\nde".utf8)), [Data("abc".utf8)])

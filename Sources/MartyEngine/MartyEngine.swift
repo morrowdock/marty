@@ -171,13 +171,18 @@ public final class MartyEngine {
         let doc: MGSolidDocument
         switch MGSolidParser.document(json: base, library: lib) {
         case .failure(let issue):
-            return ["ok": false, "reason": issue.reason, "part": issue.part as Any, "stage": "base", "baseRef": baseRef]
+            // The same refusal shape as `check` of that base, plus where it happened.
+            var r = Self.refusedReport(issue, strict: strict, json: base)
+            r["stage"] = "base"; r["baseRef"] = baseRef
+            return r
         case .success(let d): doc = d
         }
         switch MGSolidParser.applying(p, to: doc) {
         case .failure(let issue):
             // The engine refused the patch; the base document is unchanged.
-            return ["ok": false, "reason": issue.reason, "part": issue.part as Any, "stage": "patch", "baseRef": baseRef]
+            var r = Self.refusedReport(issue, strict: strict, json: base)
+            r["stage"] = "patch"; r["baseRef"] = baseRef
+            return r
         case .success(let patched):
             // The engine already compiled the patched document; report on it without compiling it again.
             let ref = remember(patched.source)

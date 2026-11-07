@@ -66,7 +66,7 @@ depends on what is in the cache.
 | --- | --- | --- |
 | `catalog` | `compact` (default true) | Components (id, about, parameters with default and range, inner parts, anchors; about 4 KB for the 7 built-ins at this pin, and it grows with the library), plus a fixed part: primitive ids, camera presets and the format limits. |
 | `explain` | `id` (component or primitive) | One entry: what it is, its keys or parameters, and one small example that the engine accepts. |
-| `check` | `document` or `ref`; `components` (optional definitions); `strict` (default true) | `ok`, `reason`, `part`, `ref`, title, part count, triangles, steps (v2 captions filled from facts), solved ratios, mesh and gear checks, `strict`, `file` (lines and SHA-256 of the canonical JSON), `engine`, and the engine's honesty data: `version`, `warnings`, `facts` (value, unit, text, tier, source), `legend`, `stepTiers`, `stepFacts`, `notChecked`, `readBack`. |
+| `check` | `document` or `ref`; `components` (optional definitions); `strict` (default true) | `ok`, `reason`, `part`, `ref`, title, part count, triangles, steps (v2 captions filled from facts), solved ratios, mesh and gear checks, `strict`, `file` (lines and SHA-256 of the canonical JSON), `engine`, and the engine's honesty data: `version`, `warnings`, `facts` (value, unit, text, tier, source), `legend`, `stepTiers`, `stepFacts`, `partTiers`, `motionTiers`, `notChecked`, `sectionTriangles`, `readBack` (in accepted reports and in reports refused by a post-compile check; a parse refusal has only `ok`, `reason`, `part`, `strict`, `file`, `engine`). 0.2.0 replaces 0.1.0's `source` object with `file`. |
 | `component_check` | `definition`; `with` (optional values) | `ok`, `reason`, `part`, the catalog entry, a ready `use` entry and the instance checks. |
 | `patch` | `document` or `ref`; `patch` (the engine format, below); `components` (optional); `strict` (default true) | The `check` result of the patched document, its new `ref`, and the patched document when `return_document` is true. |
 | `render` | `document` or `ref`; `components`; `size` (default 1280x800, at most 1920x1200); `loop` (default false) | `ok`, the output directory, the file names (hero, exploded, one still per step, optional loop GIF, snapshot, manifest) and their SHA-256 digests. |
@@ -127,6 +127,16 @@ CLI's (open mesh, gear overlap, then the strict warning). The full honesty
 data is in every accepted or post-check-refused report, also when strict
 refuses, so the author can repair from it. `render` and `component_check` use
 the plain profile.
+The Swift API (`MartyEngine.check` / `patch`) defaults to the plain profile;
+the MCP tools and the Marty loop pass `strict` explicitly.
+
+**Patch reports.** `patch` reports on the patched document with one compile
+(`MGSolidParser.applying`, then `MGSolidReport.make`), so its `file` and `ref`
+describe the patched document. Unlike `marty-solid check BASE --patch PATCH`,
+it has no `patch` object (`applied`, `fields`, `changed`, `refusedAt`): the
+engine's helpers for those are internal. Marty gives `stage` (`base` or
+`patch`) on a refusal and `baseRef` instead. A refusal has the same shape as a
+`check` refusal of the base.
 Until a feature is in the pinned engine, the server does not offer the tool or
 the field. The server never imitates an engine feature.
 
