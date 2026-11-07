@@ -66,7 +66,7 @@ depends on what is in the cache.
 | --- | --- | --- |
 | `catalog` | `compact` (default true) | Components (id, about, parameters with default and range, inner parts, anchors; about 4 KB for the 7 built-ins at this pin, and it grows with the library), plus a fixed part: primitive ids, camera presets and the format limits. |
 | `explain` | `id` (component or primitive) | One entry: what it is, its keys or parameters, and one small example that the engine accepts. |
-| `check` | `document` or `ref`; `components` (optional definitions); `strict` (default true) | `ok`, `reason`, `part`, `ref`, title, part count, triangles, steps (v2 captions filled from facts), solved ratios, mesh and gear checks, `strict`, `file` (lines and SHA-256 of the canonical JSON), `engine`, and the engine's honesty data: `version`, `warnings`, `facts` (value, unit, text, tier, source), `legend`, `stepTiers`, `stepFacts`, `partTiers`, `motionTiers`, `notChecked`, `sectionTriangles`, `readBack` (in accepted reports and in reports refused by a post-compile check; an engine parse refusal has only `ok`, `reason`, `part`, `strict`, `file`, `engine` and `ref`; an input refusal such as `json` or `assembly.bytes` has only `ok`, `reason`, `part`, `strict`). 0.2.0 replaces 0.1.0's `source` object with `file`. |
+| `check` | `document` or `ref`; `components` (optional definitions); `strict` (default true) | `ok`, `reason`, `part`, `ref`, title, part count, triangles, steps (v2 captions filled from facts), solved ratios, mesh and gear checks, `strict`, `file` (lines and SHA-256 of the canonical JSON), `engine`, and the engine's honesty data: `version`, `warnings`, `facts` (value, unit, text, tier, source), `legend`, `stepTiers`, `stepFacts`, `partTiers`, `motionTiers`, `notChecked`, `sectionTriangles`, `readBack` (in accepted reports and in reports refused by a post-compile check; an engine parse refusal has only `ok`, `reason`, `part`, `strict`, `file`, `engine` and `ref`; an input refusal such as `json` or `assembly.bytes` has only `ok`, `reason`, `part`, `strict`; a `components` refusal (`component.bytes`, `json` or a registration refusal) has `ok`, `reason`, `part` and `component` (its index), in `check` and `patch` alike). 0.2.0 replaces 0.1.0's `source` object with `file`. |
 | `component_check` | `definition`; `with` (optional values) | `ok`, `reason`, `part`, the catalog entry, a ready `use` entry and the instance checks. |
 | `patch` | `document` or `ref`; `patch` (the engine format, below); `components` (optional); `strict` (default true) | The `check` result of the patched document, its new `ref`, and the patched document when `return_document` is true. |
 | `render` | `document` or `ref`; `components`; `size` (default 1280x800, at most 1920x1200); `loop` (default false) | `ok`, the output directory, the file names (hero, exploded, one still per step, optional loop GIF, snapshot, manifest) and their SHA-256 digests. |
@@ -128,8 +128,7 @@ data is in every accepted or post-check-refused report, also when strict
 refuses, so the author can repair from it. `render` and `component_check` use
 the plain profile.
 The Swift API (`MartyEngine.check` / `patch`) defaults to the plain profile;
-the MCP tools pass `strict` explicitly; the Marty loop uses the plain
-profile.
+the MCP tools and the Marty loop pass `strict: true` explicitly.
 
 **Patch reports.** `patch` compiles once and reports on the patched document
 (`MGSolidParser.applying`, then `MGSolidReport.make`), so its `file` and `ref`
@@ -138,9 +137,10 @@ describe the patched document. Unlike `marty-solid check BASE --patch PATCH`
 base's `file`), it has no `patch` object (`applied`, `fields`, `changed`,
 `refusedAt`). A refusal before the patched document exists has `stage`
 (`base` or `patch`): an engine refusal there has the same shape as a `check`
-refusal of the base (`file` and `strict` of the base, `engine`) plus `baseRef`;
-an input refusal (`assembly.bytes`, `patch.bytes`, `json`, `cache.miss` is a
-tool error) has only `ok`, `reason`, `part`, `strict` and `stage`. A patched
+refusal of the base (`file` and `strict` of the base, `engine`), with `stage`
+and `baseRef` in place of `ref`; an input refusal (`assembly.bytes`,
+`patch.bytes`, `json`) has only `ok`, `reason`, `part`, `strict` and `stage`;
+`cache.miss` is a tool error. A patched
 document that compiles but fails a report check (open mesh, gear overlap,
 strict) is a normal report with `ok: false`, its own `ref` and no `stage`.
 Until a feature is in the pinned engine, the server does not offer the tool or
