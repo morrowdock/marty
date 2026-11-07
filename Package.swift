@@ -11,6 +11,8 @@ let package = Package(
         .library(name: "MartyEngine", targets: ["MartyEngine"]),
         .library(name: "MartyMCP", targets: ["MartyMCP"]),
         .executable(name: "marty-mcp", targets: ["marty-mcp"]),
+        .library(name: "MartyLoop", targets: ["MartyLoop"]),
+        .executable(name: "marty", targets: ["marty"]),
     ],
     dependencies: [
         .package(url: "https://github.com/morrowdock/martygraphics.git", revision: "76104deae44a186ccf29a43db9e091f088f12103"),
@@ -19,6 +21,9 @@ let package = Package(
         .target(name: "MartyEngine", dependencies: [.product(name: "MartyGraphics", package: "martygraphics")]),
         .target(name: "MartyMCP", dependencies: ["MartyEngine"]),
         .executableTarget(name: "marty-mcp", dependencies: ["MartyMCP"]),
+        .target(name: "MartyLoop", dependencies: ["MartyEngine"]),
+        .executableTarget(name: "marty", dependencies: ["MartyLoop"]),
+        .testTarget(name: "MartyLoopTests", dependencies: ["MartyLoop"]),
         .testTarget(name: "MartyEngineTests", dependencies: ["MartyEngine", .product(name: "MartyGraphics", package: "martygraphics")]),
         .testTarget(name: "MartyMCPTests", dependencies: ["MartyMCP", "marty-mcp"]),
     ],
