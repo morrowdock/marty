@@ -70,6 +70,9 @@ final class LessonToolTests: XCTestCase {
         let id = try XCTUnwrap(first["session"] as? String)
         let bad = try e.lessonStream(session: id, chunk: #"{"op":"remove","id":"nope"}"# + "\n", end: false)
         XCTAssertEqual(bad["ok"] as? Bool, false)
+        // Nothing changed: the same board and no unfinished input.
+        XCTAssertEqual(MartyJSON.data(bad["board"] ?? [:]), MartyJSON.data(first["board"] ?? [:]))
+        XCTAssertEqual(bad["unfinishedBytes"] as? Int, first["unfinishedBytes"] as? Int)
         let refused = try XCTUnwrap((bad["events"] as? [[String: Any]])?.first { $0["event"] as? String == "refused" })
         XCTAssertNotNil(refused["reason"] as? String)
         let rest = try e.lessonStream(session: id, chunk: lines.dropFirst(2).joined(separator: "\n") + "\n", end: true)
@@ -86,5 +89,26 @@ final class LessonToolTests: XCTestCase {
         XCTAssertThrowsError(try e.lessonStream(session: nil, chunk: String(repeating: " ", count: MartyEngine.maxChunkBytes + 1), end: false)) {
             XCTAssertEqual(($0 as? ToolError)?.reason, "lesson.chunk.bytes")
         }
+    }
+
+    /// After a budget refusal the engine ignores the stream until it ends; the tool says so instead of ok: true.
+    func testExhaustedStreamIsReported() throws {
+        let e = MartyEngine(outputRoot: nil)
+        let scene = #"{"scene":{"v":1,"template":"rotate2d","params":{"pts":[[2,1],[4,1],[2,3]],"angle":0}}}"# + "\n"
+        let start = try e.lessonStream(session: nil, chunk: scene, end: false)
+        let id = try XCTUnwrap(start["session"] as? String)
+        // Fill the 32 KiB stream budget with whitespace (every received byte counts).
+        var hit = false
+        for _ in 0..<3 {
+            let r = try e.lessonStream(session: id, chunk: String(repeating: " ", count: 16 * 1024), end: false)
+            if (r["events"] as? [[String: Any]])?.contains(where: { $0["reason"] as? String == "lesson.bytes" }) == true { hit = true; break }
+        }
+        XCTAssertTrue(hit, "the engine's byte budget refusal")
+        let later = try e.lessonStream(session: id, chunk: #"{"say":"Hello."}"# + "\n", end: false)
+        XCTAssertEqual(later["ok"] as? Bool, false)
+        XCTAssertEqual(later["reason"] as? String, "lesson.stream.exhausted")
+        XCTAssertEqual(later["exhausted"] as? Bool, true)
+        let ended = try e.lessonStream(session: id, chunk: "", end: true)
+        XCTAssertEqual(ended["exhausted"] as? Bool, false)
     }
 }

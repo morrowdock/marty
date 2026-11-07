@@ -11,6 +11,11 @@ extension MartyEngine {
     public nonisolated static let maxLessonSessions = 8
     /// Bytes per `lesson_stream` call (the engine's own stream budget is 32 KiB in all).
     public nonisolated static let maxChunkBytes = MGLessonLimits.lessonBytes
+    /// Events returned by one call; the rest are counted in `truncatedEvents` (one 32 KiB chunk can hold many
+    /// short streams).
+    public nonisolated static let maxEventsPerCall = 512
+    /// The engine's terminal budget refusals: after one, it ignores the stream until `endStream()`.
+    nonisolated static let budgetReasons: Set<String> = ["lesson.bytes", "lesson.statements.count"]
 
     /// The engine's opt-in geometry pack (`rotate2d`), registered once per process.
     static let geometryRegistered: Bool = {
@@ -66,11 +71,13 @@ extension MartyEngine {
             // All or nothing: the first problem refuses the whole lesson, with its location.
             return (["ok": false, "statementBytes": parsed.statementStream.utf8.count] as [String: Any]).merging(Self.issue(i)) { a, _ in a }
         case .success:
-            _ = session.finishNow()
+            // Under immediate pacing `load` presents every beat itself (the statements end with {"end": true}).
+            break
         }
         let events = session.events
+        // What the learner hears: lineDue text is filled from the presented state.
         let lines: [[String: Any]] = events.compactMap {
-            if case .lineQueued(let k, let text) = $0 { return ["beat": k, "text": text] }
+            if case .lineDue(let k, let text, _) = $0 { return ["beat": k, "text": text] }
             return nil
         }
         return ["ok": true, "reason": NSNull(), "title": parsed.title as Any, "beats": parsed.beats.count, "lines": lines,
@@ -79,7 +86,7 @@ extension MartyEngine {
     }
 
     /// Feeds `chunk` (raw statement text, any split) into session `id`, or into a new session when `id` is nil.
-    /// `end` ends the stream (`endStream()`, then `finishNow()`), which presents every complete beat.
+    /// `end` ends the stream (`endStream()`), which presents every complete beat under immediate pacing.
     public func lessonStream(session id: String?, chunk: String, end: Bool) throws -> [String: Any] {
         _ = Self.geometryRegistered
         guard chunk.utf8.count <= Self.maxChunkBytes else {
@@ -87,23 +94,37 @@ extension MartyEngine {
         }
         let key: String
         var session: MGLessonSession
+        var exhausted = false
         if let id {
             guard let i = lessonSessions.firstIndex(where: { $0.id == id }) else {
                 throw ToolError("lesson.session.unknown", "this server does not hold \(id.prefix(40)); start a new session without `session`")
             }
             key = id
-            session = lessonSessions.remove(at: i).session
+            let entry = lessonSessions.remove(at: i)
+            session = entry.session; exhausted = entry.exhausted
         } else {
             lessonSessionCounter += 1
             key = "lesson-\(lessonSessionCounter)"
             session = MGLessonSession(pacing: .immediate, clock: MGManualClock())
         }
-        var events = session.feed(chunk)
-        if end { events += session.endStream(); events += session.finishNow() }
-        lessonSessions.append((key, session))
+        var events: [MGLessonEvent] = []
+        if !exhausted { events = session.feed(chunk) }
+        if events.contains(where: { if case .refused(let i) = $0 { return Self.budgetReasons.contains(i.reason) }; return false }) {
+            exhausted = true
+        }
+        // The engine ignores an exhausted stream until it ends; say so instead of reporting silent success.
+        let ignored = exhausted && !end && !chunk.isEmpty
+        if end { events += session.endStream(); exhausted = false }
+        // Least recently used goes first: the session used now is the newest.
+        lessonSessions.append((key, session, exhausted))
         if lessonSessions.count > Self.maxLessonSessions { lessonSessions.removeFirst(lessonSessions.count - Self.maxLessonSessions) }
         let refused = events.contains { if case .refused = $0 { return true }; return false }
-        return ["ok": !refused, "session": key, "events": events.map(Self.event), "board": Self.board(session),
-                "waitingBeats": session.waitingBeats, "unfinishedBytes": session.unfinishedInput.count]
+        var out: [String: Any] = ["ok": !refused && !ignored, "session": key,
+                                  "events": events.prefix(Self.maxEventsPerCall).map(Self.event), "board": Self.board(session),
+                                  "waitingBeats": session.waitingBeats, "unfinishedBytes": session.unfinishedInput.count,
+                                  "exhausted": exhausted]
+        if events.count > Self.maxEventsPerCall { out["truncatedEvents"] = events.count - Self.maxEventsPerCall }
+        if ignored { out["reason"] = "lesson.stream.exhausted" }
+        return out
     }
 }

@@ -13,7 +13,7 @@ public final class MartyEngine {
     public let outputRoot: URL?
     private var cache: [(ref: String, json: MGJSON)] = []
     /// Lesson stream sessions (`lesson_stream`), oldest first, at most `maxLessonSessions`.
-    var lessonSessions: [(id: String, session: MGLessonSession)] = []
+    var lessonSessions: [(id: String, session: MGLessonSession, exhausted: Bool)] = []
     var lessonSessionCounter = 0
 
     public init(outputRoot: URL?) { self.outputRoot = outputRoot }

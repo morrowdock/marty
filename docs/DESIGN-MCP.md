@@ -93,6 +93,20 @@ to the parser.
 `check.meshOpen` and `check.gearsInterpenetrate`. The engine's own CLI render
 does not run those two checks.
 
+**Lessons.** Both lesson tools use the engine's own session
+(`MGLessonSession`) with immediate pacing and a manual clock, so results hold
+no time and are deterministic. `lesson_check` reports each beat's line as the
+learner hears it (`lineDue`, filled from the presented state). The server
+keeps at most 8 stream sessions; the least recently used is dropped, and an
+unknown or dropped id gives the tool error `lesson.session.unknown`. The
+engine's own budgets apply (32 KiB and 256 statements per stream, 24 beats, 12
+commands and 8 checks per beat). After a budget refusal the engine ignores the
+stream until it ends; later calls then give `ok: false` with
+`lesson.stream.exhausted`, and `end` starts over. One call returns at most 512
+events (`truncatedEvents` counts the rest). The opt-in `rotate2d` template
+(`MGGeometryPack`) is registered on the first lesson call. Lessons are 2D in
+this engine phase; solid lessons are not in the engine yet.
+
 Later tools, when the engine supports them:
 
 - **Facts, tiers and read-back** (MartyGraphics PR #21, open-vocabulary
@@ -100,15 +114,6 @@ Later tools, when the engine supports them:
   `tiers` (Solved, Built or Described for each part), `warnings` (frame
   lints) and `readBack` (each part's world position, axis and parent frame in
   plain words). `strict: true` maps to the engine's strict mode.
-**Lessons.** Both lesson tools use the engine's own session
-(`MGLessonSession`) with immediate pacing and a manual clock, so results hold
-no time and are deterministic. The server keeps at most 8 stream sessions
-(the oldest is dropped; an unknown or dropped id gives the tool error
-`lesson.session.unknown`). The engine's own budgets apply (32 KiB and 256
-statements per stream, 24 beats, 12 commands and 8 checks per beat). The
-opt-in `rotate2d` template (`MGGeometryPack`) is registered at start. Lessons
-are 2D in this engine phase; solid lessons are not in the engine yet.
-
 Until a feature is in the pinned engine, the server does not offer the tool or
 the field. The server never imitates an engine feature.
 
