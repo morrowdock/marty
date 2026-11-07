@@ -56,8 +56,9 @@ fails in the adapter (not logged in, a timeout, no network) is a row with
 `error` and a one-token `reason`, for example `adapter.timeout`. Such rows
 count in `totals.errors`, not in `accepted`, `inScope` or `inScopeAccepted`,
 and `marty bench` then exits with status 1, so an infrastructure failure never
-reads as a model result. Every receipt lists its adapter failures in
-`adapterErrors`.
+reads as a model result. A receipt has `adapterErrors` when a model call failed.
+One failed call makes the row an error row even when a retry then worked:
+a run with infrastructure noise is kept out of the model results on purpose.
 
 ## What is published
 

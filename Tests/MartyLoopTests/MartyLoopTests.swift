@@ -213,6 +213,16 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: out.appendingPathComponent("receipt.json").path))
     }
 
+    func testPlanAdapterFailureStopsTheRun() throws {
+        let model = ScriptedAdapter(replies: [])
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: .init()).run(question: "q")
+        XCTAssertEqual(model.prompts.count, 2, "two plan attempts, then stop")
+        XCTAssertEqual(r["adapterErrors"] as? [String], ["adapter.scripted.empty", "adapter.scripted.empty"])
+        XCTAssertEqual(r["accepted"] as? Bool, false)
+    }
+
     func testBadOptionsAreRefusedBeforeAnyModelCall() throws {
         var o = MartyLoop.Options()
         o.size = "foo"

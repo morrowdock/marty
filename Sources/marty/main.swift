@@ -51,7 +51,7 @@ func fail(_ s: String) -> Never { FileHandle.standardError.write(Data((s + "\n")
             let s = try Bench.run(file: URL(fileURLWithPath: subject), ids: ids, makeModel: { try ClaudeCLIAdapter(model: modelID) },
                                   out: outURL, options: options, followUps: followUps)
             print(MartyJSON.string(["totals": s["totals"] ?? [String: Any](), "summary": out + "/summary.json"]))
-            // A question that could not run at all (no model CLI, a broken run) is an infrastructure failure.
+            // A question that could not run, or where a model call failed in the adapter, is an infrastructure failure.
             return ((s["totals"] as? [String: Any])?["errors"] as? Int ?? 0) > 0 ? 1 : 0
         }
         let model: ModelAdapter
@@ -64,8 +64,11 @@ func fail(_ s: String) -> Never { FileHandle.standardError.write(Data((s + "\n")
             model = try ClaudeCLIAdapter(model: modelID)
         }
         let r = try MartyLoop(model: model, out: outURL, options: options).run(question: subject)
-        print(MartyJSON.string(["accepted": r["accepted"] ?? false, "attempts": (r["attempts"] as? [Any])?.count ?? 0,
-                                "seconds": r["seconds"] ?? 0, "receipt": out + "/receipt.json"]))
+        var line: [String: Any] = ["accepted": r["accepted"] ?? false, "attempts": (r["attempts"] as? [Any])?.count ?? 0,
+                                   "seconds": r["seconds"] ?? 0, "receipt": out + "/receipt.json"]
+        // Exit codes: 0 accepted, 1 not accepted, 2 usage or setup error, 3 a model call failed in the adapter.
+        if let errs = r["adapterErrors"] as? [String], !errs.isEmpty { line["adapterErrors"] = errs; print(MartyJSON.string(line)); return 3 }
+        print(MartyJSON.string(line))
         return (r["accepted"] as? Bool) == true ? 0 : 1
     } catch {
         fail("\(error)")

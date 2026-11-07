@@ -110,10 +110,12 @@ public final class MartyLoop {
             .union(MartyPrimitive.all.map(\.id))
         let planSystem = MartyPrompts.planSystem(catalog: Self.compact(catalog))
         var plan: [String: Any] = [:]
+        var planAdapterFailed = false
         for attempt in 0..<2 {
             let (text, i) = ask("plan", attempt: attempt, system: planSystem, user: "Question: \(question)")
-            if let t = text, let p = ReplyJSON.object(t) { plan = p; note(i, ["ok": true]); break }
+            if let t = text, let p = ReplyJSON.object(t) { plan = p; note(i, ["ok": true]); planAdapterFailed = false; break }
             note(i, ["ok": false, "reason": text == nil ? "adapter" : "plan.json"])
+            planAdapterFailed = text == nil
         }
         let wanted = ((plan["components"] as? [String] ?? []) + (plan["primitives"] as? [String] ?? []))
         var seen = Set<String>()
@@ -134,7 +136,9 @@ public final class MartyLoop {
         var accepted: [String: Any]? = nil
         var acceptedComponents: [Any] = []
         var attempts: [[String: Any]] = []
-        for attempt in 0...options.repairs {
+        // When the model could not be reached for the plan, stop: more calls would only fail or wait again.
+        if planAdapterFailed { attempts.append(["ok": false, "reason": "adapter"]) }
+        for attempt in stride(from: 0, through: planAdapterFailed ? -1 : options.repairs, by: 1) {
             let (text, i) = ask(attempt == 0 ? "author" : "repair", attempt: attempt, system: authorSystem, user: user)
             guard let text else { note(i, ["ok": false, "reason": "adapter"]); attempts.append(["ok": false, "reason": "adapter"]); break }
             let reply = ReplyJSON.object(text)
@@ -176,7 +180,7 @@ public final class MartyLoop {
                         for f in files { if let name = f["file"] as? String { stills[name] = dir + "/" + name } }
                     }
                 } catch {
-                    receipt["render"] = ["ok": false, "error": "\(error)"]
+                    receipt["render"] = ["ok": false, "reason": (error as? ToolError)?.reason ?? "render.error", "error": "\(error)"]
                 }
             }
             // 4. Teach: the beats are the model's step texts (the engine checks their length and characters, not their
