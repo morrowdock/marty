@@ -292,6 +292,22 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(m.prompts[2].user.contains("s: world centre"))
     }
 
+    /// An expect mismatch plus a bad caption: the read-back still comes (captions are dropped from the copy too).
+    func testExpectRefusalWithASecondErrorGetsTheReadBack() throws {
+        let doc = #"{"document": {"v": 2, "kind": "assembly", "title": "Shaft", "units": "mm", "parts": [{"id": "s", "name": "Shaft", "shape": {"shaft": {"radius": 4, "length": 20}}, "joint": {"revolute": [0, 0, 1]}, "drive": {"input": 1}, "expect": {"axisWorld": [1, 0, 0]}}], "steps": [{"say": "It turns {nope.speed} times."}]}}"#
+        let (m, r) = try prompts([#"{"components": []}"#, doc, #"{"document": \#(Self.spurReduction)}"#])
+        XCTAssertEqual((r["attempts"] as? [[String: Any]])?.first?["reason"] as? String, "expect.axis.s")
+        XCTAssertTrue(m.prompts[2].user.contains("s: world centre"), m.prompts[2].user)
+    }
+
+    func testWithoutExpectStripsSetEntries() {
+        let p = MartyLoop.withoutExpect(["id": "u", "use": "x", "expect": ["upWorld": [0, 0, 1]],
+                                         "set": ["inner": ["expect": ["axisWorld": [1, 0, 0]], "material": "brass"]]])
+        XCTAssertNil(p["expect"])
+        XCTAssertNil(((p["set"] as? [String: Any])?["inner"] as? [String: Any])?["expect"])
+        XCTAssertEqual(((p["set"] as? [String: Any])?["inner"] as? [String: Any])?["material"] as? String, "brass")
+    }
+
     /// A what-if that makes a claim false: the follow-up repair has the facts of the changed model.
     func testFollowUpClaimRefusalGetsTheChangedFacts() throws {
         let base = Self.pairDoc(say: "The wheel has {pair.wheel.teeth} teeth.", check: #"{"value": "pair.wheel.teeth", "eq": 36}"#)

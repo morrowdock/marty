@@ -114,12 +114,37 @@ public final class MartyLoop {
         if let d = document as? [String: Any] { doc = d }
         else if let s = document as? String, let d = (try? JSONSerialization.jsonObject(with: Data(s.utf8))) as? [String: Any] { doc = d }
         else { return nil }
-        if captions { doc.removeValue(forKey: "steps"); doc["title"] = "Facts" }
-        if expectations, let parts = doc["parts"] as? [[String: Any]] {
-            doc["parts"] = parts.map { p -> [String: Any] in var p = p; p.removeValue(forKey: "expect"); return p }
+        // Captions are checked after `expect`, so the expect copy drops them too: a second error cannot hide the read-back.
+        if captions || expectations { doc.removeValue(forKey: "steps"); doc["title"] = "Facts" }
+        var comps = components
+        if expectations {
+            if let parts = doc["parts"] as? [[String: Any]] { doc["parts"] = parts.map(Self.withoutExpect) }
+            // expect is legal in a use entry's set and in component definition parts too.
+            comps = components.map { c -> Any in
+                var d: [String: Any]
+                if let o = c as? [String: Any] { d = o }
+                else if let s = c as? String, let o = (try? JSONSerialization.jsonObject(with: Data(s.utf8))) as? [String: Any] { d = o }
+                else { return c }
+                if let parts = d["parts"] as? [[String: Any]] { d["parts"] = parts.map(Self.withoutExpect) }
+                return d
+            }
         }
-        guard let r = try? engine.check(document: doc, ref: nil, components: components, strict: false), r["facts"] != nil else { return nil }
+        guard let r = try? engine.check(document: doc, ref: nil, components: comps, strict: false), r["facts"] != nil else { return nil }
         return r
+    }
+
+    /// A part entry without `expect`, also inside its component `set` entries.
+    static func withoutExpect(_ part: [String: Any]) -> [String: Any] {
+        var p = part
+        p.removeValue(forKey: "expect")
+        if let set = p["set"] as? [String: Any] {
+            p["set"] = set.mapValues { v -> Any in
+                guard var inner = v as? [String: Any] else { return v }
+                inner.removeValue(forKey: "expect")
+                return inner
+            }
+        }
+        return p
     }
 
     /// The facts block and read-back block for a repair prompt, from the report or from a stripped copy.
