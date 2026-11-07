@@ -7,7 +7,7 @@ import MartyGraphics
 /// server keeps, so a model can write a lesson one statement at a time and see each refusal at once.
 /// Sessions use immediate pacing and a manual clock, so every result is deterministic.
 extension MartyEngine {
-    /// At most this many stream sessions are kept; the oldest is dropped first.
+    /// At most this many stream sessions are kept; the least recently used is dropped first.
     public nonisolated static let maxLessonSessions = 8
     /// Bytes per `lesson_stream` call (the engine's own stream budget is 32 KiB in all).
     public nonisolated static let maxChunkBytes = MGLessonLimits.lessonBytes
@@ -107,13 +107,19 @@ extension MartyEngine {
             key = "lesson-\(lessonSessionCounter)"
             session = MGLessonSession(pacing: .immediate, clock: MGManualClock())
         }
-        var events: [MGLessonEvent] = []
-        if !exhausted { events = session.feed(chunk) }
-        if events.contains(where: { if case .refused(let i) = $0 { return Self.budgetReasons.contains(i.reason) }; return false }) {
-            exhausted = true
+        // Always feed: the engine itself ignores an exhausted stream, and it starts a fresh stream on the first statement
+        // after an ended one. Marty only reads what happened.
+        let wasExhausted = exhausted
+        var events = session.feed(chunk)
+        let budgetHit = events.lastIndex { if case .refused(let i) = $0 { return Self.budgetReasons.contains(i.reason) }; return false }
+        if let k = budgetHit {
+            // Exhausted unless something was accepted or started after the budget refusal (a new stream).
+            exhausted = k == events.count - 1 && session.unfinishedInput.isEmpty
+        } else if wasExhausted {
+            exhausted = events.isEmpty && session.unfinishedInput.isEmpty
         }
-        // The engine ignores an exhausted stream until it ends; say so instead of reporting silent success.
-        let ignored = exhausted && !end && !chunk.isEmpty
+        // Statements sent to a stream that was already exhausted are dropped by the engine: say so, not silent success.
+        let ignored = wasExhausted && exhausted && !end && chunk.contains { !$0.isWhitespace }
         if end { events += session.endStream(); exhausted = false }
         // Least recently used goes first: the session used now is the newest.
         lessonSessions.append((key, session, exhausted))

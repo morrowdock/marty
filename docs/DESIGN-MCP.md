@@ -69,7 +69,7 @@ depends on what is in the cache.
 | `patch` | `document` or `ref`; `patch` (the engine format, below); `components` (optional) | The `check` result of the patched document, its new `ref`, and the patched document when `return_document` is true. |
 | `render` | `document` or `ref`; `components`; `size` (default 1280x800, at most 1920x1200); `loop` (default false) | `ok`, the output directory, the file names (hero, exploded, one still per step, optional loop GIF, snapshot, manifest) and their SHA-256 digests. |
 | `lesson_check` | `lesson` (a lesson document, MartyGraphics docs/LESSONS.md) | All or nothing, in a fresh engine session: `ok`, or the reason with `beat`, `statement`, `command`, `detail`. Accepted: each beat's line with `{placeholders}` filled from engine values, and the final `board` (beat cursor, engine values with their formatted text, controls). |
-| `lesson_stream` | `chunk` (statement text, any split, at most 32 KiB); `session` (optional); `end` (optional) | The session id, this call's events (`accepted`, `refused` with reason and location, `lineQueued` with filled text, `beatPresented`, `streamEnded`, ...), the `board`, beats waiting and unfinished bytes. `ok` is false when this call had a refusal. |
+| `lesson_stream` | `chunk` (statement text, any split, at most 32 KiB); `session` (optional); `end` (optional) | The session id, this call's events (`accepted`, `refused` with reason and location, `lineQueued` with filled text, `beatPresented`, `streamEnded`, ...), the `board`, beats waiting, unfinished bytes and `exhausted`; `truncatedEvents` when more than 512 events; `reason: lesson.stream.exhausted` when statements were sent to a stream that was already exhausted. `ok` is false when this call had a refusal or its statements were dropped. |
 
 **Patch format.** `patch` uses the engine's own patch,
 `MGSolidParser.applying(_:to:)`. Its keys are `params`, `parts` (merge fields
@@ -100,9 +100,13 @@ learner hears it (`lineDue`, filled from the presented state). The server
 keeps at most 8 stream sessions; the least recently used is dropped, and an
 unknown or dropped id gives the tool error `lesson.session.unknown`. The
 engine's own budgets apply (32 KiB and 256 statements per stream, 24 beats, 12
-commands and 8 checks per beat). After a budget refusal the engine ignores the
-stream until it ends; later calls then give `ok: false` with
-`lesson.stream.exhausted`, and `end` starts over. One call returns at most 512
+commands and 8 checks per beat). After a budget refusal (reported in that
+call's events, for example `lesson.bytes`) the engine ignores the stream until
+it ends. Later calls that send statements then give `ok: false` with
+`lesson.stream.exhausted`; an empty or whitespace chunk gives `ok: true` with
+`exhausted: true`; `end` starts over. Marty always passes input to the engine
+and reads `exhausted` from what the engine did, so a fresh stream that the
+engine starts is never blocked. One call returns at most 512
 events (`truncatedEvents` counts the rest). The opt-in `rotate2d` template
 (`MGGeometryPack`) is registered on the first lesson call. Lessons are 2D in
 this engine phase; solid lessons are not in the engine yet.

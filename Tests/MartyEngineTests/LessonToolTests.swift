@@ -70,7 +70,7 @@ final class LessonToolTests: XCTestCase {
         let id = try XCTUnwrap(first["session"] as? String)
         let bad = try e.lessonStream(session: id, chunk: #"{"op":"remove","id":"nope"}"# + "\n", end: false)
         XCTAssertEqual(bad["ok"] as? Bool, false)
-        // Nothing changed: the same board and no unfinished input.
+        // Nothing changed: the same board (values, controls, beat cursor) and no unfinished input.
         XCTAssertEqual(MartyJSON.data(bad["board"] ?? [:]), MartyJSON.data(first["board"] ?? [:]))
         XCTAssertEqual(bad["unfinishedBytes"] as? Int, first["unfinishedBytes"] as? Int)
         let refused = try XCTUnwrap((bad["events"] as? [[String: Any]])?.first { $0["event"] as? String == "refused" })
@@ -110,5 +110,9 @@ final class LessonToolTests: XCTestCase {
         XCTAssertEqual(later["exhausted"] as? Bool, true)
         let ended = try e.lessonStream(session: id, chunk: "", end: true)
         XCTAssertEqual(ended["exhausted"] as? Bool, false)
+        // After end a new stream in the same session is accepted.
+        let again = try e.lessonStream(session: id, chunk: scene, end: false)
+        XCTAssertEqual(again["ok"] as? Bool, true, "\(again)")
+        XCTAssertTrue((again["events"] as? [[String: Any]])?.contains { $0["event"] as? String == "accepted" } == true)
     }
 }
