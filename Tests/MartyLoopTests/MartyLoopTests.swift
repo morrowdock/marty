@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import Foundation
 import XCTest
+import MartyGraphics
 import MartyEngine
 @testable import MartyLoop
 
@@ -212,6 +213,19 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(model.prompts[4].system.contains("do no arithmetic"))
     }
 
+    /// The compound-train pattern in the constraint.underdetermined hint is accepted by the engine (strict) and solves.
+    func testCompoundTrainHintPatternIsTrue() throws {
+        let doc: [String: Any] = ["v": 2, "kind": "assembly", "title": "Two stages", "units": "mm", "parts": [
+            ["id": "s1", "use": "spurPair"],
+            ["id": "s2", "use": "spurPair", "at": [48, 0, 14],
+             "set": ["pinion": ["parent": "s1.output", "at": [0, 0, 14], "joint": NSNull(), "drive": NSNull()]]]]]
+        let r = try MartyEngine(outputRoot: nil).check(document: doc, ref: nil, components: [], strict: true)
+        XCTAssertEqual(r["ok"] as? Bool, true, "\(r["reason"] ?? "") \(r["part"] ?? "")")
+        let ratios = try XCTUnwrap(r["ratios"] as? [String: Double])
+        XCTAssertEqual(try XCTUnwrap(ratios["s2.wheel"]), 1.0 / 9.0, accuracy: 1e-9, "\(ratios)")
+        XCTAssertTrue(MartyPrompts.hint(for: "constraint.underdetermined")?.contains("s1.output") == true)
+    }
+
     func testSpecificHintsWinOverGeneralOnes() {
         XCTAssertTrue(MartyPrompts.hint(for: "constraint.conflict.drive")?.contains("follow or crank drive") == true)
         XCTAssertTrue(MartyPrompts.hint(for: "constraint.conflict")?.contains("turns only with its parent") == true)
@@ -300,12 +314,23 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(m.prompts[2].user.contains("s: world centre"), m.prompts[2].user)
     }
 
+    /// An expect mismatch inside a use entry's set: the read-back still comes (from a copy without it).
+    func testExpectInASetEntryGetsTheReadBack() throws {
+        let doc = #"{"document": {"v": 2, "kind": "assembly", "title": "Shaft", "units": "mm", "parts": [{"id": "u", "use": "shaftWithBearing", "set": {"shaft": {"expect": {"axisWorld": [1, 0, 0]}}}}]}}"#
+        let (m, r) = try prompts([#"{"components": []}"#, doc, #"{"document": \#(Self.spurReduction)}"#])
+        let reason = (r["attempts"] as? [[String: Any]])?.first?["reason"] as? String ?? ""
+        XCTAssertTrue(reason.hasPrefix("expect.axis"), reason)
+        XCTAssertTrue(m.prompts[2].user.contains("Engine read-back"), m.prompts[2].user)
+    }
+
     func testWithoutExpectStripsSetEntries() {
         let p = MartyLoop.withoutExpect(["id": "u", "use": "x", "expect": ["upWorld": [0, 0, 1]],
                                          "set": ["inner": ["expect": ["axisWorld": [1, 0, 0]], "material": "brass"]]])
         XCTAssertNil(p["expect"])
         XCTAssertNil(((p["set"] as? [String: Any])?["inner"] as? [String: Any])?["expect"])
         XCTAssertEqual(((p["set"] as? [String: Any])?["inner"] as? [String: Any])?["material"] as? String, "brass")
+        XCTAssertEqual(p["id"] as? String, "u")
+        XCTAssertEqual(p["use"] as? String, "x")
     }
 
     /// A what-if that makes a claim false: the follow-up repair has the facts of the changed model.
@@ -475,16 +500,12 @@ final class MartyLoopTests: XCTestCase {
                                            out: dir.appendingPathComponent("run2"), options: .init(), followUps: false))
     }
 
-    /// Every hint key is a refusal reason that the pinned engine source really contains.
-    func testHintKeysAreEngineReasons() throws {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let dir = root.appendingPathComponent(".build/checkouts/martygraphics/Sources/MartyGraphics/Solid")
-        let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-        try XCTSkipIf(files.isEmpty, "engine checkout not found at \(dir.path)")
-        let source = try files.filter { $0.hasSuffix(".swift") }.map { try String(contentsOf: dir.appendingPathComponent($0), encoding: .utf8) }.joined()
+    /// Every hint key is a reason in the engine's own reason catalog (MGSolidReasons at the pin): the key itself, or the
+    /// key followed by one slot value (a hint matches a reason by prefix, so `joint.idle` covers `joint.idle.<id>`).
+    func testHintKeysAreEngineReasons() {
         for key in MartyPrompts.hintKeys {
-            // The full reason as a string literal (a prefix like "ref.unknown.\\(id)" also starts this way).
-            XCTAssertTrue(source.contains("\"\(key)"), "hint key \(key) is not a reason literal in the engine source")
+            let candidates = [key, key + ".x", key + ".1", key + ".x.y", key + ".bogusKey"]
+            XCTAssertTrue(candidates.contains { MGSolidReasons.lookup($0) != nil }, "hint key \(key) is not an engine reason")
         }
     }
 }

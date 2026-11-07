@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-06. Prompts `marty-prompts/3`. Engine pin as in
+Status: early preview, 2026-11-06. Prompts `marty-prompts/4`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -30,8 +30,9 @@ the MCP server uses), so a run needs no MCP client.
    refusal comes before the report, Marty checks the same document without its
    steps and with a plain title to get them). A frame, idle-joint or `expect`
    refusal also gets the engine's read-back (for `expect`, from the same
-   document without its `expect` entries, also those in component `set` entries
-   and definitions, and without its steps). Only what the engine returned is
+   document without its `expect` entries, also those in component `set` entries,
+   and without its steps and with a plain title; component definitions are v1
+   and cannot hold `expect`). Only what the engine returned is
    attached; at most 80 facts and 48 read-back lines. At most 3 repairs. A
    follow-up patch refused for a caption or a claim gets the facts of the
    changed model (the same patch with steps cleared).
