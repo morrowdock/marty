@@ -107,8 +107,10 @@ public final class MartyLoop {
 
     /// A refusal can come before the report exists (captions, claims and `expect` are checked while the document
     /// compiles). Marty then asks the engine about a copy without the parts that were refused: without steps and with a
-    /// plain title for the facts (facts do not depend on captions), without `expect` for the read-back. Plain profile,
-    /// so a strict warning cannot hide them. Nil when that copy is refused too.
+    /// plain title for the facts (facts do not depend on captions); without `expect` (top-level parts, use-entry `set`
+    /// entries, component definition parts) and also without steps and with a plain title for the read-back, because
+    /// `expect` is checked before captions. Plain profile, so a strict warning cannot hide them. Nil when that copy is
+    /// refused too.
     func strippedReport(_ document: Any, _ components: [Any], captions: Bool, expectations: Bool) -> [String: Any]? {
         var doc: [String: Any]
         if let d = document as? [String: Any] { doc = d }

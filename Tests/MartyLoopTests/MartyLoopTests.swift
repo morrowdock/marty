@@ -300,12 +300,24 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(m.prompts[2].user.contains("s: world centre"), m.prompts[2].user)
     }
 
+    /// An expect mismatch inside a component definition sent as a string: the read-back still comes.
+    func testExpectInAStringComponentGetsTheReadBack() throws {
+        let def = #"{\"v\": 1, \"kind\": \"component\", \"id\": \"spinner\", \"title\": \"Spinner\", \"about\": \"A driven shaft.\", \"parts\": [{\"id\": \"s\", \"name\": \"Shaft\", \"shape\": {\"shaft\": {\"radius\": 4, \"length\": 20}}, \"joint\": {\"revolute\": [0, 0, 1]}, \"drive\": {\"input\": 1}, \"expect\": {\"axisWorld\": [1, 0, 0]}}]}"#
+        let doc = #"{"document": {"v": 2, "kind": "assembly", "title": "Spinner", "units": "mm", "parts": [{"id": "u", "use": "spinner"}]}, "components": ["\#(def)"]}"#
+        let (m, r) = try prompts([#"{"components": []}"#, doc, #"{"document": \#(Self.spurReduction)}"#])
+        let reason = (r["attempts"] as? [[String: Any]])?.first?["reason"] as? String ?? ""
+        XCTAssertTrue(reason.hasPrefix("expect.axis"), reason)
+        XCTAssertTrue(m.prompts[2].user.contains("Engine read-back"), m.prompts[2].user)
+    }
+
     func testWithoutExpectStripsSetEntries() {
         let p = MartyLoop.withoutExpect(["id": "u", "use": "x", "expect": ["upWorld": [0, 0, 1]],
                                          "set": ["inner": ["expect": ["axisWorld": [1, 0, 0]], "material": "brass"]]])
         XCTAssertNil(p["expect"])
         XCTAssertNil(((p["set"] as? [String: Any])?["inner"] as? [String: Any])?["expect"])
         XCTAssertEqual(((p["set"] as? [String: Any])?["inner"] as? [String: Any])?["material"] as? String, "brass")
+        XCTAssertEqual(p["id"] as? String, "u")
+        XCTAssertEqual(p["use"] as? String, "x")
     }
 
     /// A what-if that makes a claim false: the follow-up repair has the facts of the changed model.

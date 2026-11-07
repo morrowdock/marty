@@ -31,7 +31,7 @@ the MCP server uses), so a run needs no MCP client.
    steps and with a plain title to get them). A frame, idle-joint or `expect`
    refusal also gets the engine's read-back (for `expect`, from the same
    document without its `expect` entries, also those in component `set` entries
-   and definitions, and without its steps). Only what the engine returned is
+   and definitions, and without its steps and with a plain title). Only what the engine returned is
    attached; at most 80 facts and 48 read-back lines. At most 3 repairs. A
    follow-up patch refused for a caption or a claim gets the facts of the
    changed model (the same patch with steps cleared).
