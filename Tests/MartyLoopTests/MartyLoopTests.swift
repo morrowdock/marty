@@ -213,17 +213,24 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(model.prompts[4].system.contains("do no arithmetic"))
     }
 
-    /// The compound-train pattern in the constraint.underdetermined hint is accepted by the engine (strict) and solves.
+    /// The compound-train pattern in the constraint.underdetermined hint, parsed from the hint text itself, is accepted
+    /// by the engine (strict) and solves 1/9: the hint and the test cannot drift apart.
     func testCompoundTrainHintPatternIsTrue() throws {
-        let doc: [String: Any] = ["v": 2, "kind": "assembly", "title": "Two stages", "units": "mm", "parts": [
-            ["id": "s1", "use": "spurPair"],
-            ["id": "s2", "use": "spurPair", "at": [48, 0, 14],
-             "set": ["pinion": ["parent": "s1.output", "at": [0, 0, 14], "joint": NSNull(), "drive": NSNull()]]]]]
+        let hint = try XCTUnwrap(MartyPrompts.hint(for: "constraint.underdetermined"))
+        func object(after marker: String) throws -> [String: Any] {
+            let start = try XCTUnwrap(hint.range(of: marker)).lowerBound
+            var depth = 0, end = start
+            for i in hint[start...].indices {
+                if hint[i] == "{" { depth += 1 } else if hint[i] == "}" { depth -= 1; if depth == 0 { end = i; break } }
+            }
+            return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(hint[start...end].utf8)) as? [String: Any])
+        }
+        let s1 = try object(after: #"{"id": "s1""#), s2 = try object(after: #"{"id": "s2""#)
+        let doc: [String: Any] = ["v": 2, "kind": "assembly", "title": "Two stages", "units": "mm", "parts": [s1, s2]]
         let r = try MartyEngine(outputRoot: nil).check(document: doc, ref: nil, components: [], strict: true)
         XCTAssertEqual(r["ok"] as? Bool, true, "\(r["reason"] ?? "") \(r["part"] ?? "")")
         let ratios = try XCTUnwrap(r["ratios"] as? [String: Double])
         XCTAssertEqual(try XCTUnwrap(ratios["s2.wheel"]), 1.0 / 9.0, accuracy: 1e-9, "\(ratios)")
-        XCTAssertTrue(MartyPrompts.hint(for: "constraint.underdetermined")?.contains("s1.output") == true)
     }
 
     func testSpecificHintsWinOverGeneralOnes() {
