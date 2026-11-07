@@ -33,7 +33,7 @@ the model. This is not tested yet.
 
 | Part | Status |
 | --- | --- |
-| MCP server (`marty-mcp`): engine tools for any MCP client | Early preview: `catalog`, `explain`, `check`, `component_check`, `patch`, `render` ([setup](docs/MCP-CLIENTS.md)) |
+| MCP server (`marty-mcp`): engine tools for any MCP client | Early preview: `catalog`, `explain`, `check`, `component_check`, `patch`, `render`, `lesson_check`, `lesson_stream` ([setup](docs/MCP-CLIENTS.md)) |
 | Marty loop (`marty ask`, `marty bench`): plan, author, check, repair, render, teach, follow-up ([docs](docs/LOOP.md)) | Early preview |
 | Bench: the 50-question development set ([bench](bench/README.md)) | Early preview |
 

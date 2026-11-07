@@ -54,7 +54,7 @@ Model text is only parsed as JSON and given to the engine. It is never run.
 model call failed in the adapter (the output line lists `adapterErrors`).
 `marty bench`: 0, or 1 when any row is an error row (a missing `claude` command
 is an error row too; see bench/README.md); 2 for usage or setup errors before
-the first question.
+the first question, or a summary that could not be written.
 
 ## Model adapters
 

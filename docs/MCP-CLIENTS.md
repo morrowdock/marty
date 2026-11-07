@@ -32,7 +32,7 @@ Use the absolute path in `$BIN` in the client settings below.
 claude mcp add marty -- "$BIN" --output-dir "$HOME/marty-renders"
 ```
 
-Then, in Claude Code, `/mcp` shows the server and its six tools.
+Then, in Claude Code, `/mcp` shows the server and its eight tools.
 
 ## 4. Claude Desktop
 
@@ -88,3 +88,5 @@ See [DESIGN-MCP.md](DESIGN-MCP.md) for the rules and the full tool table.
 | `component_check` | Check a new component definition. |
 | `patch` | Change a checked document (what-if) and check the result. |
 | `render` | Stills, an optional loop GIF, a snapshot and a manifest. |
+| `lesson_check` | Check a whole 2D beat-by-beat lesson; lines filled from engine values. |
+| `lesson_stream` | Write a lesson one statement at a time; each is checked at once. |

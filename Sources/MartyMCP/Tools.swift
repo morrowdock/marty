@@ -69,6 +69,16 @@ enum Tools {
                           "size": ["type": "string", "pattern": "^[0-9]{3,4}x[0-9]{3,4}$", "description": "WIDTHxHEIGHT (default 1280x800; at most 1920x1200)."],
                           "loop": ["type": "boolean", "description": "Also render a 12-second loop GIF (120 frames; slower). Default false."]],
              required: [], readOnly: false),
+        Tool(name: "lesson_check", title: "Check a beat-by-beat lesson",
+             description: "Check a whole lesson document (MartyGraphics lesson v1: a 2D scene and up to 24 beats, each with a spoken line, commands and checks) in a fresh engine session. All or nothing: a refusal gives the reason and its location (beat, statement, command). An accepted lesson gives each beat's line with {placeholders} filled from engine values, and the final board (values, controls).",
+             properties: ["lesson": ["anyOf": Schema.objectOrString, "description": "The lesson document (at most 64 KiB; the engine's statement stream limit is 32 KiB)."]],
+             required: ["lesson"], readOnly: true),
+        Tool(name: "lesson_stream", title: "Stream lesson statements",
+             description: "Feed lesson statements (one JSON object per statement: lesson header, scene, keep, say, op, check, end; any split) into a server-held session. Each complete statement is validated at once; a refused statement changes nothing and later ones continue, except that a false check refuses its whole beat (later statements of that beat are refused as beat.refused). After the stream budget (32 KiB or 256 statements) is used up, input is ignored until end (reason lesson.stream.exhausted). Returns the events of this call (accepted, refused with reason, lineQueued with filled text, beatPresented, streamEnded) and the board. Omit `session` to start a new one; `end` ends the stream.",
+             properties: ["session": ["type": "string", "maxLength": 128, "description": "A session id from an earlier result (the server keeps the last 8)."],
+                          "chunk": ["type": "string", "description": "Statement text, at most 32 KiB per call."],
+                          "end": ["type": "boolean", "description": "End the stream and present every complete beat (default false)."]],
+             required: ["chunk"], readOnly: false),
     ]
 
     /// Runs one tool. A `ToolError` is a wrong request; any other result (also a refusal) is a normal result.
@@ -94,6 +104,11 @@ enum Tools {
         case "patch":
             return try engine.patch(document: args["document"], ref: try string(args["ref"], "ref"), patch: args["patch"]!,
                                     components: components, returnDocument: try bool(args["return_document"], "return_document") ?? false)
+        case "lesson_check":
+            return try engine.lessonCheck(lesson: args["lesson"]!)
+        case "lesson_stream":
+            guard let chunk = args["chunk"] as? String else { throw ToolError("args.type.chunk", "a string") }
+            return try engine.lessonStream(session: try string(args["session"], "session"), chunk: chunk, end: try bool(args["end"], "end") ?? false)
         case "render":
             return try engine.render(document: args["document"], ref: try string(args["ref"], "ref"), components: components,
                                      size: try string(args["size"], "size"), loop: try bool(args["loop"], "loop") ?? false)

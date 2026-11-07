@@ -35,7 +35,7 @@ final class MCPServerTests: XCTestCase {
         let list = try XCTUnwrap(try send(s, ["jsonrpc": "2.0", "id": "a", "method": "tools/list"]))
         XCTAssertEqual(list["id"] as? String, "a")
         let tools = try XCTUnwrap((list["result"] as? [String: Any])?["tools"] as? [[String: Any]])
-        XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["catalog", "explain", "check", "component_check", "patch", "render"])
+        XCTAssertEqual(tools.compactMap { $0["name"] as? String }, ["catalog", "explain", "check", "component_check", "patch", "render", "lesson_check", "lesson_stream"])
         for t in tools { XCTAssertEqual((t["inputSchema"] as? [String: Any])?["type"] as? String, "object") }
         XCTAssertNotNil((try send(s, ["jsonrpc": "2.0", "id": 3, "method": "ping"]))?["result"])
     }
