@@ -159,12 +159,12 @@ public final class MartyEngine {
         switch try library(components) { case .failure(let r): return r.report; case .success(let l): lib = l }
         let base: MGJSON
         switch try resolve(document: document, ref: ref) {
-        case .failure(let r): return ["ok": false, "reason": r.reason, "part": NSNull(), "stage": "base"]
+        case .failure(let r): return ["ok": false, "reason": r.reason, "part": NSNull(), "strict": strict, "stage": "base"]
         case .success(let j): base = j
         }
         let p: MGJSON
         switch Decode.json(patch, limit: MartyLimits.patchBytes, tooLarge: "patch.bytes") {
-        case .failure(let r): return ["ok": false, "reason": r.reason, "part": NSNull(), "stage": "patch"]
+        case .failure(let r): return ["ok": false, "reason": r.reason, "part": NSNull(), "strict": strict, "stage": "patch"]
         case .success(let j): p = j
         }
         let baseRef = remember(base)
