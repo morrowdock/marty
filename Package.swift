@@ -23,7 +23,7 @@ let package = Package(
         .executableTarget(name: "marty-mcp", dependencies: ["MartyMCP"]),
         .target(name: "MartyLoop", dependencies: ["MartyEngine"]),
         .executableTarget(name: "marty", dependencies: ["MartyLoop"]),
-        .testTarget(name: "MartyLoopTests", dependencies: ["MartyLoop"]),
+        .testTarget(name: "MartyLoopTests", dependencies: ["MartyLoop", .product(name: "MartyGraphics", package: "martygraphics")]),
         .testTarget(name: "MartyEngineTests", dependencies: ["MartyEngine", .product(name: "MartyGraphics", package: "martygraphics")]),
         .testTarget(name: "MartyMCPTests", dependencies: ["MartyMCP", "marty-mcp"]),
     ],

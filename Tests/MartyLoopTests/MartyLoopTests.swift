@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import Foundation
 import XCTest
+import MartyGraphics
 import MartyEngine
 @testable import MartyLoop
 
@@ -499,16 +500,12 @@ final class MartyLoopTests: XCTestCase {
                                            out: dir.appendingPathComponent("run2"), options: .init(), followUps: false))
     }
 
-    /// Every hint key is a refusal reason that the pinned engine source really contains.
-    func testHintKeysAreEngineReasons() throws {
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let dir = root.appendingPathComponent(".build/checkouts/martygraphics/Sources/MartyGraphics/Solid")
-        let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-        try XCTSkipIf(files.isEmpty, "engine checkout not found at \(dir.path)")
-        let source = try files.filter { $0.hasSuffix(".swift") }.map { try String(contentsOf: dir.appendingPathComponent($0), encoding: .utf8) }.joined()
+    /// Every hint key is a reason in the engine's own reason catalog (MGSolidReasons at the pin): the key itself, or the
+    /// key followed by one slot value (a hint matches a reason by prefix, so `joint.idle` covers `joint.idle.<id>`).
+    func testHintKeysAreEngineReasons() {
         for key in MartyPrompts.hintKeys {
-            // The full reason as a string literal (a prefix like "ref.unknown.\\(id)" also starts this way).
-            XCTAssertTrue(source.contains("\"\(key)"), "hint key \(key) is not a reason literal in the engine source")
+            let candidates = [key, key + ".x", key + ".1", key + ".x.y", key + ".bogusKey"]
+            XCTAssertTrue(candidates.contains { MGSolidReasons.lookup($0) != nil }, "hint key \(key) is not an engine reason")
         }
     }
 }
