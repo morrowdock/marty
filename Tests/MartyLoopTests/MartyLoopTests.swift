@@ -155,6 +155,26 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(model.prompts[4].user.contains("wheelTeeth"), "the answer prompt shows the accepted change")
     }
 
+    /// Every patch refused: the learner still gets an answer, told plainly that the model cannot show the change.
+    func testRefusedFollowUpStillAnswersHonestly() throws {
+        let plan = #"{"components": ["spurPair"], "primitives": []}"#
+        let good = #"{"document": \#(Self.spurReduction)}"#
+        let bad = #"{"patch": {"parts": {"pair": {"with": {"wheelTeeth": 999}}}}}"#
+        let model = ScriptedAdapter(replies: [plan, good, bad, bad, "This model cannot show that change."])
+        var options = MartyLoop.Options()
+        options.repairs = 1
+        options.followUp = "What if the wheel had 999 teeth?"
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: options).run(question: "q")
+        let f = try XCTUnwrap(r["followUp"] as? [String: Any])
+        XCTAssertEqual(f["modelled"] as? Bool, false)
+        XCTAssertEqual(f["changed"] as? Bool, false)
+        XCTAssertEqual(f["answer"] as? String, "This model cannot show that change.")
+        XCTAssertTrue(model.prompts[4].user.contains("refused every change"), model.prompts[4].user)
+        XCTAssertTrue(model.prompts[4].user.contains("component.param.range.wheelTeeth"))
+    }
+
     func testEmptyFollowUpIsSkipped() throws {
         let plan = #"{"components": [], "primitives": []}"#
         let model = ScriptedAdapter(replies: [plan, #"{"document": \#(Self.spurReduction)}"#])

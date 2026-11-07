@@ -42,7 +42,10 @@ the MCP server uses), so a run needs no MCP client.
    solved. Then the model writes a short answer from the engine reports before
    and after the change, the accepted change itself, and whether the solved
    ratios changed. The answer is model text and is marked so
-   (`answerSource`). An empty follow-up (the out-of-scope bench questions have
+   (`answerSource`). `modelled` says whether the engine solved the change (or
+   none was needed). When the engine refused every change, the model still
+   answers, but it is told to say plainly that the model cannot show the
+   what-if and to give no new numbers. An empty follow-up (the out-of-scope bench questions have
    none) means no follow-up turn.
 
 Model text is only parsed as JSON and given to the engine. It is never run.

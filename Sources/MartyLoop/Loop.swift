@@ -266,10 +266,16 @@ public final class MartyLoop {
             ratiosChanged = MartyJSON.data(after["ratios"] ?? [String: Any]()) != MartyJSON.data(report["ratios"] ?? [String: Any]())
             result["ratiosChanged"] = ratiosChanged
         }
-        guard after != nil || noChange else { result["ok"] = false; return result }
+        // modelled: the engine solved the change (or none was needed). When it refused every change, the learner still
+        // gets an honest answer that says the model cannot show it, with no new numbers.
+        let modelled = after != nil || noChange
+        result["modelled"] = modelled
+        let lastReason = attempts.last?["reason"] as? String
+        guard modelled || (lastReason != nil && lastReason != "adapter") else { result["ok"] = false; return result }
         let (answer, i) = ask("answer", attempt: 0, system: MartyPrompts.answerSystem(),
                               user: MartyPrompts.answerUser(followUp: followUp, before: before, after: after.map { Self.compact(Self.summary($0)) },
-                                                            patch: acceptedPatch.map { Self.compact($0) }, ratiosChanged: ratiosChanged))
+                                                            patch: acceptedPatch.map { Self.compact($0) }, ratiosChanged: ratiosChanged,
+                                                            refused: modelled ? nil : lastReason))
         note(i, ["ok": answer != nil])
         result["ok"] = answer != nil
         result["answer"] = answer.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) as Any } ?? NSNull()

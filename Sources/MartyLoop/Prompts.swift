@@ -107,7 +107,8 @@ public enum MartyPrompts {
             ("constraint.gearMesh.interference", "The teeth overlap: use more teeth on the small gear, or more teeth difference between ring and planet."),
             ("constraint.gearMesh.parentRotates", "A planet on a turning carrier needs \"carrier\" named in its gearMesh."),
             ("constraint.underdetermined", "Some gear joint has no solved speed: add a gearMesh to it, an input drive, or a fixed constraint."),
-            ("constraint.conflict", "Two constraints give one joint different speeds: remove the extra input, fixed or mesh."),
+            ("constraint.conflict", "Two constraints give one joint different speeds: remove the extra input, fixed or mesh. A part with no joint is already fixed: to free it, give it a joint (for a component part, \"<instance>.<inner id>\": {\"joint\": {\"revolute\": [0, 0, 1]}})."),
+            ("component.set.id", "Each entry in a component's set is an object of fields (not null), without id or use."),
             ("assembly.title", "The title is 1 to 80 Unicode code points, not blank, with no <, >, :// or control or format characters."),
             ("step.say", "Each step's say is 1 to 240 Unicode code points, not blank, with no <, >, :// or control or format characters (write \"less than\", not <)."),
             ("part.name", "A part name is 1 to 60 Unicode code points, not blank, with no <, >, :// or control or format characters."),
@@ -148,8 +149,14 @@ public enum MartyPrompts {
         """
     }
 
-    public static func answerUser(followUp: String, before: String, after: String?, patch: String? = nil, ratiosChanged: Bool = false) -> String {
+    public static func answerUser(followUp: String, before: String, after: String?, patch: String? = nil, ratiosChanged: Bool = false,
+                                  refused: String? = nil) -> String {
         var s = "Learner asks: \(followUp)\n\nEngine report before:\n\(before)\n\n"
+        if let refused {
+            return s + "The engine refused every change that was tried (last reason: \(refused)), so this model cannot show the "
+                + "what-if. Say so plainly. You may explain the idea in general words, but give no new numbers: use only "
+                + "numbers from the report before.\n"
+        }
         guard let after else { return s + "No model change.\n" }
         if let patch { s += "The change you made (sizes you set may be stated):\n\(patch)\n\n" }
         s += "Engine report after the change:\n\(after)\n"
