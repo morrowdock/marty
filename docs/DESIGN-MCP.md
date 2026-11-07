@@ -1,7 +1,9 @@
 # Design note: the Marty MCP tool set
 
-Status: implemented in `marty-mcp` 0.1.0 (2026-11-06), except the later tools. Engine pin: MartyGraphics `main` at
-`31a47ba141a208eaf76b38fc9df5cecc7703487e` (adds PR #20, lessons; the solid engine is unchanged from 76104dea).
+Status: implemented in `marty-mcp` 0.2.0. Engine pin: MartyGraphics `main` at
+`d5f42c2e6124487d53f046171526d26d2128330d` (PR #20 lessons, PR #21 open vocabulary 1: facts,
+placeholders, truth tiers, frame lints, strict profile, and PR #30: the report and render
+plan as library API).
 
 ## Goal
 
@@ -16,8 +18,8 @@ no judgment of their own: every number in a result comes from the engine.
    bytes of output. JSON keys are sorted. Results contain no clock time,
    random value or absolute path. The only exception is `render`: it returns
    the absolute path of its output directory (a client needs it to open the
-   files) and a measured time in a separate `timing` field. `manifest.json`
-   holds no time. Image digests are stable on one machine only: Metal output
+   files) and a measured time (`timing` in the result, and
+   `renderSecondsPerFrame` in the engine's `manifest.json`). Image digests are stable on one machine only: Metal output
    can differ between GPUs and operating system versions.
 2. **Bounded.** A request line is at most 1 MiB. A document is at most the
    engine limit (64 KiB). A component definition is at most 16 KiB, and a
@@ -64,9 +66,9 @@ depends on what is in the cache.
 | --- | --- | --- |
 | `catalog` | `compact` (default true) | Components (id, about, parameters with default and range, inner parts, anchors; about 4 KB for the 7 built-ins at this pin, and it grows with the library), plus a fixed part: primitive ids, camera presets and the format limits. |
 | `explain` | `id` (component or primitive) | One entry: what it is, its keys or parameters, and one small example that the engine accepts. |
-| `check` | `document` or `ref`; `components` (optional definitions) | `ok`, `reason`, `part`, `ref`, title, part count, triangles, steps, solved ratios, mesh and gear checks, source size and SHA-256. |
+| `check` | `document` or `ref`; `components` (optional definitions); `strict` (default true) | `ok`, `reason`, `part`, `ref`, title, part count, triangles, steps (v2 captions filled from facts), solved ratios, mesh and gear checks, `strict`, `file` (lines and SHA-256 of the canonical JSON), `engine`, and the engine's honesty data: `version`, `warnings`, `facts` (value, unit, text, tier, source), `legend`, `stepTiers`, `stepFacts`, `partTiers`, `motionTiers`, `notChecked`, `sectionTriangles`, `readBack` (in accepted reports and in reports refused by a post-compile check; an engine parse refusal has only `ok`, `reason`, `part`, `strict`, `file`, `engine` and `ref`; an input refusal such as `json` or `assembly.bytes` has only `ok`, `reason`, `part`, `strict`). 0.2.0 replaces 0.1.0's `source` object with `file`. |
 | `component_check` | `definition`; `with` (optional values) | `ok`, `reason`, `part`, the catalog entry, a ready `use` entry and the instance checks. |
-| `patch` | `document` or `ref`; `patch` (the engine format, below); `components` (optional) | The `check` result of the patched document, its new `ref`, and the patched document when `return_document` is true. |
+| `patch` | `document` or `ref`; `patch` (the engine format, below); `components` (optional); `strict` (default true) | The `check` result of the patched document, its new `ref`, and the patched document when `return_document` is true. |
 | `render` | `document` or `ref`; `components`; `size` (default 1280x800, at most 1920x1200); `loop` (default false) | `ok`, the output directory, the file names (hero, exploded, one still per step, optional loop GIF, snapshot, manifest) and their SHA-256 digests. |
 | `lesson_check` | `lesson` (a lesson document, MartyGraphics docs/LESSONS.md) | All or nothing, in a fresh engine session: `ok`, or the reason with `beat`, `statement`, `command`, `detail`. Accepted: each beat's line with `{placeholders}` filled from engine values, and the final `board` (beat cursor, engine values with their formatted text, controls). |
 | `lesson_stream` | `chunk` (statement text, any split, at most 32 KiB); `session` (optional); `end` (optional) | The session id, this call's events (`accepted`, `refused` with reason and location, `lineQueued` with filled text, `beatPresented`, `streamEnded`, ...), the `board`, beats waiting, unfinished bytes and `exhausted`; `truncatedEvents` when more than 512 events; `reason: lesson.stream.exhausted` when statements were sent to a stream that was already exhausted. `ok` is false when this call had a refusal or its statements were dropped. |
@@ -114,27 +116,46 @@ this engine phase; solid lessons are not in the engine yet.
 
 Later tools, when the engine supports them:
 
-- **Facts, tiers and read-back** (MartyGraphics PR #21, open-vocabulary
-  phase 1). `check` adds `facts` (the solved values that captions can cite),
-  `tiers` (Solved, Built or Described for each part), `warnings` (frame
-  lints) and `readBack` (each part's world position, axis and parent frame in
-  plain words). `strict: true` maps to the engine's strict mode.
+- None at this pin. Solid lessons and further open-vocabulary phases come
+  with later engine releases.
+
+**Strict by default.** `check` and `patch` use the engine's strict profile
+unless `strict: false` is sent, because the tools are for model authors (the
+engine's docs name strict the default for model harnesses). Strict also
+refuses `joint.idle.<id>` and `frame.axis.off.<id>`; the refusal order is the
+CLI's (open mesh, gear overlap, then the strict warning). The full honesty
+data is in every accepted or post-check-refused report, also when strict
+refuses, so the author can repair from it. `render` and `component_check` use
+the plain profile.
+The Swift API (`MartyEngine.check` / `patch`) defaults to the plain profile;
+the MCP tools pass `strict` explicitly; the Marty loop uses the plain
+profile.
+
+**Patch reports.** `patch` compiles once and reports on the patched document
+(`MGSolidParser.applying`, then `MGSolidReport.make`), so its `file` and `ref`
+describe the patched document. Unlike `marty-solid check BASE --patch PATCH`
+(`MGSolidReport.check(data:patch:)`, which compiles again and reports with the
+base's `file`), it has no `patch` object (`applied`, `fields`, `changed`,
+`refusedAt`). A refusal before the patched document exists has `stage`
+(`base` or `patch`): an engine refusal there has the same shape as a `check`
+refusal of the base (`file` and `strict` of the base, `engine`) plus `baseRef`;
+an input refusal (`assembly.bytes`, `patch.bytes`, `json`, `cache.miss` is a
+tool error) has only `ok`, `reason`, `part`, `strict` and `stage`. A patched
+document that compiles but fails a report check (open mesh, gear overlap,
+strict) is a normal report with `ok: false`, its own `ref` and no `stage`.
 Until a feature is in the pinned engine, the server does not offer the tool or
 the field. The server never imitates an engine feature.
 
-## What the engine should own
+## What the engine owns
 
-`marty-solid check` builds its report (mesh closure, the gear sweep and the
-refusal order) in the example CLI, not in the `MartyGraphics` library. The
-render sequence (captions, step stills, the loop GIF and the manifest) is also
-only in the CLI, and it is the larger copy. Marty must copy both, and a copy
-can drift. Request to the engine coordinator: move both into the library (for
-example `MGSolidReport.make(doc)` and a render sequence type), so the CLI and
-Marty use one implementation. One difference: Marty keeps render time out of
-`manifest.json` (it is in the tool result), so the manifest of a render is
-reproducible; the CLI writes `renderSecondsPerFrame` into its manifest. A shared
-render sequence should return the time beside the manifest. Until then, Marty keeps its copies small and
-tests them against the same example models as the CLI.
+The check report, the render sequence and the manifest are engine library code
+(MartyGraphics PR #30): `MGSolidReport.make` / `refused` give exactly what
+`marty-solid check [--strict]` prints, and `MGSolidRenderPlan` gives the stills,
+loop frames, snapshot and manifest of `marty-solid render`. Marty calls them and
+adds only `ref`, `partIds` and its own `engine.revision`; its `file` describes
+the canonical JSON it checked. Captions and image files are drawn by the host,
+as in the CLI. A test compares Marty's `check` with the engine's committed CLI
+golden reports for every example model, in both profiles.
 
 ## Transport
 

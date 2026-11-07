@@ -69,55 +69,57 @@ public final class MartyEngine {
 
     // MARK: check
 
-    /// Engine checks beyond parsing: closed meshes and a gear tooth sweep, as `marty-solid check` runs them.
-    /// (Copied from the engine's example CLI at the pinned commit; see docs/DESIGN-MCP.md, "What the engine should own".)
-    static func checks(_ doc: MGSolidDocument) -> [String: Any] {
-        let open = doc.assembly.parts.filter { !$0.mesh.edgeReport.isClosed }.map(\.id).sorted()
-        var out: [String: Any] = ["meshesClosed": open.isEmpty, "openMeshes": open]
-        let report = MGSolidChecks.gearMeshes(doc, samples: 96, inputRange: 0...(2 * .pi))
-        out["gearPairs"] = report.pairs
-        if report.pairs > 0 {
-            let module = doc.gears.values.compactMap { $0.spur?.module ?? $0.ring?.module }.min() ?? 1
-            let tolerance = MGSolidLimits.toothOverlap * module
-            out["maxPenetrationMM"] = report.maxPenetration
-            out["minClearanceMM"] = report.minClearance
-            out["toleranceMM"] = tolerance
-            out["gearsEngage"] = report.maxPenetration <= tolerance
-        }
+    /// The engine identity in every report: the engine's own (`MGEngine.identity`) plus the commit Marty is pinned to.
+    static var engineIdentity: MGJSON {
+        guard case .object(var o) = MGEngine.identity else { return MGEngine.identity }
+        o["revision"] = .string(MartyPin.engineRevision)
+        return .object(o)
+    }
+
+    /// The engine's check report (`MGSolidReport`, exactly what `marty-solid check [--strict]` prints for the same
+    /// document), plus Marty's `partIds`. `file` describes the canonical JSON that Marty checked.
+    static func report(_ doc: MGSolidDocument, strict: Bool = false, json: MGJSON? = nil) -> [String: Any] {
+        let source = json.map { MGSolidSource(data: $0.canonicalData) }
+        let r = MGSolidReport.make(doc, profile: strict ? .strict : .standard, source: source, engine: engineIdentity)
+        var out = plain(r.json) ?? ["ok": false, "reason": "report.encoding"]
+        if out["part"] == nil { out["part"] = NSNull() }
+        out["partIds"] = doc.assembly.parts.map(\.id)
         return out
     }
 
-    /// The report for a compiled document. `reason` is set when a post-parse check fails.
-    static func report(_ doc: MGSolidDocument) -> [String: Any] {
-        let c = checks(doc)
-        var reason: String? = nil
-        if (c["meshesClosed"] as? Bool) != true { reason = "check.meshOpen" }
-        else if (c["gearsEngage"] as? Bool) == false { reason = "check.gearsInterpenetrate" }
-        return ["ok": reason == nil, "reason": reason as Any, "part": NSNull(), "title": doc.title,
-                "parts": doc.assembly.parts.count, "partIds": doc.assembly.parts.map(\.id),
-                "triangles": doc.assembly.parts.reduce(0) { $0 + $1.mesh.triangleCount },
-                "steps": doc.steps.map(\.say), "ratios": doc.ratios, "checks": c]
+    static func refusedReport(_ issue: MGSolidIssue, strict: Bool, json: MGJSON?) -> [String: Any] {
+        let source = json.map { MGSolidSource(data: $0.canonicalData) }
+        let r = MGSolidReport.refused(issue, profile: strict ? .strict : .standard, source: source, engine: engineIdentity)
+        return plain(r.json) ?? ["ok": false, "reason": issue.reason]
     }
 
-    func checkJSON(_ json: MGJSON, _ lib: MGSolidLibrary) -> (report: [String: Any], doc: MGSolidDocument?) {
+    /// An engine report as Foundation JSON values (numbers as NSNumber, as an MCP client reads them), so in-process
+    /// callers see the same types as clients do.
+    static func plain(_ j: MGJSON) -> [String: Any]? {
+        (try? JSONSerialization.jsonObject(with: j.canonicalData)) as? [String: Any]
+    }
+
+    func checkJSON(_ json: MGJSON, _ lib: MGSolidLibrary, strict: Bool = false) -> (report: [String: Any], doc: MGSolidDocument?) {
         let ref = remember(json)
-        let source: [String: Any] = ["bytes": json.canonicalData.count, "sha256": String(ref.dropFirst(7))]
         switch MGSolidParser.document(json: json, library: lib) {
         case .failure(let issue):
-            return (["ok": false, "reason": issue.reason, "part": issue.part as Any, "ref": ref, "source": source], nil)
+            var r = Self.refusedReport(issue, strict: strict, json: json)
+            r["ref"] = ref
+            return (r, nil)
         case .success(let doc):
-            var r = Self.report(doc)
-            r["ref"] = ref; r["source"] = source
+            var r = Self.report(doc, strict: strict, json: json)
+            r["ref"] = ref
             return (r, doc)
         }
     }
 
-    public func check(document: Any?, ref: String?, components: [Any]) throws -> [String: Any] {
+    /// `strict` is the engine's model-harness profile: it also refuses idle joints and turn axes that miss their part.
+    public func check(document: Any?, ref: String?, components: [Any], strict: Bool = false) throws -> [String: Any] {
         let lib: MGSolidLibrary
         switch try library(components) { case .failure(let r): return r.report; case .success(let l): lib = l }
         switch try resolve(document: document, ref: ref) {
-        case .failure(let r): return ["ok": false, "reason": r.reason, "part": NSNull()]
-        case .success(let json): return checkJSON(json, lib).report
+        case .failure(let r): return ["ok": false, "reason": r.reason, "part": NSNull(), "strict": strict]
+        case .success(let json): return checkJSON(json, lib, strict: strict).report
         }
     }
 
@@ -152,36 +154,40 @@ public final class MartyEngine {
 
     // MARK: patch
 
-    public func patch(document: Any?, ref: String?, patch: Any, components: [Any], returnDocument: Bool) throws -> [String: Any] {
+    public func patch(document: Any?, ref: String?, patch: Any, components: [Any], returnDocument: Bool, strict: Bool = false) throws -> [String: Any] {
         let lib: MGSolidLibrary
         switch try library(components) { case .failure(let r): return r.report; case .success(let l): lib = l }
         let base: MGJSON
         switch try resolve(document: document, ref: ref) {
-        case .failure(let r): return ["ok": false, "reason": r.reason, "part": NSNull(), "stage": "base"]
+        case .failure(let r): return ["ok": false, "reason": r.reason, "part": NSNull(), "strict": strict, "stage": "base"]
         case .success(let j): base = j
         }
         let p: MGJSON
         switch Decode.json(patch, limit: MartyLimits.patchBytes, tooLarge: "patch.bytes") {
-        case .failure(let r): return ["ok": false, "reason": r.reason, "part": NSNull(), "stage": "patch"]
+        case .failure(let r): return ["ok": false, "reason": r.reason, "part": NSNull(), "strict": strict, "stage": "patch"]
         case .success(let j): p = j
         }
         let baseRef = remember(base)
         let doc: MGSolidDocument
         switch MGSolidParser.document(json: base, library: lib) {
         case .failure(let issue):
-            return ["ok": false, "reason": issue.reason, "part": issue.part as Any, "stage": "base", "baseRef": baseRef]
+            // The same refusal shape as `check` of that base, plus where it happened.
+            var r = Self.refusedReport(issue, strict: strict, json: base)
+            r["stage"] = "base"; r["baseRef"] = baseRef
+            return r
         case .success(let d): doc = d
         }
         switch MGSolidParser.applying(p, to: doc) {
         case .failure(let issue):
             // The engine refused the patch; the base document is unchanged.
-            return ["ok": false, "reason": issue.reason, "part": issue.part as Any, "stage": "patch", "baseRef": baseRef]
+            var r = Self.refusedReport(issue, strict: strict, json: base)
+            r["stage"] = "patch"; r["baseRef"] = baseRef
+            return r
         case .success(let patched):
             // The engine already compiled the patched document; report on it without compiling it again.
             let ref = remember(patched.source)
-            var r = Self.report(patched)
+            var r = Self.report(patched, strict: strict, json: patched.source)
             r["ref"] = ref
-            r["source"] = ["bytes": patched.source.canonicalData.count, "sha256": String(ref.dropFirst(7))]
             r["baseRef"] = baseRef
             if returnDocument { r["document"] = patched.source.any }
             return r

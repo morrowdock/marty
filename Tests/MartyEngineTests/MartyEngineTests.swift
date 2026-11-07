@@ -44,8 +44,8 @@ final class MartyEngineTests: XCTestCase {
         XCTAssertEqual((p["steps"] as? [String])?.count, 5)
     }
 
-    /// Marty's report equals `marty-solid check` at the pinned commit (golden files from the engine's own CLI,
-    /// binary sha256 7b5a4491...), field by field, for every engine example model.
+    /// Marty's report equals `marty-solid check [--strict]` at the pinned commit, field by field, for every engine example
+    /// model (the engine's own committed golden files).
     func testReportMatchesTheEngineCLI() throws {
         func same(_ a: Any?, _ b: Any?, _ path: String) {
             switch (a, b) {
@@ -63,16 +63,38 @@ final class MartyEngineTests: XCTestCase {
                 XCTAssertEqual("\(a ?? "nil")", "\(b ?? "nil")", path)
             }
         }
+        // The engine's own models and its committed CLI golden reports, in the resolved checkout at the pin.
+        let engine = Self.root.appendingPathComponent(".build/checkouts/martygraphics/Examples/Solid3D")
+        let models = engine.appendingPathComponent("Sources/MartySolid3D/Models")
+        let goldens = engine.appendingPathComponent("Tests/MartySolidCLITests/Golden")
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: models.path)) ?? []).filter { $0.hasSuffix(".json") }.sorted()
+        try XCTSkipIf(names.isEmpty, "engine checkout not found at \(engine.path)")
         let e = MartyEngine(outputRoot: nil)
-        for name in ["planetary", "planetary-components", "slider-crank", "slider-crank-component", "propeller"] {
-            let golden = try object(try fixture("cli-76104dea/\(name).check.json"))
-            let parsed = try JSONSerialization.jsonObject(with: MartyJSON.data(try e.check(document: try fixture("\(name).json"), ref: nil, components: [])))
-            var mine = try XCTUnwrap(parsed as? [String: Any])
-            for k in ["ref", "source", "part", "partIds"] { mine.removeValue(forKey: k) }
-            var cli = golden
-            cli.removeValue(forKey: "file")
-            same(mine, cli, name)
+        var compared = 0
+        for file in names {
+            let name = String(file.dropLast(5))
+            for strict in [false, true] {
+                let g = goldens.appendingPathComponent("models-\(name).\(strict ? "strict" : "check").json")
+                guard let data = try? Data(contentsOf: g) else { continue }
+                var cli = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+                let text = try String(contentsOf: models.appendingPathComponent(file), encoding: .utf8)
+                var mine = try XCTUnwrap(try JSONSerialization.jsonObject(with: MartyJSON.data(try e.check(document: text, ref: nil, components: [], strict: strict))) as? [String: Any])
+                // `file` describes different bytes (the CLI's file; Marty's canonical JSON). The goldens predate the fields
+                // the engine's own golden test strips (`engine`, `partTiers`, `motionTiers`); Marty must have them.
+                if mine["readBack"] != nil {
+                    XCTAssertNotNil(mine["partTiers"] as? [Any], "\(name): partTiers")
+                    XCTAssertNotNil(mine["motionTiers"] as? [Any], "\(name): motionTiers")
+                }
+                XCTAssertNotNil(mine["engine"] as? [String: Any], "\(name): engine")
+                for k in ["file", "engine", "partTiers", "motionTiers"] { cli.removeValue(forKey: k); mine.removeValue(forKey: k) }
+                for k in ["ref", "partIds"] { mine.removeValue(forKey: k) }
+                // The CLI leaves `part` out when there is none; Marty always has the key.
+                if mine["part"] is NSNull, cli["part"] == nil { mine.removeValue(forKey: "part") }
+                same(mine, cli, "\(name) strict=\(strict)")
+                compared += 1
+            }
         }
+        XCTAssertGreaterThanOrEqual(compared, 12, "the engine ships golden reports for its example models")
     }
 
     /// Drives and constraints with object bodies name every missing required key and refuse an unknown key.
@@ -109,8 +131,10 @@ final class MartyEngineTests: XCTestCase {
     func testEveryPrimitiveExampleIsAccepted() throws {
         let e = MartyEngine(outputRoot: nil)
         for p in MartyPrimitive.all {
-            let r = try e.check(document: p.example, ref: nil, components: [])
-            XCTAssertEqual(r["ok"] as? Bool, true, "\(p.id): \(r)")
+            // Strict as models are checked, and with no warnings at all: an example must not teach a lint.
+            let r = try e.check(document: p.example, ref: nil, components: [], strict: true)
+            XCTAssertEqual(r["ok"] as? Bool, true, "\(p.id): \(r["reason"] ?? "")")
+            XCTAssertEqual((r["warnings"] as? [Any])?.count, 0, "\(p.id): \(r["warnings"] ?? "")")
         }
         XCTAssertEqual(Set(MartyPrimitive.all.map(\.id)).count, MartyPrimitive.all.count)
     }
@@ -157,6 +181,33 @@ final class MartyEngineTests: XCTestCase {
         XCTAssertEqual(try e.check(document: 42, ref: nil, components: [])["reason"] as? String, "json")
         let big = "{\"title\": \"" + String(repeating: "a", count: MGSolidLimits.bytes) + "\"}"
         XCTAssertEqual(try e.check(document: big, ref: nil, components: [])["reason"] as? String, "assembly.bytes")
+    }
+
+    /// v2 facts fill captions; strict refuses an idle joint that the plain profile only warns about.
+    func testFactsTiersAndStrict() throws {
+        let e = MartyEngine(outputRoot: nil)
+        let v2: [String: Any] = ["v": 2, "kind": "assembly", "title": "Pair", "units": "mm",
+                                 "parts": [["id": "g", "use": "spurPair", "with": ["wheelTeeth": 48]]],
+                                 "steps": [["say": "The wheel turns {g.wheel.speed|abs|frac} of a turn.", "check": [["value": "g.wheel.speed", "lt": 0]]]]]
+        let r = try e.check(document: v2, ref: nil, components: [], strict: true)
+        XCTAssertEqual(r["ok"] as? Bool, true, "\(r["reason"] ?? "")")
+        XCTAssertEqual((r["steps"] as? [String])?.first, "The wheel turns 1/4 of a turn.")
+        XCTAssertEqual(((r["facts"] as? [String: Any])?["g.wheel.speed"] as? [String: Any])?["tier"] as? String, "solved")
+        XCTAssertFalse((r["readBack"] as? [String] ?? []).isEmpty)
+        // A typed number in a v2 caption is refused (rule N1).
+        var typed = v2
+        typed["steps"] = [["say": "The wheel turns 1/4 of a turn."]]
+        XCTAssertEqual(try e.check(document: typed, ref: nil, components: [])["reason"] as? String, "text.number.step.1")
+        // An idle joint: a warning in the plain profile, a refusal in strict.
+        let idle: [String: Any] = ["v": 1, "kind": "assembly", "title": "Idle", "units": "mm",
+                                   "parts": [["id": "s", "shape": ["shaft": ["radius": 4, "length": 20]], "joint": ["revolute": [0, 0, 1]]]]]
+        let plain = try e.check(document: idle, ref: nil, components: [], strict: false)
+        XCTAssertEqual(plain["ok"] as? Bool, true)
+        XCTAssertEqual(((plain["warnings"] as? [[String: Any]])?.first)?["reason"] as? String, "joint.idle.s")
+        let strict = try e.check(document: idle, ref: nil, components: [], strict: true)
+        XCTAssertEqual(strict["ok"] as? Bool, false)
+        XCTAssertEqual(strict["reason"] as? String, "joint.idle.s")
+        XCTAssertEqual(strict["part"] as? String, "s")
     }
 
     func testDocumentArgumentErrors() throws {

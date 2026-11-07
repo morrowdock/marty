@@ -7,7 +7,7 @@ import MartyEngine
 @MainActor
 public final class MCPServer {
     public static let name = "marty-mcp"
-    public static let version = "0.1.0"
+    public static let version = "0.2.0"
     public static let protocolVersions = ["2025-11-25", "2025-06-18"]
 
     let engine: MartyEngine
