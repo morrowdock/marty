@@ -5,7 +5,7 @@ import Foundation
 /// author step sees a short format guide plus `explain` entries for the parts the plan chose. The receipt records the
 /// size and SHA-256 of every prompt, so a change in context is always measured.
 public enum MartyPrompts {
-    public static let version = "marty-prompts/4"
+    public static let version = "marty-prompts/5"
 
     static let role = """
         You are Marty, a teacher who explains how things work with checked 3D models. A deterministic engine \
@@ -25,10 +25,17 @@ public enum MartyPrompts {
         Engine catalog (components with parameters, primitive ids, cameras, limits):
         \(catalog)
 
+        Plan in this order: (1) the WHOLE system first: every main unit in its real place and number (all of them, \
+        not one), any person or load it carries as a simple schematic figure, and the forces that matter as arrows \
+        (weight; thrust, lift or push); (2) then the inside of the ONE part that makes it work, cut open; (3) then \
+        what the model does not show.
+
         Reply with ONE JSON object only, no prose and no code fences:
-        {"inScope": true, "subject": "<5-10 words>", "beats": ["<one short teaching point>", "..."], \
-        "components": ["<component id>"], "primitives": ["<primitive id>"], "honesty": ""}
-        - beats: 2 to 6, in teaching order; each one is a step of the 3D lesson.
+        {"inScope": true, "subject": "<5-10 words>", "whole": "<the whole system: main units, how many, where>", \
+        "inside": "<the one part to cut open>", "given": ["<a number you know but cannot compute, with source>"], \
+        "beats": ["<one short teaching point>", "..."], "components": ["<component id>"], "primitives": ["<id>"], \
+        "honesty": ""}
+        - beats: 3 to 8, in teaching order; each one is a step of the 3D lesson.
         - components and primitives: only ids from the catalog (at most 6 in all). Prefer components.
         - inScope: false when the engine cannot show the core mechanism (for example chains, cams, worm or bevel \
         gears, fluids, biology). Then plan the best honest schematic, and say in "honesty" what is not modelled.
@@ -81,6 +88,23 @@ public enum MartyPrompts {
         - Materials: brushedSteel, polishedSteel, darkSteel, blackOxide, brass, bronze, aluminum, rubber, glass,
           titanium, nickelAlloy, composite, ceramic, anodized.<role>, plastic.<role> (roles: blue, red, green, orange,
           purple, yellow, teal, white, accent, muted).
+        - Inside views (step keys): "section": {"normal": [0, -1, 0], "offset": 0, "parts": ["casing"]} cuts the listed
+          parts open (the side where normal·p > offset is removed; the plane must cut each part); "ghost": ["casing"]
+          shows parts see-through. Part keys: "opacity": 0.1..1 (always faint), "emissive": {"role": "orange",
+          "intensity": 1} (a hot core glows).
+        - "annotations" (top level): {"labels": [{"id", "at", "text"}], "arrows": [{"id", "meaning", ...}],
+          "dimensions": [{"id", "a", "b"}]}. An anchor is "<part>", {"part": "<part>", "offset": [x,y,z]},
+          {"part": "<part>", "point": "centre"} or {"world": [x,y,z]}. Ids must differ from part ids. Text: at most 40
+          characters filled, numbers only as {fact} placeholders; at most 12 shown at once (a step's "annotate": [ids]
+          shows only those).
+          Weight: {"id": "aW", "meaning": "force", "cause": "gravity", "from": "<part>", "to": {"part": "<part>",
+          "offset": [0, 0, -60]}, "text": "Weight"} (the engine checks it points down; use a part that does not turn).
+          Thrust, lift, push: "meaning": "force" without "cause" (shown as not checked). Air or gas: "meaning": "flow",
+          "from" and "to" anchors. A plain callout: "meaning": "pointer". A measured size: {"id": "len", "a": <anchor>,
+          "b": <anchor>} shows {dim.len} mm.
+        - A number the engine cannot solve (a published weight, thrust, power, count or speed) goes only in a label or
+          arrow with "unchecked": "<source, 1-60 chars>"; it then shows as Not checked. Never put it in a claim.
+        - A person, wing or body that has no library part is a few boxes and shafts named "(schematic)".
         - If the engine cannot show part of the subject, build the best schematic and say so in the title or a step
           (for example "schematic: chain not modelled"). Never present an unchecked fake as real.
         """
@@ -89,7 +113,8 @@ public enum MartyPrompts {
         """
         \(role)
 
-        Step 2 of 3: write the 3D lesson as one engine document.
+        Step 2 of 3: write the 3D lesson as one engine document. Follow the plan: first steps show its whole system with \
+        its forces, a later step cuts open its inside part, and its given numbers appear only in unchecked labels.
 
         \(guide)
 

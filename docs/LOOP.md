@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-06. Prompts `marty-prompts/4`. Engine pin as in
+Status: early preview, 2026-11-06. Prompts `marty-prompts/5`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -10,14 +10,23 @@ the MCP server uses), so a run needs no MCP client.
 ## Steps
 
 1. **Plan.** The model gets the question and the compact engine catalog. It
-   answers with a JSON plan: whether the subject is in scope, 2 to 6 teaching
-   beats, the component and primitive ids that it wants, and what the model
-   cannot show (`honesty`). The loop keeps at most 6 ids that the catalog knows
+   plans the lesson in a fixed order: the whole system first (every main unit
+   in its place and number, people or loads as schematic figures, and the
+   forces as arrows), then the inside of the one part that makes it work, cut
+   open, then what the model does not show. It answers with a JSON plan:
+   whether the subject is in scope, `whole`, `inside`, `given` (numbers it knows
+   but the engine cannot solve, with their source), 3 to 8 teaching beats, the
+   component and primitive ids that it wants, and what the model cannot show
+   (`honesty`). The loop keeps at most 6 ids that the catalog knows
    and records the ids it dropped.
 2. **Author.** The model writes a v2 document (MartyGraphics open
    vocabulary 1): every number in a caption is a `{fact}` placeholder that the
-   engine fills (rule N1), and claims in a step are proved by the engine. It
-   gets a short format guide, the `explain` entries of the
+   engine fills (rule N1), and claims in a step are proved by the engine. The
+   guide also shows the explainer tools of the engine: step `section` and
+   `ghost`, part `opacity` and `emissive`, and `annotations` (labels; force
+   arrows, where a gravity force is checked to point down; flow and pointer
+   arrows; measured dimensions). A given number goes only in a label or arrow
+   marked `unchecked`, so it shows as Not checked. It gets a short format guide, the `explain` entries of the
    chosen ids (components without their full definitions) and one small
    accepted example. It answers with `{"document": ..., "components": [...]}`.
 3. **Check.** The engine checks the document in its strict profile (also

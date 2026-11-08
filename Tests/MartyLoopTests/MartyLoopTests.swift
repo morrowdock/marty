@@ -22,6 +22,28 @@ final class MartyLoopTests: XCTestCase {
     /// A gear reduction document, as a model might write it (test data only; not a prompt example).
     static let spurReduction = #"{"v":1,"kind":"assembly","title":"Spur gear reduction","units":"mm","parts":[{"id":"pair","use":"spurPair","with":{"pinionTeeth":12,"wheelTeeth":36}}],"steps":[{"say":"A small pinion drives a larger wheel.","camera":"hero"},{"say":"Input: the pinion (12 teeth) turns once.","highlight":["pair.pinion"],"spin":1},{"say":"The wheel (36 teeth) turns 12/36 = 1/3 of a turn, the other way.","highlight":["pair.wheel"],"spin":1}]}"#
 
+    /// The prompts stay small: measured with the real compact catalog and the real format example (bytes printed in the
+    /// test log). The v1 eval harness sent about 25,600 bytes of engine docs in every call.
+    func testPromptSizes() throws {
+        let catalog = MartyJSON.string(try MartyEngine(outputRoot: nil).catalog(compact: true, components: []))
+        let plan = MartyPrompts.planSystem(catalog: catalog).utf8.count
+        let author = MartyPrompts.authorSystem(parts: "", example: MartyExamples.formatExample).utf8.count
+        print("prompt bytes: plan \(plan), author without parts \(author)")
+        XCTAssertLessThan(plan, 8000)
+        XCTAssertLessThan(author, 9500)
+    }
+
+    /// The format example shows the explainer tools (section, ghost, a gravity force, an unchecked given number) and the
+    /// engine accepts it in strict mode with no warnings.
+    func testFormatExampleShowsTheExplainerTools() throws {
+        let r = try MartyEngine(outputRoot: nil).check(document: MartyExamples.formatExample, ref: nil, components: [], strict: true)
+        XCTAssertEqual(r["ok"] as? Bool, true, "\(r["reason"] ?? "") \(r["part"] ?? "")")
+        let claims = ((r["legend"] as? [String: Any])?["claims"] as? [[String: Any]]) ?? []
+        XCTAssertTrue(claims.contains { $0["id"] as? String == "aW" && $0["tier"] as? String == "solved" }, "gravity arrow is Solved: \(claims)")
+        XCTAssertTrue(claims.contains { $0["id"] as? String == "lRated" && $0["tier"] as? String == "described" }, "given number is Not checked")
+        XCTAssertNotNil(r["sectionTriangles"])
+    }
+
     func testReplyJSON() {
         XCTAssertEqual(ReplyJSON.object(#"{"a":1}"#)?["a"] as? Int, 1)
         XCTAssertEqual(ReplyJSON.object("Here:\n```json\n{\"a\": 2}\n```\nDone.")?["a"] as? Int, 2)

@@ -1,9 +1,10 @@
 # Design note: the Marty MCP tool set
 
 Status: implemented in `marty-mcp` 0.2.0. Engine pin: MartyGraphics `main` at
-`d5f42c2e6124487d53f046171526d26d2128330d` (PR #20 lessons, PR #21 open vocabulary 1: facts,
-placeholders, truth tiers, frame lints, strict profile, and PR #30: the report and render
-plan as library API).
+`c9f1dbdb93ccac38f8fd3c96e4e43b6c0758ec38` (PR #20 lessons, PR #21 open vocabulary 1: facts,
+placeholders, truth tiers, frame lints, strict profile, PR #30: the report and render plan as
+library API, and PR #31: annotations: labels, arrows, measured dimensions). `render` draws the
+annotation overlay on the hero and step stills, as `marty-solid render` does.
 
 ## Goal
 
