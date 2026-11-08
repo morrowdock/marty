@@ -168,7 +168,8 @@ public final class MartyEngine {
         switch try library(components) { case .failure: return nil; case .success(let l): lib = l }
         guard case .success(let json) = Decode.json(document, limit: MartyLimits.documentBytes, tooLarge: "document.bytes"),
               case .success(let doc) = MGSolidParser.document(json: json, library: lib), doc.steps.indices.contains(step) else { return nil }
-        let pose = doc.assembly.pose(doc.poseParameters(step: step, spin: 0))
+        // The pose the step shows when its spin has played (as its still and story hold).
+        let pose = doc.assembly.pose(doc.poseParameters(step: step, spin: 1))
         let visible = Set(doc.visibleAnnotations(step: step))
         let frame = framePart.flatMap { pose.world[$0] }
         func local(_ p: MGVec3) -> [Double]? {

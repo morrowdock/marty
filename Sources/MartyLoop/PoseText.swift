@@ -43,7 +43,7 @@ import MartyEngine
         solid["units"] = solid["units"] ?? "mm"
         solid["steps"] = (e["beats"] as? [[String: Any]] ?? []).map { b -> [String: Any] in
             var step: [String: Any] = ["say": "Beat."]
-            for k in ["pose", "show", "hide", "annotate"] { if let v = (b["view"] as? [String: Any])?[k] { step[k] = v } }
+            for k in ["pose", "show", "hide", "annotate", "spin", "explode"] { if let v = (b["view"] as? [String: Any])?[k] { step[k] = v } }
             return step
         }
         return solid
@@ -69,22 +69,29 @@ import MartyEngine
         return p.arrows > 0 ? p : nil
     }
 
-    /// The steps (0-based) of `doc` whose pose, show, hide or annotate differ from the same step of `base` (or that
-    /// are new) and that pose something.
-    static func changedPosedSteps(_ doc: [String: Any], base: [String: Any]?) -> [Int] {
+    /// The steps (0-based) to check: posed in either document (so a removed pose counts) and different from the same
+    /// step of `base` in pose, show, hide, annotate, spin, explode or words (`says` against `baseSays`, the original
+    /// captions), or new.
+    static func changedSteps(_ doc: [String: Any], base: [String: Any]?, says: [String], baseSays: [String]) -> [Int] {
         let steps = doc["steps"] as? [[String: Any]] ?? [], old = base?["steps"] as? [[String: Any]] ?? []
-        func view(_ s: [String: Any]) -> Data { MartyJSON.data(["pose": s["pose"] ?? NSNull(), "show": s["show"] ?? NSNull(), "hide": s["hide"] ?? NSNull()]) }
+        func view(_ s: [String: Any]) -> Data {
+            MartyJSON.data(["pose": s["pose"] ?? NSNull(), "show": s["show"] ?? NSNull(), "hide": s["hide"] ?? NSNull(),
+                            "annotate": s["annotate"] ?? NSNull(), "spin": s["spin"] ?? NSNull(), "explode": s["explode"] ?? NSNull()])
+        }
         return steps.indices.filter { n in
-            steps[n]["pose"] != nil && (n >= old.count || view(old[n]) != view(steps[n]) || MartyJSON.data(old[n]["say"] ?? "") != MartyJSON.data(steps[n]["say"] ?? ""))
+            let posed = steps[n]["pose"] != nil || (n < old.count && old[n]["pose"] != nil)
+            guard posed else { return false }
+            if n >= old.count { return true }
+            return view(old[n]) != view(steps[n]) || (n < says.count ? says[n] : "") != (n < baseSays.count ? baseSays[n] : "")
         }
     }
 
     /// The direction check of a changed document: for each changed posed step, its push and the sentences of its
     /// words (`says[n]`) that disagree. Returns the last push and the disagreements (with the push summary first).
-    static func check(engine: MartyEngine, document doc: [String: Any], base: [String: Any]?, says: [String], components: [Any])
-        -> (push: Push?, wrong: [String]) {
+    static func check(engine: MartyEngine, document doc: [String: Any], base: [String: Any]?, says: [String], baseSays: [String],
+                      components: [Any]) -> (push: Push?, wrong: [String]) {
         var last: Push? = nil
-        for n in changedPosedSteps(doc, base: base) {
+        for n in changedSteps(doc, base: base, says: says, baseSays: baseSays) {
             guard let p = push(engine: engine, document: doc, step: n, components: components) else { continue }
             last = p
             let wrong = disagreements(n < says.count ? says[n] : "", push: p)
@@ -93,38 +100,40 @@ import MartyEngine
         return (last, [])
     }
 
-    /// The clauses of a sentence (split at commas, semicolons, colons and "while", "but", "and", "so").
-    static func clauses(_ s: String) -> [String] {
-        s.replacingOccurrences(of: #"(?i)[,;:]|\b(while|but|and|so|whereas)\b"#, with: "\u{1}", options: .regularExpression)
-            .split(separator: "\u{1}").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-    }
+    static let body = #"(the )?(suit|pilot|body|wearer|flyer)|it|him|her|them"#
+    static let thrust = #"\b(thrusts?|push(es|ing)?|forces?|jets?|exhausts?|engines?)\b"#
 
-    /// The sentences of `text` with a clause whose thrust-direction words disagree with `push`. A clause counts only
-    /// when it speaks of thrust or push (so "the pilot slides the arm out" or "leans forward" are not claims), and a
-    /// negated or cancelling clause ("no sideways push", "the side parts cancel") is no claim of a side push.
+    /// The sentences of `text` that make a claim the push contradicts. Claims are matched over the whole sentence:
+    /// a net side motion of the body ("pushes the suit sideways", "the suit slides sideways", "the side push moves
+    /// it"), exempt only when the sentence says the side parts cancel; thrust pointing away from or toward the middle
+    /// (or outward, inward); thrust or the body pushed forward or backward; "to the pilot's left/right".
     public static func disagreements(_ text: String, push p: Push) -> [String] {
         func has(_ s: String, _ re: String) -> Bool { s.range(of: re, options: [.regularExpression, .caseInsensitive]) != nil }
-        let thrust = #"\b(thrusts?|push(es|ing)?|forces?|jets?)\b"#
-        let negated = #"\b(no|not|never|cancels?|cancelled|cancel out|zero|without|none|nothing)\b"#
-        return MartyLoop.sentences(text).filter { sentence in
-            // A clause speaks of thrust when it, or the clause just before it, names thrust ("the engines push
-            // partly sideways, away from the middle").
-            let cs = clauses(sentence)
-            return cs.indices.contains { i in
-                let c = cs[i]
-                guard has(c, thrust) || (i > 0 && has(cs[i - 1], thrust)) else { return false }
-                let neg = has(c, negated)
-                if p.noSidePush, !neg, has(c, #"\b(sideways|to the side|slides?|sliding|side ?push(es)?|lateral(ly)?)\b"#) { return true }
-                if !neg, p.outward < -Push.threshold, has(c, #"\b(away from the (body'?s? )?(middle|centre|center)|outwards?)\b"#) { return true }
-                if !neg, p.outward > Push.threshold, has(c, #"\b(towards? the (body'?s? )?(middle|centre|center)|inwards?)\b"#) { return true }
-                if !neg, p.mannequin, p.depth > Push.threshold, has(c, #"\bforwards?\b"#) { return true }
-                if !neg, p.mannequin, p.depth < -Push.threshold, has(c, #"\bbackwards?\b"#) { return true }
-                if !neg, p.mannequin, !p.noSidePush {
-                    if p.side > 0, has(c, #"\b(to|toward|towards) the pilot'?s right\b"#) { return true }
-                    if p.side < 0, has(c, #"\b(to|toward|towards) the pilot'?s left\b"#) { return true }
-                }
-                return false
+        let b = body
+        let sideMotion = #"\b(push(es|ed|ing)?|mov(es|ed|ing)|drives?|carr(y|ies)|shoves?|shifts?|nudges?)\s+("# + b + #")\s+(sideways|to the side|laterally)\b"#
+            + #"|\b("# + b + #")\s+(slides?|drifts?|moves?|shifts?|goes|travels?)\s+(sideways|to the side|laterally)\b"#
+            + #"|\b(net sideways|sideways (push|force|motion|movement)|side ?(push|force)|lateral (push|force))\b"#
+            + #"|\b(sideways|side) (part|component)s? (push(es)?|moves?|drives?|shoves?)\b"#
+        let cancels = #"\b(cancel\w*|no net|no sideways|zero net|balance out|net side(ways)? (push|force) is (zero|nil))\b"#
+        let toward = #"\b(towards?|in toward) the (body'?s? )?(middle|centre|center|midline)\b|\binwards?\b"#
+        let away = #"\baway from the (body'?s? )?(middle|centre|center|midline)\b|\boutwards?\b"#
+        return MartyLoop.sentences(text).filter { s in
+            if p.noSidePush, has(s, sideMotion), !has(s, cancels) { return true }
+            if has(s, thrust) {
+                if p.outward < -Push.threshold, has(s, away) { return true }
+                if p.outward > Push.threshold, has(s, toward) { return true }
             }
+            if p.mannequin {
+                let fwd = #"\b(push(es|ed|ing)?|mov(es|ed|ing)|drives?)\s+("# + b + #")\s+forwards?\b|\b(thrust|push|force)\b[^.]*\bforwards?\b"#
+                let bwd = #"\b(push(es|ed|ing)?|mov(es|ed|ing)|drives?)\s+("# + b + #")\s+backwards?\b|\b(thrust|push|force)\b[^.]*\bbackwards?\b"#
+                if p.depth > Push.threshold, has(s, fwd) { return true }
+                if p.depth < -Push.threshold, has(s, bwd) { return true }
+                if !p.noSidePush {
+                    if p.side > 0, has(s, #"\b(to|toward|towards) the pilot'?s right\b"#) { return true }
+                    if p.side < 0, has(s, #"\b(to|toward|towards) the pilot'?s left\b"#) { return true }
+                }
+            }
+            return false
         }
     }
 }

@@ -918,6 +918,21 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(PoseText.disagreements("The pilot slides the arm out and leans forward. The back engine holds the weight.", push: pm), [])
         let wrongWay = pm.outward > 0 ? "Its engines push partly sideways, toward the body's middle." : "Its engines push partly up, away from the body's middle."
         XCTAssertEqual(PoseText.disagreements(wrongWay, push: pm).count, 1, "\(pm) \(wrongWay)")
+        // Review cases: coordinated directions keep their thrust context; "without" does not negate a side-push
+        // claim; describing cancelling components is no net claim.
+        let inwardWords = pm.outward < 0 ? "The thrust points up and out, away from the middle." : "The thrust points up and in, toward the middle."
+        XCTAssertEqual(PoseText.disagreements(inwardWords, push: pm).count, 1, "\(pm)")
+        XCTAssertEqual(PoseText.disagreements("The thrust pushes the suit sideways without rotating it.", push: pm).count, 1)
+        XCTAssertEqual(PoseText.disagreements("The thrusts point sideways and upward, but their side components cancel.", push: pm), [])
+        // Step selection: a caption change of a posed step, an annotate change, and a removed pose are checked.
+        let posedBase = doc([first, mirror])
+        var captioned = posedBase; var cs = posedBase["steps"] as! [[String: Any]]; cs[1]["say"] = "y"; captioned["steps"] = cs
+        XCTAssertEqual(PoseText.changedSteps(captioned, base: posedBase, says: ["a", "y"], baseSays: ["a", "x"]), [1])
+        var annot = posedBase; var ans = posedBase["steps"] as! [[String: Any]]; ans[1]["annotate"] = ["tR"]; annot["steps"] = ans
+        XCTAssertEqual(PoseText.changedSteps(annot, base: posedBase, says: ["a", "x"], baseSays: ["a", "x"]), [1])
+        var unposed = posedBase; var us = posedBase["steps"] as! [[String: Any]]; us[1]["pose"] = nil; unposed["steps"] = us
+        XCTAssertEqual(PoseText.changedSteps(unposed, base: posedBase, says: ["a", "x"], baseSays: ["a", "x"]), [1])
+        XCTAssertEqual(PoseText.changedSteps(posedBase, base: posedBase, says: ["a", "x"], baseSays: ["a", "x"]), [])
         // A forward-only push is not "sideways parts cancel".
         let fwd = PoseText.Push(side: 0, depth: -1, sideAbs: 0, outward: 0, arrows: 1, mannequin: true)
         XCTAssertFalse(fwd.summary.contains("cancel"), fwd.summary); XCTAssertTrue(fwd.summary.contains("forward"))

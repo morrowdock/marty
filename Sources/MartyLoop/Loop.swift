@@ -475,7 +475,9 @@ public final class MartyLoop {
                let patched = (try? engine.patch(document: nil, ref: ref, patch: merged, components: components, returnDocument: true, strict: true))?["document"] as? [String: Any] {
                 let base = (try? JSONSerialization.jsonObject(with: Data(docText.utf8))) as? [String: Any]
                 let says = (patched["steps"] as? [[String: Any]] ?? []).map { $0["say"] as? String ?? "" }
-                let (push, wrong) = PoseText.check(engine: engine, document: patched, base: base, says: says, components: components)
+                let baseSays = (base?["steps"] as? [[String: Any]] ?? []).map { $0["say"] as? String ?? "" }
+                let (push, wrong) = PoseText.check(engine: engine, document: patched, base: base, says: says, baseSays: baseSays,
+                                                   components: components)
                 stepPush = push
                 if !wrong.isEmpty { r = ["ok": false, "reason": "followup.direction", "direction": wrong] }
             }
@@ -604,8 +606,9 @@ extension MartyLoop {
                 // explainer's solid with one step per beat, posed by the engine).
                 if (r["ok"] as? Bool) == true, let doc = PoseText.assembly(explainer: changed) {
                     let says = (changed["beats"] as? [[String: Any]] ?? []).map { $0["say"] as? String ?? "" }
+                    let baseSays = (base["beats"] as? [[String: Any]] ?? []).map { $0["say"] as? String ?? "" }
                     let (push, wrong) = PoseText.check(engine: engine, document: doc, base: PoseText.assembly(explainer: base),
-                                                       says: says, components: components)
+                                                       says: says, baseSays: baseSays, components: components)
                     stepPush = push
                     if !wrong.isEmpty { r = ["ok": false, "reason": "followup.direction", "direction": wrong] }
                 }
