@@ -125,7 +125,10 @@ the MCP server uses), so a run needs no MCP client.
    after: the solid parts, the other solid keys, the board keys and items and the beat
    ops that changed. A modelled answer also gets the document's given figures
    (unchecked labels and arrows, and rows of noted explainer tables, with their
-   source; at most 12); a refused answer does not. The answer prompt says that a
+   source; a table whose cells a later beat sets is listed again, marked with
+   that beat; at most 12); a refused answer does not. Numbers from the
+   structured values are written in plain decimal notation, never with an
+   exponent. The answer prompt says that a
    claim about sizes, shares or comparisons must come from a given figure or an
    engine number, or be hedged. A sentence with "most", "the majority", "all
    of", "more than" or a similar word, with no hedge (about, in this schematic)

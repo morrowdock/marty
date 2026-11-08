@@ -570,8 +570,8 @@ extension MartyLoop {
     static func numberLeaves(_ v: Any?) -> [String] {
         switch v {
         case let n as NSNumber where CFGetTypeID(n) != CFBooleanGetTypeID():
-            let d = n.doubleValue
-            return [d == d.rounded() && abs(d) < 1e15 ? String(Int64(d)) : String(d)]
+            // Plain decimal notation, never an exponent ("0.0000001", not "1e-07"), and exact for integers.
+            return [NSDecimalNumber(decimal: n.decimalValue).stringValue]
         case let a as [Any]: return a.flatMap { numberLeaves($0) }
         case let o as [String: Any]: return o.values.flatMap { numberLeaves($0) }
         default: return []
@@ -594,18 +594,37 @@ extension MartyLoop {
                 if let u = a["unchecked"] as? String, let t = a["text"] as? String { out.append("\(t) — \(u) (not checked)") }
             }
         }
+        // Noted tables, replayed through the beats: the first version of each, then each "set" of its cells,
+        // marked with the beat it shows from.
         let notes = d["notes"] as? [String: Any] ?? [:]
-        var tables = ((d["board"] as? [String: Any])?["items"] as? [[String: Any]]) ?? []
-        for beat in d["beats"] as? [[String: Any]] ?? [] {
-            for case let o as [String: Any] in beat["ops"] as? [Any] ?? [] where o["op"] as? String == "add" {
-                if let item = o["item"] as? [String: Any] { tables.append(item) }
+        var versions: [(id: String, beat: Int?, header: Bool, cells: [[Any]])] = []
+        var header: [String: Bool] = [:]
+        for t in ((d["board"] as? [String: Any])?["items"] as? [[String: Any]]) ?? [] where t["k"] as? String == "table" {
+            if let id = t["id"] as? String { header[id] = t["header"] as? Bool == true; versions.append((id, nil, header[id]!, t["cells"] as? [[Any]] ?? [])) }
+        }
+        for (n, beat) in (d["beats"] as? [[String: Any]] ?? []).enumerated() {
+            for case let o as [String: Any] in beat["ops"] as? [Any] ?? [] {
+                switch o["op"] as? String {
+                case "add":
+                    if let t = o["item"] as? [String: Any], t["k"] as? String == "table", let id = t["id"] as? String {
+                        header[id] = t["header"] as? Bool == true
+                        versions.append((id, n + 1, header[id]!, t["cells"] as? [[Any]] ?? []))
+                    }
+                case "set":
+                    if let id = o["id"] as? String, let h = header[id], o["key"] as? String == "cells", let cells = o["value"] as? [[Any]] {
+                        versions.append((id, n + 1, h, cells))
+                    }
+                default: break
+                }
             }
         }
-        for t in tables where t["k"] as? String == "table" {
-            guard let id = t["id"] as? String, let note = notes[id] as? [String: Any] else { continue }
+        var first = Set<String>()
+        for v in versions {
+            guard let note = notes[v.id] as? [String: Any] else { continue }
             let source = (note["basis"] as? String).map { "\($0) (given)" } ?? (note["unchecked"] as? String).map { "\($0) (not checked)" } ?? ""
-            for row in (t["cells"] as? [[Any]] ?? []).dropFirst(t["header"] as? Bool == true ? 1 : 0) {
-                out.append(row.map { "\($0)" }.joined(separator: " ") + " — " + source)
+            let from = first.insert(v.id).inserted ? "" : " (from beat \(v.beat.map(String.init) ?? "?"))"
+            for row in v.cells.dropFirst(v.header ? 1 : 0) {
+                out.append(row.map { "\($0)" }.joined(separator: " ") + " — " + source + from)
             }
         }
         return Array(out.prefix(12))

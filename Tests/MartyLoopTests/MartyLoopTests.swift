@@ -288,6 +288,13 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(MartyLoop.unsupportedComparatives("All of its thrust comes from the back unit.", sources: []).count, 1)
         XCTAssertEqual(MartyLoop.unsupportedComparatives("The arms steer the suit. The back unit holds it up.", sources: []), [])
         XCTAssertEqual(MartyLoop.numberLeaves(["a": [3000, 1.5, true], "id": "u2"]).sorted(), ["1.5", "3000"])
+        XCTAssertEqual(MartyLoop.numberLeaves([0.0000001, 1e20, 9007199254740993 as Int64]), ["0.0000001", "100000000000000000000", "9007199254740993"])
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("Most of it is 1 unit.", sources: MartyLoop.numberLeaves([0.0000001])).count, 1)
+        // A table set in a later beat is listed too, marked with its beat.
+        let doc: [String: Any] = ["notes": ["t": ["basis": "maker"]], "board": ["items": [Any]()], "beats": [
+            ["ops": [["op": "add", "item": ["id": "t", "k": "table", "header": true, "cells": [["Item", "Value"], ["Rated rpm", 3000]]]]]],
+            ["ops": [["op": "set", "id": "t", "key": "cells", "value": [["Item", "Value"], ["Rated rpm", 3500]]]]]]]
+        XCTAssertEqual(MartyLoop.givenFigures(doc), ["Rated rpm 3000 — maker (given)", "Rated rpm 3500 — maker (given) (from beat 2)"])
         // The refused answer gets no given figures; a modelled one does.
         XCTAssertFalse(MartyPrompts.answerUser(followUp: "q", before: "{}", after: nil, refused: "x", given: ["T 1 kgf — m"]).contains("Given figures"))
         XCTAssertTrue(MartyPrompts.answerUser(followUp: "q", before: "{}", after: "{}", given: ["T 1 kgf — m"]).contains("- T 1 kgf — m"))
