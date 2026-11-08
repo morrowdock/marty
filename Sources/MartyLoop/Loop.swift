@@ -482,7 +482,18 @@ extension MartyLoop {
     /// title and camera ops and ops on text items or on a "text" or "label" key are words). A change of words only
     /// (captions, titles, notes, text items, an added caption-only beat) gives the same bytes.
     static func modelContent(_ d: [String: Any]) -> Data {
-        MartyJSON.data(["solid": modelSolid(d), "board": modelBoardItems(d), "ops": modelOps(d)])
+        MartyJSON.data(["solid": modelSolid(d), "board": modelBoardOther(d), "items": modelBoardItems(d), "ops": modelOps(d)])
+    }
+
+    /// The board's keys other than its items and title (template, params, hide, over and the rest are model content).
+    static func modelBoardOther(_ d: [String: Any]) -> [String: Any] {
+        guard let board = d["board"] as? [String: Any] else { return ["board": d["board"] ?? NSNull()] }
+        return board.filter { $0.key != "items" && $0.key != "title" }
+    }
+
+    /// A non-text board item without its words (its "label" and "text").
+    static func withoutWords(_ item: [String: Any]) -> [String: Any] {
+        var o = item; o["label"] = nil; o["text"] = nil; return o
     }
 
     static func modelSolid(_ d: [String: Any]) -> Any {
@@ -512,7 +523,7 @@ extension MartyLoop {
     static func modelBoardItems(_ d: [String: Any]) -> [String: Any] {
         var out: [String: Any] = [:]
         for (n, item) in ((d["board"] as? [String: Any])?["items"] as? [[String: Any]] ?? []).enumerated() where item["k"] as? String != "text" {
-            out[item["id"] as? String ?? "#\(n)"] = item
+            out[item["id"] as? String ?? "#\(n)"] = withoutWords(item)
         }
         return out
     }
@@ -528,7 +539,10 @@ extension MartyLoop {
                 switch o["op"] as? String {
                 case "title", "camera": continue
                 case "add":
-                    if let item = o["item"] as? [String: Any], item["k"] as? String == "text" { continue }
+                    if let item = o["item"] as? [String: Any] {
+                        if item["k"] as? String == "text" { continue }
+                        var w = o; w["item"] = withoutWords(item); ops.append(w); continue
+                    }
                 case "set", "remove":
                     if let id = o["id"] as? String, text.contains(id) { continue }
                     if let key = o["key"] as? String, key == "text" || key == "label" { continue }
@@ -562,6 +576,8 @@ extension MartyLoop {
         let other = diff((base["solid"] as? [String: Any] ?? [:]).filter { $0.key != "parts" },
                          (new["solid"] as? [String: Any] ?? [:]).filter { $0.key != "parts" })
         if !other.isEmpty { summary["solid other"] = other }
+        let board = diff(modelBoardOther(base), modelBoardOther(new))
+        if !board.isEmpty { summary["board"] = board }
         let items = diff(modelBoardItems(base), modelBoardItems(new))
         if !items.isEmpty { summary["board items"] = items }
         let opsA = modelOps(base), opsB = modelOps(new)
@@ -575,7 +591,9 @@ extension MartyLoop {
     /// arrow again in the changed model, so it is never listed.
     static func movedForceArrows(annotations: Any?, parts: [[String: Any]], moved: Set<String>, all: Bool,
                                  changedArrows: Set<String> = []) -> [String] {
-        var m = moved
+        // An inner-part edit ("pilot.upperArmL") can move every part of that component instance (its hierarchy is not
+        // in the document), so the whole instance counts as moved.
+        var m = moved.union(moved.compactMap { $0.split(separator: ".").first.map(String.init) })
         func hit(_ ref: String) -> Bool { m.contains(ref) || m.contains { ref.hasPrefix($0 + ".") } }
         var grew = true
         while grew {

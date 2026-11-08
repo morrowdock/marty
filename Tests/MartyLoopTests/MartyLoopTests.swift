@@ -117,6 +117,8 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(tableEdit["changed"] as? Bool, true, "\(tableEdit["attempts"] ?? "")")
         // The answer gets the changed values, before and after.
         XCTAssertTrue(mTable.prompts[3].user.contains("3000") && mTable.prompts[3].user.contains("3500"), mTable.prompts[3].user)
+        let summary = MartyLoop.changeSummary(from: ["board": ["params": ["angle": 10]]], to: ["board": ["params": ["angle": 30]]])
+        XCTAssertTrue(summary.contains("10") && summary.contains("30") && summary.contains("board"), summary)
         // A gravity arrow is checked again by the engine: no schematic-direction line.
         XCTAssertEqual(ok["forceArrowsMoved"] as? [String], [])
         XCTAssertFalse(mOK.prompts[3].user.contains("Force arrows the change moved"))
@@ -152,10 +154,19 @@ final class MartyLoopTests: XCTestCase {
                 var solid = d["solid"] as! [String: Any], ann = solid["annotations"] as! [String: Any]
                 var arrows = ann["arrows"] as! [[String: Any]]; arrows[0]["text"] = "Its weight"
                 ann["arrows"] = arrows; solid["annotations"] = ann; d["solid"] = solid
+            },
+            // A label on the table, in its add payload, and a board title.
+            edited { d in
+                var b = beats(d), ops = b[0]["ops"] as! [[String: Any]], item = ops[0]["item"] as! [String: Any]
+                item["label"] = "Rated figures"; ops[0]["item"] = item; b[0]["ops"] = ops; d["beats"] = b
+                var board = d["board"] as! [String: Any]; board["title"] = "Figures"; d["board"] = board
             }]
         for (n, d) in wordsOnly.enumerated() { XCTAssertEqual(MartyLoop.modelContent(d), same, "case \(n)") }
         let modelChanges: [[String: Any]] = [
             edited { d in d["beats"] = beats(d) + [["say": "Gone.", "ops": [["op": "remove", "id": "t"]]]] },
+            edited { d in d["beats"] = beats(d) + [["say": "Faster.", "ops": [["op": "params", "params": ["speed": 2]]]]] },
+            edited { d in d["beats"] = beats(d) + [["say": "New.", "ops": [["op": "set", "id": "t", "key": "cells", "value": [["A", 1]]]]]] },
+            edited { d in var board = d["board"] as! [String: Any]; board["params"] = ["angle": 30]; d["board"] = board },
             edited { d in
                 var solid = d["solid"] as! [String: Any], ann = solid["annotations"] as! [String: Any]
                 var arrows = ann["arrows"] as! [[String: Any]]; arrows[0]["to"] = ["world": [0, 0, -80]]
@@ -178,6 +189,8 @@ final class MartyLoopTests: XCTestCase {
             ["id": "aFlow", "meaning": "flow", "from": "nozzle", "to": "base"]]]
         XCTAssertEqual(MartyLoop.movedForceArrows(annotations: annotations, parts: parts, moved: ["pilot"], all: false), ["aT", "aMix"])
         XCTAssertEqual(MartyLoop.movedForceArrows(annotations: annotations, parts: parts, moved: ["base"], all: false), ["aBase"])
+        // An inner-part edit of the mannequin moves its whole instance: the jet hung on pilot.rightHand too.
+        XCTAssertEqual(MartyLoop.movedForceArrows(annotations: annotations, parts: parts, moved: ["pilot.upperArmR"], all: false), ["aT", "aMix"])
         XCTAssertEqual(MartyLoop.movedForceArrows(annotations: annotations, parts: parts, moved: [], all: true), ["aT", "aMix", "aWorld", "aBase"])
         XCTAssertEqual(MartyLoop.movedForceArrows(annotations: annotations, parts: parts, moved: [], all: false, changedArrows: ["aWorld"]), ["aWorld"])
         let line = MartyPrompts.answerUser(followUp: "q", before: "{}", after: "{}", movedForceArrows: ["aT"])

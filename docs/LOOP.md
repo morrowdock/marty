@@ -94,7 +94,8 @@ the MCP server uses), so a run needs no MCP client.
    end at a world point stays where it is. The engine checks a gravity arrow
    again in the changed model. Marty lists the other force arrows that the
    accepted change may have moved (an end or `on` part on a changed part or on a
-   part hung below one; every force arrow when params, constraints or joints
+   part hung below one, where an edit of an inner part of a component moves
+   the whole instance; every force arrow when params, constraints or joints
    changed) in `forceArrowsMoved`, and only then does the answer prompt ask the
    model to say that their direction is schematic. An explainer has no engine
    patch format, so its follow-up sends the whole changed explainer
@@ -102,11 +103,12 @@ the MCP server uses), so a run needs no MCP client.
    repaired), which must stay an explainer (`followup.kind`) and is checked in
    strict mode (at most 3 repairs). A change of words only is refused as
    `followup.textOnly`: the model content compared is the solid (without its
-   title and annotation text), the board items other than text items, and the
-   beats' model ops in order (an absent or empty `ops` adds nothing; `title` and
-   `camera` ops, ops on text items and sets of a `text` or `label` key are
-   words). The answer prompt gets the accepted change with values before and
-   after: the solid parts, the other solid keys, the board items and the beat
+   title and annotation text), the board keys other than its title (template,
+   params and the rest), the board items other than text items, and the beats'
+   model ops in order (an absent or empty `ops` adds nothing; `title` and
+   `camera` ops, ops on text items, sets of a `text` or `label` key, and the
+   `label` and `text` of an item are words). The answer prompt gets the accepted change with values before and
+   after: the solid parts, the other solid keys, the board keys and items and the beat
    ops that changed. In an explainer, a force arrow whose direction the model
    sets may be marked `unchecked: "schematic direction"`; an arrow whose
    definition changed is listed in `forceArrowsMoved`.
