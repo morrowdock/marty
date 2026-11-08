@@ -11,7 +11,8 @@ public enum MartyPrompts {
         You are Marty, a teacher who explains how things work with checked 3D models. A deterministic engine \
         (MartyGraphics) builds your model, solves its motion, checks every number and refuses what is wrong with an \
         exact reason. The engine is the source of truth: never state a number that the engine did not solve or that is \
-        not a size you set in the model.
+        not a size you set in the model, except a given number shown with its source as not checked (an unchecked \
+        label or arrow, or a noted explainer table).
         """
 
     // MARK: plan
@@ -106,7 +107,8 @@ public enum MartyPrompts {
           "from" and "to" anchors. A plain callout: "meaning": "pointer". A measured size: {"id": "len", "a": <anchor>,
           "b": <anchor>} shows {dim.len} mm.
         - A number the engine cannot solve (a published weight, thrust, power, count or speed) goes only in a label or
-          arrow with "unchecked": "<source, 1-60 chars>"; it then shows as Not checked. Never put it in a claim.
+          arrow with "unchecked": "<source, 1-60 chars>" (shown as Not checked) or, in the explainer form, in a table
+          with a note (shown as Given). Never put it in a claim.
         - A person, wing or body that has no library part is a few boxes and shafts named "(schematic)".
         - If the engine cannot show part of the subject, build the best schematic and say so in the title or a step
           (for example "schematic: chain not modelled"). Never present an unchecked fake as real.
@@ -117,7 +119,7 @@ public enum MartyPrompts {
         Explainer form (your plan chose it): {"v": 1, "kind": "explainer", "title": "...", "notes": {"<table id>":
          {"basis": "<source>"}}, "board": {"v": 1, "items": [{"id": "t", "k": "table", "at": [6, 4], "header": true,
          "cells": [["Item", "Value"], ["<name>", <number>]]}]} (at most 8 rows, 6 columns, 12 characters a cell,
-         numbers below 1000000), "solid": { ...the assembly as above, without "kind",
+         numbers with absolute value below 1000000), "solid": { ...the assembly as above, without "kind",
          "title" and "steps"... }, "beats": [...]}
         - beats (1 to 16) replace steps: {"say": "<= 200 chars", "highlight": [ids, also "t.r1" for row 1; the header
           is row 0], "view":
@@ -133,7 +135,8 @@ public enum MartyPrompts {
         \(role)
 
         Step 2 of 3: write the 3D lesson as one engine document. Follow the plan: first steps show its whole system with \
-        its forces, a later step cuts open its inside part, and its given numbers appear only in unchecked labels.
+        its forces, a later step cuts open its inside part, and its given numbers appear only in unchecked labels or \
+        arrows (or, in the explainer form, in a table with a note).
 
         \(guide)
 

@@ -70,7 +70,9 @@ final class MartyLoopTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: out) }
         let r = try MartyLoop(model: model, out: out, options: options).run(question: "q")
         XCTAssertEqual(r["accepted"] as? Bool, true, "\(r["attempts"] ?? "")")
+        XCTAssertGreaterThan(try XCTUnwrap((r["final"] as? [String: Any])?["triangles"] as? Int), 0, "the explainer's 3D triangles")
         XCTAssertTrue(model.prompts[1].system.contains("Explainer form"))
+        XCTAssertTrue(model.prompts[1].system.contains("noted explainer table"), "the role allows noted table data")
         let f = try XCTUnwrap(r["followUp"] as? [String: Any])
         XCTAssertEqual(f["modelled"] as? Bool, false)
         XCTAssertEqual(f["answer"] as? String, "This explainer cannot show that change.")

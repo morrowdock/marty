@@ -117,6 +117,7 @@ public final class MartyEngine {
             for k in ["facts", "ratios", "readBack"] { if let v = solid[k] { out[k] = v } }
         }
         if let ids = (out["ids"] as? [String: Any])?["solid"] { out["partIds"] = ids }
+        if out["triangles"] == nil, let t = (out["budget"] as? [String: Any])?["triangles"] { out["triangles"] = t }
         return out
     }
 
