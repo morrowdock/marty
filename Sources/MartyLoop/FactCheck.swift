@@ -117,7 +117,7 @@ import MartyEngine
     static let shownKeys: Set<String> = ["text", "label", "xl", "yl", "cells", "bars", "unit", "vals", "ptrs", "xr", "yr"]
 
     /// The text fields of an assembly (v1 or v2), an explainer or a follow-up patch, with their field names.
-    /// `literal`: a field the engine shows as typed, never filling placeholders (notes, `unchecked` reasons).
+    /// `literal`: a field the engine shows as typed, never filling placeholders (notes, `unchecked` reasons, part names).
     static func fields(_ d: [String: Any]) -> [(field: String, text: String, namesOnly: Bool, literal: Bool)] {
         var out: [(String, String, Bool, Bool)] = []
         func add(_ f: String, _ v: Any?, namesOnly: Bool = false, literal: Bool = false) {
@@ -137,9 +137,9 @@ import MartyEngine
         }
         func parts(_ p: Any?, prefix: String = "") {
             if let list = p as? [[String: Any]] {
-                for x in list { add("\(prefix)part.\(x["id"] as? String ?? "?").name", x["name"], namesOnly: true) }
+                for x in list { add("\(prefix)part.\(x["id"] as? String ?? "?").name", x["name"], namesOnly: true, literal: true) }
             } else if let map = p as? [String: Any] {   // a patch: {"<id>": {fields}}
-                for (id, x) in map { add("\(prefix)part.\(id).name", (x as? [String: Any])?["name"], namesOnly: true) }
+                for (id, x) in map { add("\(prefix)part.\(id).name", (x as? [String: Any])?["name"], namesOnly: true, literal: true) }
             }
         }
         // Every value a 2D item shows (as text or as a number), by key; nested colours and positions are not shown.

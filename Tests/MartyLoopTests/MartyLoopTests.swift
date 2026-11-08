@@ -758,6 +758,12 @@ final class MartyLoopTests: XCTestCase {
         let literal: [String: Any] = ["v": 1, "kind": "explainer", "notes": ["t": ["basis": "First flown {year.2017}"]],
                                       "beats": [["say": "It flies.", "unchecked": "since {year.2016}"]]]
         XCTAssertEqual(Set(FactCheck.findings(literal, evidence: e0).map(\.field)), ["note.t.basis", "beat1.unchecked"])
+        // Part names are literal too: in a v2 assembly, a patch and an explainer solid.
+        let named: [String: Any] = ["v": 2, "kind": "assembly", "parts": [["id": "a", "name": "Released {year.2017}"]]]
+        XCTAssertEqual(FactCheck.findings(named, evidence: e0).map(\.field), ["part.a.name"])
+        XCTAssertEqual(FactCheck.findings(["parts": ["a": ["name": "Since {year.2016}"]]], evidence: e0, filledBy: ["v": 2, "kind": "assembly"]).map(\.field), ["part.a.name"])
+        let exSolid: [String: Any] = ["v": 1, "kind": "explainer", "solid": ["parts": [["id": "a", "name": "Built {year.2017}"]]]]
+        XCTAssertEqual(FactCheck.findings(exSolid, evidence: e0).map(\.field), ["solid.part.a.name"])
         XCTAssertEqual(MartyLoop.unsourcedSentences("It has more than 1e-20 parts.", sources: ["0.00000000000000000001"]).count, 1)
     }
 

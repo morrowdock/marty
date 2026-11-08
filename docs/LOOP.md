@@ -125,8 +125,8 @@ the MCP server uses), so a run needs no MCP client.
    `appliesTo`, source dates), the question, the engine's facts and ratios (also
    as their exact fraction or inverse) and the sizes set in the model. Engine
    placeholders (a fact name in braces, in v2 assemblies and explainers, where
-   the engine fills them; a v1 assembly, a patch of one, notes and `unchecked`
-   reasons show braces as typed), row ids (`F3`)
+   the engine fills them; a v1 assembly, a patch of one, part names, notes and
+   `unchecked` reasons show braces as typed), row ids (`F3`)
    and "2D"/"3D" are not facts; a part name is
    checked for years and versions only ("Jet 2" counts units); a label whose
    `unchecked` text starts with "assumed example" is exempt. A finding is a
