@@ -41,9 +41,10 @@ import MartyEngine
 
     /// The exact fraction p/q of `v` (q at most 1000), or nil.
     static func fraction(_ v: Double) -> (Int, Int)? {
-        guard v.isFinite, v > 0 else { return nil }
+        guard v.isFinite, v > 0, v < 1e12, v > 1e-12 else { return nil }
         for q in 1...1000 {
             let p = (v * Double(q)).rounded()
+            guard p < 1e15 else { return nil }
             if p >= 1, abs(p / Double(q) - v) < 1e-9 * max(1, v) { return (Int(p), q) }
         }
         return nil
@@ -58,32 +59,47 @@ import MartyEngine
         return out
     }
 
-    /// Version tokens: "Mk 4", "Mark IV", "v2.1", "Gen 3", "Series 5", "Model 3" (lower case, single spaces).
+    /// Version tokens: "Mk 4" / "Mark IV" and "Gen 3" in any case, "v2" written together, and "Model 3", "Series 5",
+    /// "Version 2" only capitalized and not at the start of a sentence (so "the model 3 times" is prose). Lower case,
+    /// single spaces.
     static func versions(_ text: String) -> [String] {
-        let pattern = #"(?i)\b(mk\.?|mark|gen|generation|series|model|version|v)\s?([0-9]+(?:\.[0-9]+)*|[ivx]{1,5})\b"#
-        guard let re = try? NSRegularExpression(pattern: pattern) else { return [] }
+        var out: [String] = []
         let ns = text as NSString
-        return re.matches(in: text, range: NSRange(location: 0, length: ns.length)).map { m in
-            var kind = ns.substring(with: m.range(at: 1)).lowercased().replacingOccurrences(of: ".", with: "")
-            if kind == "mark" { kind = "mk" }
-            if kind == "generation" { kind = "gen" }
-            if kind == "version" { kind = "v" }
-            return kind + " " + ns.substring(with: m.range(at: 2)).lowercased()
+        func scan(_ pattern: String, _ keep: (NSTextCheckingResult) -> Bool = { _ in true }) {
+            guard let re = try? NSRegularExpression(pattern: pattern) else { return }
+            for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) where keep(m) {
+                var kind = ns.substring(with: m.range(at: 1)).lowercased().replacingOccurrences(of: ".", with: "")
+                if kind == "mark" { kind = "mk" }
+                if kind == "generation" { kind = "gen" }
+                if kind == "version" { kind = "v" }
+                out.append(kind + " " + ns.substring(with: m.range(at: 2)).lowercased())
+            }
         }
+        scan(#"(?i)\b(mk\.?|mark|gen|generation)\s?([0-9]+(?:\.[0-9]+)*|[ivx]{1,5})\b"#)
+        scan(#"\b([vV])([0-9]+(?:\.[0-9]+)*)\b"#)
+        scan(#"\b(Model|Series|Version)\s([0-9]+(?:\.[0-9]+)*|[IVX]{1,5})\b"#) { m in
+            let before = ns.substring(to: m.range.location).trimmingCharacters(in: .whitespaces)
+            return !(before.isEmpty || before.hasSuffix(".") || before.hasSuffix("!") || before.hasSuffix("?") || before.hasSuffix(":"))
+        }
+        return out
     }
 
     static let years = #"\b(1[89][0-9]{2}|20[0-9]{2})\b"#
 
-    /// The text without engine placeholders, row ids and "2D"/"3D".
-    static func plain(_ text: String) -> String {
-        text.replacingOccurrences(of: #"\{[^{}]*\}"#, with: " ", options: .regularExpression)
+    /// An engine placeholder: `{name}` or `{name|mod|mod}` with a fact name.
+    static let placeholder = #"\{[A-Za-z_][A-Za-z0-9_.]*(?:\|[a-z]+)*\}"#
+
+    /// The text without row ids and "2D"/"3D", and without engine placeholders where the engine fills them
+    /// (`placeholders`: v2 assemblies and explainers; v1 text and answers show braces as typed).
+    static func plain(_ text: String, placeholders: Bool = true) -> String {
+        (placeholders ? text.replacingOccurrences(of: placeholder, with: " ", options: .regularExpression) : text)
             .replacingOccurrences(of: #"\bF[0-9]{1,2}\b"#, with: " ", options: .regularExpression)
             .replacingOccurrences(of: #"\b[23]D\b"#, with: " ", options: .regularExpression)
     }
 
     /// The findings of one text field. `namesOnly`: years and versions only.
-    static func check(_ field: String, _ text: String, _ e: Evidence, namesOnly: Bool = false) -> [Finding] {
-        let t = plain(text)
+    static func check(_ field: String, _ text: String, _ e: Evidence, namesOnly: Bool = false, placeholders: Bool = true) -> [Finding] {
+        let t = plain(text, placeholders: placeholders)
         var out: [Finding] = []
         for v in versions(t) where !e.versions.contains(v) { out.append(Finding(field: field, token: v)) }
         let tokens = namesOnly
@@ -97,8 +113,12 @@ import MartyEngine
         return out
     }
 
+    /// The keys of a 2D item that are shown as text or numbers (MGParser.allowedKeys at the pin).
+    static let shownKeys: Set<String> = ["text", "label", "xl", "yl", "cells", "bars", "unit", "vals", "ptrs", "xr", "yr"]
+
     /// The text fields of an assembly (v1 or v2), an explainer or a follow-up patch, with their field names.
     static func fields(_ d: [String: Any]) -> [(field: String, text: String, namesOnly: Bool)] {
+        // (The engine fills placeholders in v2 assemblies and explainers; see `findings`.)
         var out: [(String, String, Bool)] = []
         func add(_ f: String, _ v: Any?, namesOnly: Bool = false) {
             if let s = v as? String, !s.isEmpty { out.append((f, s, namesOnly)) }
@@ -122,12 +142,26 @@ import MartyEngine
                 for (id, x) in map { add("\(prefix)part.\(id).name", (x as? [String: Any])?["name"], namesOnly: true) }
             }
         }
+        // Every value a 2D item shows (as text or as a number), by key; nested colours and positions are not shown.
+        func shown(_ f: String, _ v: Any?) {
+            switch v {
+            case let list as [Any]: for (n, x) in list.enumerated() { shown("\(f)[\(n)]", x) }
+            case let o as [String: Any]: for (k, x) in o where !["color", "at", "id", "k", "i"].contains(k) { shown("\(f).\(k)", x) }
+            default: add(f, v)
+            }
+        }
         func board(_ item: [String: Any], _ where_: String) {
             let id = item["id"] as? String ?? "?"
-            add("\(where_)\(id).text", item["text"]); add("\(where_)\(id).label", item["label"])
+            for key in shownKeys where key != "cells" { shown("\(where_)\(id).\(key)", item[key]) }
             for (r, row) in (item["cells"] as? [[Any]] ?? []).enumerated() {
                 for (c, cell) in row.enumerated() { add("\(where_)\(id).r\(r)c\(c)", cell) }
             }
+        }
+        // A one-key edit ("set" or a board "over" entry) is checked only when the key is shown.
+        func edit(_ id: String, _ key: String, _ value: Any?, _ where_: String) {
+            guard shownKeys.contains(key) else { return }
+            if key == "cells", let cells = value as? [[Any]] { board(["id": id, "cells": cells], where_) }
+            else { shown("\(where_)\(id).\(key)", value) }
         }
         add("title", d["title"])
         parts(d["parts"])
@@ -140,7 +174,12 @@ import MartyEngine
             parts(solid["parts"], prefix: "solid.")
             annotations(solid["annotations"])
         }
-        for item in (d["board"] as? [String: Any])?["items"] as? [[String: Any]] ?? [] { board(item, "board.") }
+        let boardDoc = d["board"] as? [String: Any] ?? [:]
+        add("board.title", boardDoc["title"])
+        for item in boardDoc["items"] as? [[String: Any]] ?? [] { board(item, "board.") }
+        for o in boardDoc["over"] as? [[String: Any]] ?? [] {
+            if let id = o["id"] as? String, let key = o["key"] as? String { edit(id, key, o["value"], "board.over.") }
+        }
         for (id, note) in d["notes"] as? [String: Any] ?? [:] {
             add("note.\(id).basis", (note as? [String: Any])?["basis"]); add("note.\(id).unchecked", (note as? [String: Any])?["unchecked"])
         }
@@ -148,11 +187,11 @@ import MartyEngine
             add("beat\(n + 1).say", b["say"]); add("beat\(n + 1).unchecked", b["unchecked"])
             for case let o as [String: Any] in b["ops"] as? [Any] ?? [] {
                 if let item = o["item"] as? [String: Any] { board(item, "beat\(n + 1).") }
-                if o["op"] as? String == "set", let id = o["id"] as? String {
-                    if let cells = o["value"] as? [[Any]] { board(["id": id, "cells": cells], "beat\(n + 1).") }
-                    else { add("beat\(n + 1).\(id).\(o["key"] as? String ?? "value")", o["value"]) }
+                if o["op"] as? String == "set", let id = o["id"] as? String, let key = o["key"] as? String {
+                    edit(id, key, o["value"], "beat\(n + 1).")
                 }
                 if o["op"] as? String == "title" { add("beat\(n + 1).title", o["title"]) }
+                if o["op"] as? String == "bind" { add("beat\(n + 1).control.label", (o["control"] as? [String: Any])?["label"]) }
             }
         }
         return out
@@ -161,9 +200,11 @@ import MartyEngine
     /// All findings of a document or patch, in field order, at most `limit`.
     public static func findings(_ document: Any, evidence: Evidence, limit: Int = 12) -> [Finding] {
         guard let d = document as? [String: Any] else { return [] }
+        // A v1 assembly shows "{...}" as typed text; v2 assemblies, explainers and patches of v2 documents fill it.
+        let filled = !(d["v"] as? Int == 1 && d["kind"] as? String == "assembly")
         var out: [Finding] = []
         for f in fields(d) {
-            for x in check(f.field, f.text, evidence, namesOnly: f.namesOnly) where !out.contains(x) { out.append(x) }
+            for x in check(f.field, f.text, evidence, namesOnly: f.namesOnly, placeholders: filled) where !out.contains(x) { out.append(x) }
             if out.count >= limit { break }
         }
         return Array(out.prefix(limit))

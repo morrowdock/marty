@@ -728,6 +728,50 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(model.prompts[2].user.contains("must come from the fact table"), model.prompts[2].user)
         XCTAssertEqual(MartyLoop.unsourcedSentences("It first flew in 2017. It gives 144 kgf.", sources: table.lines), ["It first flew in 2017"])
         XCTAssertEqual(MartyLoop.unsourcedSentences("It turns 1/6 of a turn.", sources: ["-0.16666666666666666"]), [])
+        // Every shown 2D field: bar values, axis labels, overrides, control labels; a set of a geometry key or a
+        // reference is not text.
+        let e0 = FactCheck.Evidence.build(table: table, question: "q", report: nil, model: nil)
+        let board: [String: Any] = ["kind": "explainer", "board": [
+            "items": [["id": "b", "k": "bars", "bars": [["label": "Arms", "value": 155, "color": "red"]], "unit": "kgf", "at": [1, 2], "w": 4, "h": 3],
+                      ["id": "ax", "k": "axes", "xl": "Year 2017", "yl": "kgf", "at": [1, 1], "w": 2, "h": 2]],
+            "over": [["id": "t1", "key": "label", "value": "Since 2016"]]],
+            "beats": [["say": "x", "ops": [["op": "set", "id": "v", "key": "len", "value": 5],
+                                            ["op": "set", "id": "h", "key": "target", "value": "body999"],
+                                            ["op": "set", "id": "v", "key": "label", "value": "Mk 7"],
+                                            ["op": "bind", "control": ["id": "s", "k": "slider", "param": "p", "min": 0, "max": 1, "step": 1, "label": "Gen 9 power"]]]]]]
+        XCTAssertEqual(Set(FactCheck.findings(board, evidence: e0).map(\.field)),
+                       ["board.b.bars[0].value", "board.ax.xl", "board.over.t1.label", "beat1.v.label", "beat1.control.label"])
+        // Versions need product context; braces are placeholders only where the engine fills them.
+        XCTAssertEqual(FactCheck.versions("We run the model 3 times and the series 5 cycle."), [])
+        XCTAssertEqual(FactCheck.versions("Model 3 is a car. The Model 3 car."), ["model 3"])
+        XCTAssertEqual(Set(FactCheck.versions("the v2 suit and the Mk IV")), ["v 2", "mk iv"])
+        let v1: [String: Any] = ["v": 1, "kind": "assembly", "title": "t", "steps": [["say": "Released in {2017}"]]]
+        XCTAssertEqual(FactCheck.findings(v1, evidence: e0).map(\.token), ["2017"])
+        let v2: [String: Any] = ["v": 2, "kind": "assembly", "title": "t", "steps": [["say": "It turns {pair.wheel.speed|abs|frac}."], ["say": "Released {2017}"]]]
+        XCTAssertEqual(FactCheck.findings(v2, evidence: e0).map(\.token), ["2017"], "only a fact name is a placeholder")
+        XCTAssertNil(FactCheck.fraction(1e20)); XCTAssertNil(FactCheck.fraction(1e-20))
+        XCTAssertEqual(MartyLoop.unsourcedSentences("It has more than 1e-20 parts.", sources: ["0.00000000000000000001"]).count, 1)
+    }
+
+    /// A solid follow-up patch whose text has an unsourced number is refused (fact.unsourced); an answer with an
+    /// unsourced year gets one rewrite (answer.unsourced); a refused answer may not reuse the rejected what-if numbers.
+    func testFactUnsourcedFollowUp() throws {
+        let plan = #"{"components": ["spurPair"], "primitives": []}"#
+        let good = #"{"document": \#(Self.spurReduction)}"#
+        let badPatch = #"{"patch": {"title": "A wheel with 999 teeth", "parts": {"pair": {"with": {"wheelTeeth": 72}}}}}"#
+        let patch = #"{"patch": {"parts": {"pair": {"with": {"wheelTeeth": 72}}}}}"#
+        var options = MartyLoop.Options()
+        options.followUp = "What if the wheel had 72 teeth?"
+        let model = ScriptedAdapter(replies: [plan, good, badPatch, patch, "It was first built in 1999.", "The wheel turns more slowly."])
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: options).run(question: "How does a gear reduction work?")
+        let f = try XCTUnwrap(r["followUp"] as? [String: Any])
+        XCTAssertEqual((f["attempts"] as? [[String: Any]])?.first?["reason"] as? String, "fact.unsourced.title")
+        XCTAssertEqual(f["changed"] as? Bool, true)
+        XCTAssertEqual((f["answerLint"] as? [String: Any])?["reason"] as? String, "answer.unsourced")
+        XCTAssertEqual(f["answer"] as? String, "The wheel turns more slowly.")
+        XCTAssertTrue(model.prompts[3].user.contains("must come from the fact table"), model.prompts[3].user)
     }
 
     func testReplyJSON() {

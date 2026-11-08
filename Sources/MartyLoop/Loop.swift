@@ -492,7 +492,7 @@ public final class MartyLoop {
                                                                patch: acceptedPatch.map { Self.compact($0) }, ratiosChanged: ratiosChanged,
                                                                refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAPatch,
                                                                movedForceArrows: moved, given: given, table: modelled ? factBlock : nil),
-                                 sources: evidence + [question, followUp], result: &result)
+                                 sources: evidence + (modelled ? [question, followUp] : []), result: &result)
         result["ok"] = answer != nil
         result["answer"] = answer.map { $0 as Any } ?? NSNull()
         result["answerSource"] = "model text written from the engine reports; its numbers are not checked"
@@ -594,7 +594,7 @@ extension MartyLoop {
                                                                patch: acceptedChange, ratiosChanged: ratiosChanged,
                                                                refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAChange,
                                                                movedForceArrows: moved, given: given, table: modelled ? factBlock : nil),
-                                 sources: evidence + [question, followUp], result: &result)
+                                 sources: evidence + (modelled ? [question, followUp] : []), result: &result)
         result["ok"] = answer != nil
         result["answer"] = answer.map { $0 as Any } ?? NSNull()
         result["answerSource"] = "model text written from the engine reports; its numbers are not checked"
@@ -638,7 +638,7 @@ extension MartyLoop {
             for (p, q) in [FactCheck.fraction(abs(v)), FactCheck.fraction(1 / abs(v))].compactMap({ $0 }) { nums.insert(String(p)); nums.insert(String(q)) }
         }
         let e = FactCheck.Evidence(numbers: nums, versions: Set(sources.flatMap(FactCheck.versions)))
-        return sentences(text).filter { !FactCheck.check("answer", $0, e).isEmpty }
+        return sentences(text).filter { !FactCheck.check("answer", $0, e, placeholders: false).isEmpty }
     }
 
     static let flightWords = #"(?i)\b(fly|flies|flying|flight|flown|hover|hovers|hovering|airborne|take ?off|takes off|soar|soars)\b"#
