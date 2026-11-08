@@ -202,19 +202,72 @@ final class MartyLoopTests: XCTestCase {
     /// arrow starts outside the body, and the compressor default fits.
     func testGuidePeopleAndCompressorPatterns() throws {
         let doc: [String: Any] = ["v": 2, "kind": "assembly", "title": "A worn unit", "units": "mm", "parts": [
-            ["id": "pilot", "use": "mannequin", "with": ["leftShoulder": 30, "rightShoulder": 30]],
+            ["id": "pilot", "use": "mannequin", "with": ["leftShoulder": 30, "rightShoulder": 50]],
             ["id": "jet", "name": "Arm unit (schematic)", "parent": "pilot.rightHand", "at": [-85, -62, 0],
              "shape": ["shaft": ["radius": 50, "length": 300, "z0": -80]]],
-            ["id": "pack", "name": "Back unit (schematic)", "parent": "pilot.back", "at": [0, 90, 0],
+            ["id": "pack", "name": "Back unit (schematic)", "parent": "pilot.back", "at": [0, 60, 0],
              "shape": ["shaft": ["radius": 60, "length": 300, "z0": -150]]],
             ["id": "comp", "use": "centrifugalCompressor", "with": ["diameter": 80], "at": [600, 0, 900]]],
             "annotations": ["arrows": [["id": "aW", "meaning": "force", "cause": "gravity",
                                          "from": ["part": "pilot.body", "offset": [0, -260, -400]],
-                                         "to": ["part": "pilot.body", "offset": [0, -260, -700]], "text": "Weight"]]],
-            "steps": [["say": "A schematic pilot wears two units.", "annotate": ["aW"]],
+                                         "to": ["part": "pilot.body", "offset": [0, -260, -700]], "text": "Weight"],
+                                        ["id": "aJet", "meaning": "force", "from": ["part": "jet", "offset": [0, 0, -120]],
+                                         "to": ["part": "jet", "offset": [0, 0, -400]], "text": "Thrust (schematic)"]]],
+            "steps": [["say": "A schematic pilot wears two units.", "annotate": ["aW", "aJet"]],
                       ["say": "The compressor wheel turns.", "highlight": ["comp.input"], "focus": ["comp.input"], "annotate": []]]]
         let r = try MartyEngine(outputRoot: nil).check(document: doc, ref: nil, components: [], strict: true)
         XCTAssertEqual(r["ok"] as? Bool, true, "\(r["reason"] ?? "") \(r["part"] ?? "")")
+    }
+
+    /// A question about how something flies needs thrust in "given": one more plan request when it is missing,
+    /// recorded in the receipt; other questions get none.
+    func testPlanAsksForThrustOnFlightQuestions() throws {
+        let noThrust = #"{"components": ["spurPair"], "primitives": [], "given": ["weight 30 kg (maker)"]}"#
+        let withThrust = #"{"components": ["spurPair"], "primitives": [], "given": ["thrust about 150 kgf (estimate)"]}"#
+        let doc = #"{"document": \#(Self.spurReduction)}"#
+        let model = ScriptedAdapter(replies: [noThrust, withThrust, doc])
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: .init()).run(question: "How does a jet suit fly?")
+        XCTAssertTrue(model.prompts[1].user.contains("has no thrust figure"), model.prompts[1].user)
+        let lint = try XCTUnwrap((r["plan"] as? [String: Any])?["lint"] as? [String: Any])
+        XCTAssertEqual(lint["reason"] as? String, "plan.given.thrust")
+        XCTAssertEqual(lint["fixed"] as? Bool, true)
+        XCTAssertTrue(model.prompts[2].user.contains("150 kgf"), "the author gets the fixed plan")
+        XCTAssertTrue(MartyLoop.asksHowItFlies("How does a helicopter hover?"))
+        XCTAssertFalse(MartyLoop.asksHowItFlies("How does a gear reduction work?"))
+        let other = ScriptedAdapter(replies: [noThrust, doc])
+        let out2 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out2) }
+        let r2 = try MartyLoop(model: other, out: out2, options: .init()).run(question: "How does a gear reduction work?")
+        XCTAssertNil((r2["plan"] as? [String: Any])?["lint"])
+        XCTAssertEqual(other.prompts.count, 2)
+    }
+
+    /// A follow-up answer that compares shares with no figure and no hedge gets one rewrite request.
+    func testAnswerComparativeLint() throws {
+        let src = [#"{"labels": [{"text": "Back unit", "unchecked": "maker: 100 kgf"}]}"#]
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("The back engine gives most of the lift. The arms steer.", sources: src),
+                       ["The back engine gives most of the lift"])
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("The back engine gives about a third of the lift.", sources: src), [])
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("In this schematic most of the lift comes from the arms.", sources: src), [])
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("The back unit gives 100 kgf, most of the lift.", sources: src), [])
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("The back unit gives 400 kgf, most of the lift.", sources: src).count, 1)
+        let plan = #"{"components": ["spurPair"], "primitives": []}"#
+        let good = #"{"document": \#(Self.spurReduction)}"#
+        let patch = #"{"patch": {"parts": {"pair": {"with": {"pinionTeeth": 12, "wheelTeeth": 72}}}}}"#
+        let model = ScriptedAdapter(replies: [plan, good, patch, "The wheel does most of the work now.", "The wheel now turns more slowly."])
+        var options = MartyLoop.Options()
+        options.followUp = "What if the wheel had more teeth?"
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: options).run(question: "How does a gear reduction work?")
+        let f = try XCTUnwrap(r["followUp"] as? [String: Any])
+        XCTAssertEqual(f["answer"] as? String, "The wheel now turns more slowly.")
+        let lint = try XCTUnwrap(f["answerLint"] as? [String: Any])
+        XCTAssertEqual(lint["reason"] as? String, "answer.comparative")
+        XCTAssertEqual(lint["fixed"] as? Bool, true)
+        XCTAssertTrue(model.prompts[4].user.contains("compare sizes or shares"))
     }
 
     func testReplyJSON() {

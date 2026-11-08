@@ -183,10 +183,21 @@ public final class MartyLoop {
             note(i, ["ok": false, "reason": text == nil ? "adapter" : "plan.json"])
             planAdapterFailed = text == nil
         }
+        // A question about how something flies needs its thrust against weight in "given": ask once more if it is missing.
+        var planLint: [String: Any]? = nil
+        if !planAdapterFailed, !plan.isEmpty, Self.asksHowItFlies(question), !Self.givenHasThrust(plan) {
+            let u = "Question: \(question)\n\nYour plan:\n\(Self.compact(plan))\n\n" + MartyPrompts.planThrustRepair
+            let (text, i) = ask("plan", attempt: 2, system: planSystem, user: u)
+            let fixed = text.flatMap(ReplyJSON.object)
+            note(i, ["ok": fixed != nil, "reason": "plan.given.thrust"])
+            if let fixed { plan = fixed }
+            planLint = ["reason": "plan.given.thrust", "fixed": Self.givenHasThrust(plan)]
+        }
         let wanted = ((plan["components"] as? [String] ?? []) + (plan["primitives"] as? [String] ?? []))
         var seen = Set<String>()
         let chosen = Array(wanted.filter { known.contains($0) && seen.insert($0).inserted }.prefix(Self.maxPlanIds))
         receipt["plan"] = ["reply": plan, "chosen": chosen, "dropped": wanted.filter { !chosen.contains($0) }]
+            .merging(planLint.map { ["lint": $0] } ?? [:]) { a, _ in a }
 
         // 2. Author with the chosen parts explained (component entries without their full definitions).
         var parts: [String] = []
@@ -376,14 +387,15 @@ public final class MartyLoop {
                                           all: !Set(p.keys).isDisjoint(with: ["params", "constraints", "joints"]))
             result["forceArrowsMoved"] = moved
         }
-        let (answer, i) = ask("answer", attempt: 0, system: modelled ? MartyPrompts.answerSystem() : MartyPrompts.answerRefusedSystem(),
-                              user: MartyPrompts.answerUser(followUp: followUp, before: before, after: after.map { Self.compact(Self.summary($0)) },
-                                                            patch: acceptedPatch.map { Self.compact($0) }, ratiosChanged: ratiosChanged,
-                                                            refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAPatch,
-                                                            movedForceArrows: moved))
-        note(i, ["ok": answer != nil])
+        let answer = writeAnswer(system: modelled ? MartyPrompts.answerSystem() : MartyPrompts.answerRefusedSystem(),
+                                 user: MartyPrompts.answerUser(followUp: followUp, before: before, after: after.map { Self.compact(Self.summary($0)) },
+                                                               patch: acceptedPatch.map { Self.compact($0) }, ratiosChanged: ratiosChanged,
+                                                               refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAPatch,
+                                                               movedForceArrows: moved),
+                                 sources: [docText, before] + [after.map { Self.compact($0) }, acceptedPatch.map { Self.compact($0) }].compactMap { $0 },
+                                 result: &result)
         result["ok"] = answer != nil
-        result["answer"] = answer.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) as Any } ?? NSNull()
+        result["answer"] = answer.map { $0 as Any } ?? NSNull()
         result["answerSource"] = "model text written from the engine reports; its numbers are not checked"
         return result
     }
@@ -465,16 +477,67 @@ extension MartyLoop {
         let marty: Set<String> = ["json", "followup.textOnly", "followup.kind", "adapter"]
         let engineSawAChange = attempts.contains { !marty.contains($0["reason"] as? String ?? "") }
         let shownReason = engineSawAChange ? (attempts.last { !marty.contains($0["reason"] as? String ?? "") }?["reason"] as? String ?? lastReason) : lastReason
-        let (answer, i) = ask("answer", attempt: 0, system: modelled ? MartyPrompts.answerSystem() : MartyPrompts.answerRefusedSystem(),
-                              user: MartyPrompts.answerUser(followUp: followUp, before: before, after: after.map { Self.compact(Self.summary($0)) },
-                                                            patch: acceptedChange, ratiosChanged: ratiosChanged,
-                                                            refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAChange,
-                                                            movedForceArrows: moved))
-        note(i, ["ok": answer != nil])
+        let answer = writeAnswer(system: modelled ? MartyPrompts.answerSystem() : MartyPrompts.answerRefusedSystem(),
+                                 user: MartyPrompts.answerUser(followUp: followUp, before: before, after: after.map { Self.compact(Self.summary($0)) },
+                                                               patch: acceptedChange, ratiosChanged: ratiosChanged,
+                                                               refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAChange,
+                                                               movedForceArrows: moved),
+                                 sources: [docText, before] + [after.map { Self.compact($0) }, acceptedChange].compactMap { $0 },
+                                 result: &result)
         result["ok"] = answer != nil
-        result["answer"] = answer.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) as Any } ?? NSNull()
+        result["answer"] = answer.map { $0 as Any } ?? NSNull()
         result["answerSource"] = "model text written from the engine reports; its numbers are not checked"
         return result
+    }
+
+    /// The follow-up answer. A sentence that compares sizes or shares ("most", "the majority", "all of the") with no
+    /// hedge and no number from the sources (the document with its given figures, the engine reports, the change) gets
+    /// one rewrite request; `answerLint` records it and whether the rewrite cleared it.
+    func writeAnswer(system: String, user: String, sources: [String], result: inout [String: Any]) -> String? {
+        let (first, i) = ask("answer", attempt: 0, system: system, user: user)
+        note(i, ["ok": first != nil])
+        guard var answer = first?.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+        let flagged = Self.unsupportedComparatives(answer, sources: sources)
+        guard !flagged.isEmpty else { return answer }
+        var lint: [String: Any] = ["reason": "answer.comparative", "sentences": flagged, "fixed": false]
+        let (second, j) = ask("answer", attempt: 1, system: system, user: user + "\n\nYour previous answer:\n\(answer)\n\n"
+            + MartyPrompts.answerComparativeRepair + "\n" + flagged.joined(separator: "\n"))
+        note(j, ["ok": second != nil, "reason": "answer.comparative"])
+        if let s = second?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty {
+            answer = s
+            lint["fixed"] = Self.unsupportedComparatives(s, sources: sources).isEmpty
+        }
+        result["answerLint"] = lint
+        return answer
+    }
+
+    static let flightWords = #"(?i)\b(fly|flies|flying|flight|fl[oy]wn|lift|lifts|lifting|hover|hovers|hovering|airborne|take ?off|takes off)\b"#
+    static func asksHowItFlies(_ question: String) -> Bool { question.range(of: flightWords, options: .regularExpression) != nil }
+
+    /// A "given" entry that names thrust and has a number.
+    static func givenHasThrust(_ plan: [String: Any]) -> Bool {
+        let given = (plan["given"] as? [Any] ?? []).map { "\($0)" }
+        return given.contains { $0.lowercased().contains("thrust") && $0.rangeOfCharacter(from: .decimalDigits) != nil }
+    }
+
+    static let comparativeWords = #"(?i)\b(most|mostly|majority|all of the|the bulk|nearly all|almost all|mainly|largely|the lion's share)\b"#
+    static let hedgeWords = #"(?i)\b(about|roughly|around|approximately|estimated?|schematic|not checked|may|might|perhaps|likely)\b"#
+
+    /// The sentences of `text` with a comparative word, no hedge and no number that also appears in the sources.
+    static func unsupportedComparatives(_ text: String, sources: [String]) -> [String] {
+        let source = sources.joined(separator: "\n")
+        func numbers(_ s: String) -> [String] {
+            guard let re = try? NSRegularExpression(pattern: #"\d+(?:[.,]\d+)*"#) else { return [] }
+            return re.matches(in: s, range: NSRange(s.startIndex..., in: s)).compactMap { Range($0.range, in: s).map { String(s[$0]) } }
+        }
+        let sourceNumbers = Set(numbers(source).map { $0.replacingOccurrences(of: ",", with: "") })
+        let sentences = text.split(omittingEmptySubsequences: true) { ".!?\n".contains($0) }
+            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        return sentences.filter { s in
+            guard s.range(of: comparativeWords, options: .regularExpression) != nil,
+                  s.range(of: hedgeWords, options: .regularExpression) == nil else { return false }
+            return !numbers(s).contains { sourceNumbers.contains($0.replacingOccurrences(of: ",", with: "")) }
+        }
     }
 
     /// What a follow-up may change in an explainer, without its words: the solid (without label and arrow text), the
