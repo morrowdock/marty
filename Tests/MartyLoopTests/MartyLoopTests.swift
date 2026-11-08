@@ -30,7 +30,7 @@ final class MartyLoopTests: XCTestCase {
         let author = MartyPrompts.authorSystem(parts: "", example: MartyExamples.formatExample).utf8.count
         print("prompt bytes: plan \(plan), author without parts \(author)")
         XCTAssertLessThan(plan, 10000)
-        XCTAssertLessThan(author, 10500)
+        XCTAssertLessThan(author, 12000)
     }
 
     /// The format example shows the explainer tools (section, ghost, a gravity force, an unchecked given number) and the
@@ -55,7 +55,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual((r["steps"] as? [String])?.count, 2)
         let plan = MartyPrompts.authorSystem(parts: "", example: MartyExamples.formatExample, explainer: MartyExamples.explainerExample).utf8.count
         print("prompt bytes: author with the explainer form, without parts \(plan)")
-        XCTAssertLessThan(plan, 13000)
+        XCTAssertLessThan(plan, 14500)
     }
 
     /// The plan chooses the explainer form: the author prompt gets the explainer section; the accepted explainer makes a
@@ -118,7 +118,7 @@ final class MartyLoopTests: XCTestCase {
         // The answer gets the changed values, before and after.
         XCTAssertTrue(mTable.prompts[3].user.contains("3000") && mTable.prompts[3].user.contains("3500"), mTable.prompts[3].user)
         // The answer gets the given figures of the accepted explainer, with their source.
-        XCTAssertTrue(mTable.prompts[3].user.contains("- Rated rpm 3500 — maker's data sheet (given)"), mTable.prompts[3].user)
+        XCTAssertTrue(mTable.prompts[3].user.contains("- Rated rpm 3500 — maker's data sheet, 2024, claimed (given)"), mTable.prompts[3].user)
         let summary = MartyLoop.changeSummary(from: ["board": ["params": ["angle": 10]]], to: ["board": ["params": ["angle": 30]]])
         XCTAssertTrue(summary.contains("10") && summary.contains("30") && summary.contains("board"), summary)
         // A gravity arrow is checked again by the engine: no schematic-direction line.
@@ -452,6 +452,23 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertNotEqual((r5["attempts"] as? [[String: Any]])?[1]["reason"] as? String, "marty.lint", "the engine refused attempt 2")
         XCTAssertEqual(r5["lintAttempt"] as? Int, 2)
         XCTAssertEqual((r5["final"] as? [String: Any])?["title"] as? String, "Lint B")
+        // Given figures: no merged range (a span of years is fine); a source needs a year unless "reported" or an
+        // "assumed example".
+        XCTAssertTrue(MartyLoop.hasMergedRange("144–155 kgf"))
+        XCTAssertTrue(MartyLoop.hasMergedRange("144 to 155 kgf"))
+        XCTAssertFalse(MartyLoop.hasMergedRange("classic suit (2020–2022)"))
+        XCTAssertFalse(MartyLoop.hasMergedRange("144 kgf"))
+        func given(_ text: String, _ source: String) -> [String: Any] {
+            var g = doc(labels: 1, arrows: 0, say: "The box.")
+            g["annotations"] = ["labels": [["id": "l0", "at": ["world": [0, 0, 30]], "text": text, "unchecked": source]]]
+            g["steps"] = [["say": "The box.", "annotate": ["l0"]]]
+            return g
+        }
+        XCTAssertEqual(MartyLoop.documentLint(given("Thrust 144 kgf", "maker, 2019, claimed")), [])
+        XCTAssertEqual(MartyLoop.documentLint(given("Thrust 144 kgf", "reported")), [])
+        XCTAssertEqual(MartyLoop.documentLint(given("Mass 100 kg", "assumed example")), [])
+        XCTAssertEqual(MartyLoop.documentLint(given("Thrust 144 kgf", "maker")).count, 1)
+        XCTAssertTrue(MartyLoop.documentLint(given("Thrust 144–155 kgf", "maker, 2019")).first?.contains("merges two figures") == true)
         // A repeated id shows once.
         var dup = doc(labels: 6, arrows: 0, say: "The box.")
         dup["steps"] = [["say": "The box.", "annotate": ["l0", "l0", "l0", "l0", "l0", "l0", "l1", "l2", "l3", "l4", "l5"]]]
@@ -520,7 +537,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual((receipt["engine"] as? [String: Any])?["revision"] as? String, MartyPin.engineRevision)
         let ctx = try XCTUnwrap(receipt["contextBytes"] as? [String: Int])
         XCTAssertLessThan(try XCTUnwrap(ctx["plan"]), 10000, "plan context grew: \(ctx)")
-        XCTAssertLessThan(try XCTUnwrap(ctx["author"]), 12000, "author context grew: \(ctx)")
+        XCTAssertLessThan(try XCTUnwrap(ctx["author"]), 13000, "author context grew: \(ctx)")
     }
 
     func testLoopStopsAfterTheRepairLimit() throws {

@@ -32,8 +32,12 @@ public enum MartyPrompts {
         what the model does not show. When the subject has a well-known headline figure (thrust against weight, power, \
         top speed, range, capacity), name it in "given" with its source. When the question asks how a vehicle, aircraft \
         or flying device flies, lifts or hovers, "given" MUST hold its total thrust (kgf or N) and the weight it lifts. \
-        Give only numbers you know. Name a source only when you are sure it gave that exact number; otherwise write \
-        "reported" and name no source. A number you are not sure of is "about ... (reported)", or left out.
+        Give only numbers you know, each with its own source and year ("<number>, <source> <year>, claimed" for a \
+        maker's or owner's figure; "measured" only when tested independently). Never merge two reports into one range, \
+        and never credit a number to a source that did not publish it: if you are not sure which source gave it, write \
+        "reported" and name no source ("about ... (reported)" when unsure of the number). A number with no source (an \
+        assumed mass) is left out or marked "assumed example" with its breakdown, never as reported. For a named \
+        product, say which version and years the model shows (designs change).
 
         Reply with ONE JSON object only, no prose and no code fences:
         {"inScope": true, "subject": "<5-10 words>", "form": "solid", \
@@ -129,9 +133,17 @@ public enum MartyPrompts {
           both ends on that unit so it turns with it; give them no text and name them with one label.
           Start a force arrow outside the body it acts on (beside or below it), never inside it. Steering: pose the
           arms unequally in the mannequin's "with" so they visibly tilt, and put "schematic" in the arrow text.
-        - Show each given figure from the plan as an unchecked label (or a noted table row) with its source as the plan
-          has it ("reported" when it names none). A share or comparison (most, all of, more than) in a say or label
-          needs a given figure or a {fact}, or a hedge (about, in this schematic).
+        - Show each given figure from the plan as an unchecked label (or a noted table row) with its own source and year
+          as the plan has it ("reported" when it names none, "claimed" for a maker's figure, "assumed example" for an
+          assumption; never a merged range). A share or comparison (most, all of, more than) in a say or label needs a
+          given figure or a {fact}, or a hedge (about, in this schematic); a load share is quoted with its source, never
+          invented. Never derive a performance figure from this simple model (for example from air density).
+        - Name the product version and years the model shows (title or first step). An inside whose real parts are not
+          public is labelled as an example on screen: "<kind> (schematic example, not confirmed <maker> hardware)".
+        - Physics words: a hover is a balance (the upward parts of the thrusts balance the weight of person, device and
+          fuel, and the side forces and turning moments balance), never "thrust equals weight"; fuel burns with the
+          oxygen in the compressed air; thrust is the reaction to the gas accelerated out of the nozzle. Steering: name
+          the part that really moves (the limb or mount a unit is fixed to).
         - If the engine cannot show part of the subject, build the best schematic and say so in the title or a step
           (for example "schematic: chain not modelled"). Never present an unchecked fake as real.
         """
@@ -327,7 +339,9 @@ public enum MartyPrompts {
         If the message lists force arrows that the change moved, say that the force direction shown there is \
         schematic; say nothing of that kind otherwise (the engine checks a gravity arrow). A claim about sizes, shares \
         or comparisons (most, the majority, all of, more than) must come from a given figure listed below (say its \
-        source) or an engine number; otherwise hedge it (about, in this schematic) or leave it out. Reply with the answer text only.
+        source) or an engine number; otherwise hedge it (about, in this schematic) or leave it out. Derive no performance \
+        figure from the simple model, invent no load share, and keep the physics words of the lesson (a hover is a \
+        balance of forces and turning moments). Reply with the answer text only.
         """
     }
 

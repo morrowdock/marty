@@ -716,6 +716,31 @@ extension MartyLoop {
                 out.append("\(word) \(n + 1) shows \(count) texts (labels, dimensions and arrows with text); at most \(maxTextsPerStep). An arrow without \"text\" does not count.")
             }
         }
+        // Given figures: no merged range (a span of years is fine), and a source with a year unless it is
+        // "reported" or an "assumed example".
+        var noted: [(String, String, String)] = []   // (where, shown text, source)
+        for key in ["labels", "arrows"] {
+            for a in ann[key] as? [[String: Any]] ?? [] {
+                if let u = a["unchecked"] as? String { noted.append(("Annotation \(a["id"] as? String ?? "?")", a["text"] as? String ?? "", u)) }
+            }
+        }
+        // Noted table rows with a typed number (a {fact} cell is the engine's, not a given figure).
+        for f in givenFigures(d) where f.contains("(given)") {
+            let parts = f.components(separatedBy: " — ")
+            let typed = parts[0].replacingOccurrences(of: #"\{[^{}]*\}"#, with: "", options: .regularExpression)
+            if parts.count == 2, typed.rangeOfCharacter(from: .decimalDigits) != nil {
+                noted.append(("Table row \"\(parts[0])\"", parts[0], parts[1]))
+            }
+        }
+        for (whereText, shown, source) in noted {
+            if hasMergedRange(shown) || hasMergedRange(source) {
+                out.append("\(whereText) merges two figures into one range: give each figure with its own source and year.")
+            }
+            if source.range(of: #"(?i)\b(reported|assumed example|estimate)\b"#, options: .regularExpression) == nil,
+               source.range(of: #"\b(1[89]|20)\d\d\b"#, options: .regularExpression) == nil {
+                out.append("\(whereText) names a source with no year (\"\(source)\"): add the year, or write \"reported\".")
+            }
+        }
         let evidence = givenFigures(d)
         let says = steps.enumerated().compactMap { n, s in (s["say"] as? String).map { ("\(word) \(n + 1)", $0) } }
             + texts.sorted { $0.key < $1.key }.map { ("Annotation \($0.key)", $0.value) }
@@ -725,6 +750,19 @@ extension MartyLoop {
             }
         }
         return Array(out.prefix(12))
+    }
+
+    /// A number range such as "144-155" or "144 to 155" (a span of years such as "2020-2022" is not one).
+    static func hasMergedRange(_ text: String) -> Bool {
+        guard let re = try? NSRegularExpression(pattern: #"(\d[\d.,]*)\s*(?:–|—|-|to)\s*(\d[\d.,]*)"#) else { return false }
+        let ns = text as NSString
+        for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            let a = ns.substring(with: m.range(at: 1)), b = ns.substring(with: m.range(at: 2))
+            let year = #"^(1[89]|20)\d\d$"#
+            if a.range(of: year, options: .regularExpression) != nil, b.range(of: year, options: .regularExpression) != nil { continue }
+            return true
+        }
+        return false
     }
 
     /// What a follow-up may change in an explainer, without its words: the solid (without label and arrow text), the
@@ -906,7 +944,7 @@ extension MartyLoop {
 /// Small accepted documents used as format examples in prompts. Tests check each one with the engine.
 /// The example is about no bench subject (no gears, cranks or blades), so it shows the format without giving away an answer.
 public enum MartyExamples {
-    public static let formatExample = #"{"v":2,"kind":"assembly","title":"A shaft held in two bearings","units":"mm","parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"labels":[{"id":"lShaft","at":{"part":"shaft.input","offset":[0,0,60]},"text":"Shaft"},{"id":"lRated","at":{"world":[0,-70,20]},"text":"Rated 3000 rpm","unchecked":"maker's figure"}],"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-20]},"to":{"part":"base.base","offset":[0,0,-60]},"text":"Weight"}]},"steps":[{"say":"Two bearings hold a shaft in line on a base.","camera":"hero","annotate":["lShaft","lRated","aW"]},{"say":"Input: the shaft makes {shaft.input.speed} turn for each input turn.","highlight":["shaft.input"],"spin":1,"check":[{"value":"shaft.input.speed","eq":1}],"annotate":["lShaft"]},{"say":"Cut open: the lower bearing rings the shaft.","section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"highlight":["shaft.lowerBearing"],"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]},{"say":"Seen through the base.","ghost":["base.base"],"annotate":["aW"]}]}"#
+    public static let formatExample = #"{"v":2,"kind":"assembly","title":"A shaft held in two bearings","units":"mm","parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"labels":[{"id":"lShaft","at":{"part":"shaft.input","offset":[0,0,60]},"text":"Shaft"},{"id":"lRated","at":{"world":[0,-70,20]},"text":"Rated 3000 rpm","unchecked":"assumed example"}],"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-20]},"to":{"part":"base.base","offset":[0,0,-60]},"text":"Weight"}]},"steps":[{"say":"Two bearings hold a shaft in line on a base.","camera":"hero","annotate":["lShaft","lRated","aW"]},{"say":"Input: the shaft makes {shaft.input.speed} turn for each input turn.","highlight":["shaft.input"],"spin":1,"check":[{"value":"shaft.input.speed","eq":1}],"annotate":["lShaft"]},{"say":"Cut open: the lower bearing rings the shaft.","section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"highlight":["shaft.lowerBearing"],"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]},{"say":"Seen through the base.","ghost":["base.base"],"annotate":["aW"]}]}"#
     /// A small explainer: the same shaft with a table of one given number (with its source) and one engine fact.
-    public static let explainerExample = #"{"v":1,"kind":"explainer","title":"A shaft held in two bearings","primary":"solid","notes":{"t":{"basis":"maker's data sheet"}},"board":{"v":1,"items":[{"id":"cap","k":"text","at":[6,7],"text":"Key figures"}]},"solid":{"v":2,"parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-20]},"to":{"part":"base.base","offset":[0,0,-60]},"text":"Weight"}]}},"beats":[{"say":"Two bearings hold a shaft on a base; the table gives its rated speed.","highlight":["t.r1","shaft.shaft"],"ops":[{"op":"add","item":{"id":"t","k":"table","at":[6,4],"header":true,"cells":[["Item","Value"],["Rated rpm",3000],["Turns/input","{shaft.input.speed}"]]}}],"view":{"annotate":["aW"]}},{"say":"Cut open: the lower bearing rings the shaft.","highlight":["shaft.lowerBearing"],"view":{"section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]}}]}"#
+    public static let explainerExample = #"{"v":1,"kind":"explainer","title":"A shaft held in two bearings","primary":"solid","notes":{"t":{"basis":"maker's data sheet, 2024, claimed"}},"board":{"v":1,"items":[{"id":"cap","k":"text","at":[6,7],"text":"Key figures"}]},"solid":{"v":2,"parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-20]},"to":{"part":"base.base","offset":[0,0,-60]},"text":"Weight"}]}},"beats":[{"say":"Two bearings hold a shaft on a base; the table gives its rated speed.","highlight":["t.r1","shaft.shaft"],"ops":[{"op":"add","item":{"id":"t","k":"table","at":[6,4],"header":true,"cells":[["Item","Value"],["Rated rpm",3000],["Turns/input","{shaft.input.speed}"]]}}],"view":{"annotate":["aW"]}},{"say":"Cut open: the lower bearing rings the shaft.","highlight":["shaft.lowerBearing"],"view":{"section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]}}]}"#
 }

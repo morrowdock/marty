@@ -18,10 +18,14 @@ the MCP server uses), so a run needs no MCP client.
    top speed, range, capacity) goes in `given` with its source. When the
    question asks how a vehicle, aircraft or flying device flies, lifts or
    hovers, `given` must hold its total thrust (kgf or N) and the weight it
-   lifts. The model gives only numbers it knows. It names a source only when it
-   is sure that source gave that exact number; otherwise it writes "reported"
-   and names no source, and a number it is not sure of is "about ...
-   (reported)" or left out. When a flight question (a flight word such as fly or hover, or
+   lifts. The model gives only numbers it knows, each with its own source and
+   year ("claimed" for a maker's or owner's figure, "measured" only when tested
+   independently), never two reports merged into one range and never a number
+   credited to a source that did not publish it. If it is not sure which source
+   gave a number, it writes "reported" and names no source ("about ...
+   (reported)" when unsure of the number). A number with no source (an assumed
+   mass) is left out or marked "assumed example" with its breakdown. For a named
+   product it says which version and years the model shows. When a flight question (a flight word such as fly or hover, or
    lift with a flight context such as jet, drone or wing; "a hydraulic lift" is
    not one) gets a plan with no thrust entry, Marty asks once more (`plan.lint`,
    reason `plan.given.thrust`, with `fixed`). Only the reply's `given` is taken,
@@ -53,8 +57,17 @@ the MCP server uses), so a run needs no MCP client.
    that start outside the body, a steering pose with the arms unequal and
    "schematic" in the text, each given figure shown with its source as the plan
    has it ("reported" when it names none), and no share or comparison without a
-   given figure, a `{fact}` or a hedge. The engine has no per-step pose at the
-   pin, so a pose holds for every step. Each label or arrow is
+   given figure, a `{fact}` or a hedge. The same general honesty rules apply to
+   every subject: a load share is quoted with its source, never invented; no
+   performance figure is derived from the simple model; the product version and
+   years are named; an inside whose real parts are not public is labelled on
+   screen as a schematic example, not confirmed hardware; the physics words are
+   exact (a hover balances the upward parts of the thrusts against the weight,
+   and the side forces and turning moments; fuel burns with the oxygen in the
+   compressed air; thrust is the reaction to the gas accelerated out of the
+   nozzle); and the part that really moves is named. The engine has no per-step
+   pose at the pin, so a pose holds for every step. The prompts hold no
+   subject-specific facts. Each label or arrow is
    defined once, and every defined id is in some step's `annotate` list (strict
    refuses an unlisted one, `annotation.unused`). In an explainer the table is
    added by a beat command in the first beat that needs it, and a later beat may
@@ -71,7 +84,10 @@ the MCP server uses), so a run needs no MCP client.
    does not count), and a sentence in a say or an annotation text that compares
    sizes or shares (most, all of, more than) with no hedge, no `{fact}`
    placeholder and no given figure (each listed id counts once, as the engine
-   shows it). A lint problem asks for one repair at most (attempt reason
+   shows it), and a given figure (an unchecked label or arrow, or a noted table
+   row with a typed number) that merges two figures into one range (a span of
+   years is fine) or names a source with no year (unless "reported" or "assumed
+   example"). A lint problem asks for one repair at most (attempt reason
    `marty.lint`, `engineOk` true), when one is left. The engine-accepted
    document with the fewest findings is kept (a later one wins a tie), and it
    stands, with `lint` and `lintAttempt` in the receipt, when no attempt is
@@ -189,7 +205,7 @@ adapter.
 
 The receipt records `contextBytes` for the plan and author prompts, and the
 size and SHA-256 of every prompt. Tests fail when the plan prompt grows over
-10,000 bytes or the author prompt over 12,000 bytes. For comparison, the
+10,000 bytes or the author prompt over 13,000 bytes. For comparison, the
 v1 eval harness sent about 25,600 bytes of engine docs in every call.
 
 ## Run receipt (`marty.run-receipt/v1`)
