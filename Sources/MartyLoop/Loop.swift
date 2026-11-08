@@ -653,8 +653,14 @@ extension MartyLoop {
                 if let u = a["unchecked"] as? String, let t = a["text"] as? String { out.append("\(t) — \(u) (not checked)") }
             }
         }
-        // Noted tables, replayed through the beats: the first version of each, then each "set" of its cells,
-        // marked with the beat it shows from.
+        for r in tableRows(d) { out.append(r.row + " — " + r.source + " (" + r.tier + ")" + r.from) }
+        return Array(out.prefix(12))
+    }
+
+    /// The rows of noted explainer tables, replayed through the beats: the first version of each table, then each
+    /// "set" of its cells (marked with the beat it shows from), after any header change. `tier` is "given" (a basis
+    /// note) or "not checked" (an unchecked note).
+    static func tableRows(_ d: [String: Any]) -> [(row: String, source: String, tier: String, from: String)] {
         let notes = d["notes"] as? [String: Any] ?? [:]
         var versions: [(id: String, beat: Int?, header: Bool, cells: [[Any]])] = []
         var header: [String: Bool] = [:]
@@ -677,16 +683,18 @@ extension MartyLoop {
                 }
             }
         }
+        var out: [(row: String, source: String, tier: String, from: String)] = []
         var first = Set<String>()
         for v in versions {
             guard let note = notes[v.id] as? [String: Any] else { continue }
-            let source = (note["basis"] as? String).map { "\($0) (given)" } ?? (note["unchecked"] as? String).map { "\($0) (not checked)" } ?? ""
+            let basis = note["basis"] as? String, unchecked = note["unchecked"] as? String
+            guard let source = basis ?? unchecked else { continue }
             let from = first.insert(v.id).inserted ? "" : " (from beat \(v.beat.map(String.init) ?? "?"))"
             for row in v.cells.dropFirst(v.header ? 1 : 0) {
-                out.append(row.map { "\($0)" }.joined(separator: " ") + " — " + source + from)
+                out.append((row.map { "\($0)" }.joined(separator: " "), source, basis != nil ? "given" : "not checked", from))
             }
         }
-        return Array(out.prefix(12))
+        return out
     }
 
     static let maxTextsPerStep = 5
@@ -724,13 +732,10 @@ extension MartyLoop {
                 if let u = a["unchecked"] as? String { noted.append(("Annotation \(a["id"] as? String ?? "?")", a["text"] as? String ?? "", u)) }
             }
         }
-        // Noted table rows with a typed number (a {fact} cell is the engine's, not a given figure).
-        for f in givenFigures(d) where f.contains("(given)") {
-            let parts = f.components(separatedBy: " — ")
-            let typed = parts[0].replacingOccurrences(of: #"\{[^{}]*\}"#, with: "", options: .regularExpression)
-            if parts.count == 2, typed.rangeOfCharacter(from: .decimalDigits) != nil {
-                noted.append(("Table row \"\(parts[0])\"", parts[0], parts[1]))
-            }
+        // Noted table rows (basis or unchecked note) with a typed number (a {fact} cell is the engine's).
+        for r in tableRows(d) {
+            let typed = r.row.replacingOccurrences(of: #"\{[^{}]*\}"#, with: "", options: .regularExpression)
+            if typed.rangeOfCharacter(from: .decimalDigits) != nil { noted.append(("Table row \"\(r.row)\"", r.row, r.source)) }
         }
         for (whereText, shown, source) in noted {
             if hasMergedRange(shown) || hasMergedRange(source) {
@@ -754,9 +759,13 @@ extension MartyLoop {
 
     /// A number range such as "144-155" or "144 to 155" (a span of years such as "2020-2022" is not one).
     static func hasMergedRange(_ text: String) -> Bool {
-        guard let re = try? NSRegularExpression(pattern: #"(\d[\d.,]*)\s*(?:–|—|-|to)\s*(\d[\d.,]*)"#) else { return false }
-        let ns = text as NSString
-        for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+        // Dates (2024-05-01, 2024-05) are not ranges; a number glued to letters or a dash (A320-200, Mk-4) is an
+        // identifier; a trailing period is not a decimal point.
+        let plain = text.replacingOccurrences(of: #"\b\d{4}-\d{2}(?:-\d{2})?\b"#, with: " ", options: .regularExpression)
+        guard let re = try? NSRegularExpression(pattern: #"(?<![\p{L}\d.,/-])(\d+(?:[.,]\d+)*)\s*(?:–|—|-|\bto\b)\s*(\d+(?:[.,]\d+)*)(?![\d/-])"#)
+        else { return false }
+        let ns = plain as NSString
+        for m in re.matches(in: plain, range: NSRange(location: 0, length: ns.length)) {
             let a = ns.substring(with: m.range(at: 1)), b = ns.substring(with: m.range(at: 2))
             let year = #"^(1[89]|20)\d\d$"#
             if a.range(of: year, options: .regularExpression) != nil, b.range(of: year, options: .regularExpression) != nil { continue }

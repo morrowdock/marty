@@ -85,7 +85,7 @@ the MCP server uses), so a run needs no MCP client.
    sizes or shares (most, all of, more than) with no hedge, no `{fact}`
    placeholder and no given figure (each listed id counts once, as the engine
    shows it), and a given figure (an unchecked label or arrow, or a noted table
-   row with a typed number) that merges two figures into one range (a span of
+   row with a typed number, with a basis or an unchecked note) that merges two figures into one range (a span of
    years is fine) or names a source with no year (unless "reported" or "assumed
    example"). A lint problem asks for one repair at most (attempt reason
    `marty.lint`, `engineOk` true), when one is left. The engine-accepted
@@ -205,7 +205,8 @@ adapter.
 
 The receipt records `contextBytes` for the plan and author prompts, and the
 size and SHA-256 of every prompt. Tests fail when the plan prompt grows over
-10,000 bytes or the author prompt over 13,000 bytes. For comparison, the
+10,000 bytes or the author prompt over 13,000 bytes (the author prompt without component
+entries: 12,000 bytes, and 14,500 bytes with the explainer form). For comparison, the
 v1 eval harness sent about 25,600 bytes of engine docs in every call.
 
 ## Run receipt (`marty.run-receipt/v1`)

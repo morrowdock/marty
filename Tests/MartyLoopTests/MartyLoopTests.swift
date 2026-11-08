@@ -458,6 +458,20 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(MartyLoop.hasMergedRange("144 to 155 kgf"))
         XCTAssertFalse(MartyLoop.hasMergedRange("classic suit (2020–2022)"))
         XCTAssertFalse(MartyLoop.hasMergedRange("144 kgf"))
+        XCTAssertFalse(MartyLoop.hasMergedRange("Airbus A320-200 seats"))
+        XCTAssertFalse(MartyLoop.hasMergedRange("data sheet, 2024-05-01"))
+        XCTAssertFalse(MartyLoop.hasMergedRange("data sheet, 2024-05"))
+        XCTAssertFalse(MartyLoop.hasMergedRange("classic suit 2020–2022."))
+        XCTAssertFalse(MartyLoop.hasMergedRange("a 2-stroke engine"))
+        XCTAssertTrue(MartyLoop.hasMergedRange("144-155kgf"))
+        XCTAssertTrue(MartyLoop.hasMergedRange("1.5–2.5 kN."))
+        // Unchecked table notes are checked too.
+        let table: [String: Any] = ["kind": "explainer", "notes": ["t": ["unchecked": "maker"]], "solid": [String: Any](),
+            "board": ["items": [["id": "t", "k": "table", "header": true, "cells": [["Item", "Value"], ["Thrust", "144–155 kgf"], ["Turns", "{a.b}"]]]]],
+            "beats": [["say": "A table."]]]
+        let tableLint = MartyLoop.documentLint(table)
+        XCTAssertEqual(tableLint.count, 2, "\(tableLint)")
+        XCTAssertTrue(tableLint.contains { $0.contains("merges two figures") })
         func given(_ text: String, _ source: String) -> [String: Any] {
             var g = doc(labels: 1, arrows: 0, say: "The box.")
             g["annotations"] = ["labels": [["id": "l0", "at": ["world": [0, 0, 30]], "text": text, "unchecked": source]]]
