@@ -924,6 +924,16 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(PoseText.disagreements(inwardWords, push: pm).count, 1, "\(pm)")
         XCTAssertEqual(PoseText.disagreements("The thrust pushes the suit sideways without rotating it.", push: pm).count, 1)
         XCTAssertEqual(PoseText.disagreements("The thrusts point sideways and upward, but their side components cancel.", push: pm), [])
+        // Local negation, subject binding and affirmative cancellation.
+        let inward = PoseText.Push(side: 0, depth: 0, sideAbs: 1, outward: -1, arrows: 2, mannequin: true)
+        XCTAssertEqual(PoseText.disagreements("The thrust points inward, not outward.", push: inward), [])
+        XCTAssertEqual(PoseText.disagreements("The pilot moves his arms outward while the thrust points toward the middle.", push: inward), [])
+        XCTAssertEqual(PoseText.disagreements("The thrust points up and out, away from the middle.", push: inward).count, 1)
+        let back = PoseText.Push(side: 0, depth: 1, sideAbs: 0, outward: 0, arrows: 1, mannequin: true)
+        XCTAssertEqual(PoseText.disagreements("The thrust holds him up as he leans forward.", push: back), [])
+        XCTAssertEqual(PoseText.disagreements("The thrust pushes him forward.", push: back).count, 1)
+        XCTAssertEqual(PoseText.disagreements("The sideways parts do not cancel, so the thrust pushes the suit sideways.", push: pm).count, 1)
+        XCTAssertEqual(PoseText.disagreements("The sideways parts don't cancel, so the thrust pushes the suit sideways.", push: pm).count, 1)
         // Step selection: a caption change of a posed step, an annotate change, and a removed pose are checked.
         let posedBase = doc([first, mirror])
         var captioned = posedBase; var cs = posedBase["steps"] as! [[String: Any]]; cs[1]["say"] = "y"; captioned["steps"] = cs

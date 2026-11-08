@@ -220,9 +220,12 @@ the MCP server uses), so a run needs no MCP client.
    from or toward the middle, and forward or backward. Claims are matched over
    the whole sentence: a net side motion of the body ("pushes the suit
    sideways", "the suit slides sideways", "the side push moves it") with no net
-   side push, unless the sentence says the side parts cancel; thrust pointing
-   away from or toward the middle (or outward, inward) against the arrows;
-   thrust or the body pushed forward or backward against the push; "to the
+   side push, unless the sentence says (not denies) that the side parts cancel;
+   a direction within 8 words after a thrust noun (thrust, force, jet,
+   exhaust, engine), not right after "not", pointing away from or toward the
+   middle (or outward, inward) against the arrows, or forward or backward
+   (not "leans forward") against the push; the body pushed forward or
+   backward against the push; "to the
    pilot's left/right" against the side. A step that makes one is refused as
    `followup.direction` with these facts in the repair. The checked steps are
    those posed before or after and changed in pose, show, hide, annotate, spin,

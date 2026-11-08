@@ -114,18 +114,23 @@ import MartyEngine
             + #"|\b("# + b + #")\s+(slides?|drifts?|moves?|shifts?|goes|travels?)\s+(sideways|to the side|laterally)\b"#
             + #"|\b(net sideways|sideways (push|force|motion|movement)|side ?(push|force)|lateral (push|force))\b"#
             + #"|\b(sideways|side) (part|component)s? (push(es)?|moves?|drives?|shoves?)\b"#
-        let cancels = #"\b(cancel\w*|no net|no sideways|zero net|balance out|net side(ways)? (push|force) is (zero|nil))\b"#
-        let toward = #"\b(towards?|in toward) the (body'?s? )?(middle|centre|center|midline)\b|\binwards?\b"#
-        let away = #"\baway from the (body'?s? )?(middle|centre|center|midline)\b|\boutwards?\b"#
+        // Only an affirmative cancellation exempts a sentence ("do not cancel" does not).
+        let cancels = #"(?<!not )(?<!n't )(?<!never )\bcancel\w*|\bno net\b|\bno sideways\b|\bzero net\b|\bbalance out\b"#
+        // A direction belongs to thrust when it follows a thrust noun within 8 words, not right after "not".
+        let noun = #"\b(thrusts?|forces?|jets?|exhausts?|engines?)\b"#
+        func afterThrust(_ target: String, skip: String = "") -> String {
+            noun + #"(?:\W+\w+){0,8}?\W+(?<!not )(?<!never )"# + skip + "(?:" + target + ")"
+        }
+        let toward = #"\b(?:towards?|in toward) the (?:body'?s? )?(?:middle|centre|center|midline)\b|\binwards?\b"#
+        let away = #"\baway from the (?:body'?s? )?(?:middle|centre|center|midline)\b|\boutwards?\b"#
         return MartyLoop.sentences(text).filter { s in
             if p.noSidePush, has(s, sideMotion), !has(s, cancels) { return true }
-            if has(s, thrust) {
-                if p.outward < -Push.threshold, has(s, away) { return true }
-                if p.outward > Push.threshold, has(s, toward) { return true }
-            }
+            if p.outward < -Push.threshold, has(s, afterThrust(away)) { return true }
+            if p.outward > Push.threshold, has(s, afterThrust(toward)) { return true }
             if p.mannequin {
-                let fwd = #"\b(push(es|ed|ing)?|mov(es|ed|ing)|drives?)\s+("# + b + #")\s+forwards?\b|\b(thrust|push|force)\b[^.]*\bforwards?\b"#
-                let bwd = #"\b(push(es|ed|ing)?|mov(es|ed|ing)|drives?)\s+("# + b + #")\s+backwards?\b|\b(thrust|push|force)\b[^.]*\bbackwards?\b"#
+                let lean = #"(?<!leans )(?<!leaning )(?<!lean )"#
+                let fwd = #"\b(push(es|ed|ing)?|mov(es|ed|ing)|drives?)\s+("# + b + #")\s+forwards?\b|"# + afterThrust(#"\bforwards?\b"#, skip: lean)
+                let bwd = #"\b(push(es|ed|ing)?|mov(es|ed|ing)|drives?)\s+("# + b + #")\s+backwards?\b|"# + afterThrust(#"\bbackwards?\b"#, skip: lean)
                 if p.depth > Push.threshold, has(s, fwd) { return true }
                 if p.depth < -Push.threshold, has(s, bwd) { return true }
                 if !p.noSidePush {
