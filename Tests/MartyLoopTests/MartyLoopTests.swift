@@ -934,6 +934,9 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(PoseText.disagreements("The thrust pushes him forward.", push: back).count, 1)
         XCTAssertEqual(PoseText.disagreements("The sideways parts do not cancel, so the thrust pushes the suit sideways.", push: pm).count, 1)
         XCTAssertEqual(PoseText.disagreements("The sideways parts don't cancel, so the thrust pushes the suit sideways.", push: pm).count, 1)
+        XCTAssertEqual(PoseText.disagreements("The sideways parts don't balance out, so the sideways part pushes the suit.", push: pm).count, 1)
+        XCTAssertEqual(PoseText.disagreements("The sideways parts do not fully cancel, so the suit moves sideways.", push: pm).count, 1)
+        XCTAssertEqual(PoseText.disagreements("The sideways parts balance out, so there is no side push on the suit.", push: pm), [])
         // Step selection: a caption change of a posed step, an annotate change, and a removed pose are checked.
         let posedBase = doc([first, mirror])
         var captioned = posedBase; var cs = posedBase["steps"] as! [[String: Any]]; cs[1]["say"] = "y"; captioned["steps"] = cs

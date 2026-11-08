@@ -114,8 +114,18 @@ import MartyEngine
             + #"|\b("# + b + #")\s+(slides?|drifts?|moves?|shifts?|goes|travels?)\s+(sideways|to the side|laterally)\b"#
             + #"|\b(net sideways|sideways (push|force|motion|movement)|side ?(push|force)|lateral (push|force))\b"#
             + #"|\b(sideways|side) (part|component)s? (push(es)?|moves?|drives?|shoves?)\b"#
-        // Only an affirmative cancellation exempts a sentence ("do not cancel" does not).
-        let cancels = #"(?<!not )(?<!n't )(?<!never )\bcancel\w*|\bno net\b|\bno sideways\b|\bzero net\b|\bbalance out\b"#
+        // Only an affirmative cancellation exempts a sentence: a negation in the 3 words before it ("do not fully
+        // cancel", "don't balance out") makes it a denial.
+        func affirmsCancel(_ s: String) -> Bool {
+            guard let re = try? NSRegularExpression(pattern: #"\bcancel\w*|\bno net\b|\bno sideways\b|\bzero net\b|\bbalances? out\b|\boffset each other\b"#,
+                                                    options: .caseInsensitive) else { return false }
+            let ns = s as NSString
+            return re.matches(in: s, range: NSRange(location: 0, length: ns.length)).contains { m in
+                let before = ns.substring(to: m.range.location).lowercased()
+                let words = before.split { !$0.isLetter && $0 != "'" }.suffix(3)
+                return !words.contains { ["not", "never", "don't", "doesn't", "didn't", "won't", "can't", "cannot", "fail", "fails"].contains(String($0)) || $0.hasSuffix("n't") }
+            }
+        }
         // A direction belongs to thrust when it follows a thrust noun within 8 words, not right after "not".
         let noun = #"\b(thrusts?|forces?|jets?|exhausts?|engines?)\b"#
         func afterThrust(_ target: String, skip: String = "") -> String {
@@ -124,7 +134,7 @@ import MartyEngine
         let toward = #"\b(?:towards?|in toward) the (?:body'?s? )?(?:middle|centre|center|midline)\b|\binwards?\b"#
         let away = #"\baway from the (?:body'?s? )?(?:middle|centre|center|midline)\b|\boutwards?\b"#
         return MartyLoop.sentences(text).filter { s in
-            if p.noSidePush, has(s, sideMotion), !has(s, cancels) { return true }
+            if p.noSidePush, has(s, sideMotion), !affirmsCancel(s) { return true }
             if p.outward < -Push.threshold, has(s, afterThrust(away)) { return true }
             if p.outward > Push.threshold, has(s, afterThrust(toward)) { return true }
             if p.mannequin {

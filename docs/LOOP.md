@@ -220,7 +220,8 @@ the MCP server uses), so a run needs no MCP client.
    from or toward the middle, and forward or backward. Claims are matched over
    the whole sentence: a net side motion of the body ("pushes the suit
    sideways", "the suit slides sideways", "the side push moves it") with no net
-   side push, unless the sentence says (not denies) that the side parts cancel;
+   side push, unless the sentence says (not denies: no negation in the 3 words
+   before "cancel", "balance out" and the like) that the side parts cancel;
    a direction within 8 words after a thrust noun (thrust, force, jet,
    exhaust, engine), not right after "not", pointing away from or toward the
    middle (or outward, inward) against the arrows, or forward or backward
