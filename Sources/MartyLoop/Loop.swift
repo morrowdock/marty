@@ -81,6 +81,7 @@ public final class MartyLoop {
         var o: [String: Any] = ["ok": r["ok"] ?? false, "reason": r["reason"] ?? NSNull(), "part": r["part"] ?? NSNull(),
                                 "ref": r["ref"] ?? NSNull(), "error": r["error"] ?? NSNull(), "component": r["component"] ?? NSNull()]
         if let v = r["visibility"] { o["visibility"] = v }
+        if let l = r["limit"] { o["limit"] = l }
         return o
     }
 
@@ -270,7 +271,7 @@ public final class MartyLoop {
             let (facts, readBack) = repairContext(reason: reason, report: report, document: document, components: components)
             user = MartyPrompts.repairUser(question: question, plan: planText, previous: text, reason: reason, part: part,
                                            hint: MartyPrompts.hint(for: reason), facts: facts, readBack: readBack,
-                                           visibility: report["visibility"] as? [String: Any])
+                                           visibility: report["visibility"] as? [String: Any], limit: report["limit"] as? [String: Any])
         }
         if accepted == nil, let f = fallback {
             accepted = f.report; acceptedComponents = f.components
@@ -387,6 +388,7 @@ public final class MartyLoop {
                 + "\n\nYour previous reply:\n\(text)\n\nThe engine refused the patch with reason `\(reason)`"
                 + ((r["part"] as? String).map { " on part `\($0)`" } ?? "") + "." + (MartyPrompts.hint(for: reason).map { " \($0)" } ?? "")
                 + ((r["visibility"] as? [String: Any]).flatMap(MartyPrompts.visibilityLine).map { " \($0)" } ?? "")
+                + ((r["limit"] as? [String: Any]).flatMap(MartyPrompts.limitLine).map { " \($0)" } ?? "")
                 + (facts.map { "\n\nFacts the engine solved for the changed model (name: value):\n\($0)" } ?? "")
                 + "\n\nReply with a corrected JSON object only."
         }
@@ -492,6 +494,7 @@ extension MartyLoop {
             if reason == "followup.kind" { u += " The changed document must stay an explainer (kind explainer)." }
             if let h = MartyPrompts.hint(for: reason) { u += " \(h)" }
             if let v = (r["visibility"] as? [String: Any]).flatMap(MartyPrompts.visibilityLine) { u += " \(v)" }
+            if let l = (r["limit"] as? [String: Any]).flatMap(MartyPrompts.limitLine) { u += " \(l)" }
             if let facts { u += "\n\nFacts the engine solved (name: value):\n\(facts)" }
             if let readBack { u += "\n\nEngine read-back:\n\(readBack)" }
             u += "\n\nReply with a corrected JSON object only."

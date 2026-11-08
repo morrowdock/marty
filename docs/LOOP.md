@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-08. Prompts `marty-prompts/9`. Engine pin as in
+Status: early preview, 2026-11-08. Prompts `marty-prompts/10`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -66,7 +66,13 @@ the MCP server uses), so a run needs no MCP client.
    and the side forces and turning moments; fuel burns with the oxygen in the
    compressed air; thrust is the reaction to the gas accelerated out of the
    nozzle); and the part that really moves is named. The engine has no per-step
-   pose at the pin, so a pose holds for every step. The prompts hold no
+   pose at the pin, so a pose holds for every step. Small jet engines use the
+   `microTurbojet` component (11 parts; five and a mannequin fit the 96-part
+   limit; `cutaway` opens one), named as a schematic example. The guide also
+   names the engine limits of the pin: `highlight` counts every part of a
+   component toward 16 ids (so it highlights `<id>.casing`), a spin arrow is
+   drawn at the whole model's size, explode on a component needs `explode` on
+   its inner parts, and a pose and what is shown hold for every step. The prompts hold no
    subject-specific facts. Each label or arrow is
    defined once, and every defined id is in some step's `annotate` list (strict
    refuses an unlisted one, `annotation.unused`). In an explainer the table is
@@ -105,7 +111,10 @@ the MCP server uses), so a run needs no MCP client.
    `step.annotate.count`, `view.annotate.count`) also gets the engine's
    visibility detail in words: which annotation, how many show, the limit, the
    cause and the step or beat; the attempt in the receipt keeps the detail
-   (also in follow-up repairs). Only what the engine returned is
+   (also in follow-up repairs). A `parts.resolved` refusal gets the engine's
+   limit detail the same way (the resolved count, the limit and the component
+   instances that add the most parts; attempt key `limit`). A `parts.count`
+   refusal from component expansion has no detail at the pin and gets a hint. Only what the engine returned is
    attached; at most 80 facts and 48 read-back lines. At most 3 repairs. A
    follow-up patch refused for a caption or a claim gets the facts of the
    changed model (the same patch with steps cleared).
@@ -205,7 +214,7 @@ adapter.
 
 The receipt records `contextBytes` for the plan and author prompts, and the
 size and SHA-256 of every prompt. Tests fail when the plan prompt grows over
-10,000 bytes or the author prompt over 13,000 bytes (the author prompt without component
+12,000 bytes or the author prompt over 13,000 bytes (the author prompt without component
 entries: 12,000 bytes, and 14,500 bytes with the explainer form). For comparison, the
 v1 eval harness sent about 25,600 bytes of engine docs in every call.
 

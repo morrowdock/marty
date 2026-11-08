@@ -29,7 +29,7 @@ final class MartyLoopTests: XCTestCase {
         let plan = MartyPrompts.planSystem(catalog: catalog).utf8.count
         let author = MartyPrompts.authorSystem(parts: "", example: MartyExamples.formatExample).utf8.count
         print("prompt bytes: plan \(plan), author without parts \(author)")
-        XCTAssertLessThan(plan, 10000)
+        XCTAssertLessThan(plan, 12000)
         XCTAssertLessThan(author, 12000)
     }
 
@@ -505,6 +505,45 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(MartyLoop.documentLint(ex).map { String($0.prefix(18)) }, ["Beat 2 shows 6 tex"])
     }
 
+    /// The guide's engine pattern: a mannequin with five microTurbojets (one cut open) fits the part limit and is
+    /// accepted in strict mode, highlighting casings; nine are over the limit, and the repair prompt states the
+    /// engine's parts.resolved detail.
+    func testMicroTurbojetPatternAndPartsLimit() throws {
+        func doc(_ n: Int, studs: Int = 0) -> [String: Any] {
+            let mounts = ["pilot.leftHand", "pilot.rightHand", "pilot.leftHand", "pilot.rightHand", "pilot.back"]
+            var parts: [[String: Any]] = [["id": "pilot", "use": "mannequin", "with": ["leftShoulder": 30, "rightShoulder": 40]]]
+            for i in 0..<n {
+                parts.append(["id": "e\(i)", "use": "microTurbojet", "with": ["diameter": 110, "length": 280, "cutaway": i == 4 ? 1 : 0],
+                              "parent": mounts[i % 5], "at": [i % 2 == 0 ? 80 : -80, 70 + 20 * i, 0], "rot": [1, 0, 0, 180]])
+            }
+            for k in 0..<studs {   // each a row of 12 (repeat holds 2 to 12)
+                parts.append(["id": "stud\(k)", "name": "Stud (schematic)", "parent": "pilot.back", "at": [0, 10, 100 + 10 * k],
+                              "shape": ["box": ["size": [5, 5, 5]]], "repeat": ["count": 12, "axis": [0, 1, 0]]])
+            }
+            return ["v": 2, "kind": "assembly", "title": "Five small jet engines", "units": "mm", "parts": parts,
+                    "steps": [["say": "A schematic pilot wears small jet engines.", "highlight": (0..<min(n, 5)).map { "e\($0).casing" }],
+                              ["say": "One engine is cut open.", "highlight": ["e4.casing"], "focus": ["e\(min(n, 5) - 1)"], "spin": 1]]]
+        }
+        let engine = MartyEngine(outputRoot: nil)
+        let r = try engine.check(document: doc(5), ref: nil, components: [], strict: true)
+        XCTAssertEqual(r["ok"] as? Bool, true, "\(r["reason"] ?? "") \(r["part"] ?? "")")
+        // Components alone over 96 parts: parts.count (no detail at this pin); with repeat: parts.resolved with it.
+        XCTAssertEqual(try engine.check(document: doc(9), ref: nil, components: [], strict: true)["reason"] as? String, "parts.count")
+        let over = try engine.check(document: doc(5, studs: 3), ref: nil, components: [], strict: true)
+        XCTAssertEqual(over["reason"] as? String, "parts.resolved")
+        let line = try XCTUnwrap(MartyPrompts.limitLine(try XCTUnwrap(over["limit"] as? [String: Any], "\(over)")))
+        XCTAssertTrue(line.hasPrefix("The model has ") && line.contains("the limit is 96") && line.contains("(microTurbojet, 11 parts)"), line)
+        let plan = #"{"components": ["mannequin", "microTurbojet"], "primitives": []}"#
+        func reply(_ d: [String: Any]) -> String { #"{"document": "# + MartyJSON.string(d) + "}" }
+        let model = ScriptedAdapter(replies: [plan, reply(doc(5, studs: 3)), reply(doc(5))])
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let loop = try MartyLoop(model: model, out: out, options: .init()).run(question: "q")
+        XCTAssertEqual((loop["attempts"] as? [[String: Any]])?.first?["reason"] as? String, "parts.resolved")
+        XCTAssertNotNil((loop["attempts"] as? [[String: Any]])?.first?["limit"])
+        XCTAssertTrue(model.prompts[2].user.contains("the limit is 96"), model.prompts[2].user)
+    }
+
     func testReplyJSON() {
         XCTAssertEqual(ReplyJSON.object(#"{"a":1}"#)?["a"] as? Int, 1)
         XCTAssertEqual(ReplyJSON.object("Here:\n```json\n{\"a\": 2}\n```\nDone.")?["a"] as? Int, 2)
@@ -558,7 +597,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(receipt["format"] as? String, MartyLoop.receiptFormat)
         XCTAssertEqual((receipt["engine"] as? [String: Any])?["revision"] as? String, MartyPin.engineRevision)
         let ctx = try XCTUnwrap(receipt["contextBytes"] as? [String: Int])
-        XCTAssertLessThan(try XCTUnwrap(ctx["plan"]), 10000, "plan context grew: \(ctx)")
+        XCTAssertLessThan(try XCTUnwrap(ctx["plan"]), 12000, "plan context grew: \(ctx)")
         XCTAssertLessThan(try XCTUnwrap(ctx["author"]), 13000, "author context grew: \(ctx)")
     }
 

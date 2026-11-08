@@ -5,7 +5,7 @@ import Foundation
 /// author step sees a short format guide plus `explain` entries for the parts the plan chose. The receipt records the
 /// size and SHA-256 of every prompt, so a change in context is always measured.
 public enum MartyPrompts {
-    public static let version = "marty-prompts/9"
+    public static let version = "marty-prompts/10"
 
     static let role = """
         You are Marty, a teacher who explains how things work with checked 3D models. A deterministic engine \
@@ -121,8 +121,14 @@ public enum MartyPrompts {
         - People: {"id": "pilot", "use": "mannequin", "with": {"leftShoulder": 30, "rightShoulder": 30}} (schematic,
           1.75 m, faces -Y, feet at z = 0). Worn or carried parts hang on its anchors with "parent" and a short "at":
           pilot.back, pilot.head, pilot.leftHand / pilot.rightHand (wrist; local +Z runs up the forearm), pilot.leftFoot.
-          A small gas turbine or turbocharger compressor is {"use": "centrifugalCompressor", "with": {"diameter": 80}}
-          (radial impeller, axis +Z, air in at -Z and out sideways; bore below 0.075 x diameter).
+          A small jet engine is {"use": "microTurbojet", "with": {"diameter": 110, "length": 280, "cutaway": 0}} (axis
+          +Z from intake to nozzle, so the jet leaves along +Z and thrust points along -Z; "cutaway": 1 opens a window
+          in one instance for the inside); name it as a schematic example. A turbocharger compressor alone is
+          {"use": "centrifugalCompressor", "with": {"diameter": 80}} (axis +Z, air in at -Z, out sideways).
+        - Engine limits today: at most 96 parts after expansion (a microTurbojet is 11); "highlight" counts every part
+          of a component toward its 16 ids, so highlight "<id>.casing", not the whole instance; a spin arrow is drawn
+          at the whole model's size; explode on a component needs "explode" on its inner parts ("set"); a pose and
+          what is shown hold for every step.
         - A wing or body that has no library part is a few boxes and shafts named "(schematic)".
         - Every part is attached where it really is (with "parent"): no loose parts beside the model. A back unit
           touches the torso: "parent": "pilot.back" (the middle of the back surface; +Y points backward), "at": [0,
@@ -196,14 +202,29 @@ public enum MartyPrompts {
     }
 
     public static func repairUser(question: String, plan: String, previous: String, reason: String, part: String?, hint: String?,
-                                  facts: String? = nil, readBack: String? = nil, visibility: [String: Any]? = nil) -> String {
+                                  facts: String? = nil, readBack: String? = nil, visibility: [String: Any]? = nil,
+                                  limit: [String: Any]? = nil) -> String {
         var s = "Question: \(question)\n\nYour plan:\n\(plan)\n\nYour previous reply:\n\(previous)\n\n"
         s += "The engine refused it with reason `\(reason)`" + (part.map { " on part `\($0)`" } ?? "") + "."
         if let hint { s += " \(hint)" }
         if let v = visibility.flatMap(visibilityLine) { s += " \(v)" }
+        if let l = limit.flatMap(limitLine) { s += " \(l)" }
         if let facts { s += "\n\nFacts the engine solved for this model (name: value):\n\(facts)" }
         if let readBack { s += "\n\nEngine read-back (where each part is and how it moves):\n\(readBack)" }
         return s + "\n\nFix the cause and reply with the corrected JSON object only (same reply format)."
+    }
+
+    /// The engine's `parts.resolved` detail (the report's `limit`): the resolved count, the limit and the instances
+    /// that add the most parts.
+    public static func limitLine(_ l: [String: Any]) -> String? {
+        guard let count = l["count"] as? Int, let limit = l["limit"] as? Int else { return nil }
+        let top = (l["top"] as? [[String: Any]] ?? []).compactMap { t -> String? in
+            guard let id = t["id"] as? String, let parts = t["parts"] as? Int else { return nil }
+            return "`\(id)` (\(t["use"] as? String ?? "?"), \(parts) parts)"
+        }
+        return "The model has \(count) parts after expansion; the limit is \(limit)."
+            + (top.isEmpty ? "" : " Most come from \(top.joined(separator: ", ")).")
+            + " Use fewer instances, or plain shapes for the units that are not cut open."
     }
 
     /// The engine's visibility detail (annotations.visible, step.annotate.count, view.annotate.count) in words.
@@ -256,6 +277,8 @@ public enum MartyPrompts {
             ("step.check", "A step's check is a list of 1 to 8 claims: [{\"value\": \"<fact>\", \"eq\" | \"lt\" | \"gt\": number, \"tol\": number (optional, with eq only)}] (v2 only)."),
             ("check.failed", "A claim in the step is false: the engine solved a different value. Change or remove the claim, or change the model."),
             ("check.fact", "A claim names no fact. Use a fact name the engine solved."),
+            ("parts.count", "\"parts\" holds 1 to 48 entries, and component expansion may make at most 96 parts (a microTurbojet is 11, a mannequin 13): use fewer component instances, or plain shapes for the units that are not cut open."),
+            ("parts.resolved", "The model has too many parts after component and repeat expansion: use fewer component instances, or plain shapes for the units that are not cut open."),
             ("annotations.visible", "Too many annotations would show at once: give every step (in an explainer, every beat's view) an \"annotate\" list of the ids it shows, at most 5 labels and pointers plus its force arrows."),
             ("step.annotate.count", "A step's \"annotate\" list is longer than the limit: split it over two steps."),
             ("view.annotate.count", "A beat's \"view\".\"annotate\" list is longer than the limit: split it over two beats."),

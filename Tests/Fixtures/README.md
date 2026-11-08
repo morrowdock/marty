@@ -2,7 +2,7 @@
 
 These five documents are copied unchanged from the MartyGraphics example models
 (`Examples/Solid3D/Sources/MartySolid3D/Models/`, unchanged from 76104dea through the current pin
-20c39eb68a8a88a20b3d828b57f60fda75501b64), Apache-2.0, original synthetic teaching models.
+70bfc47ad9bbdd3db396037fe450374a5dd497ab), Apache-2.0, original synthetic teaching models.
 
 `lessons/rotation.lesson.json` and `lessons/rotation.statements.ndjson` are copied unchanged
 from the engine's `docs/fixtures/v1/` at 31a47ba141a208eaf76b38fc9df5cecc7703487e (Apache-2.0,
