@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-06. Prompts `marty-prompts/6`. Engine pin as in
+Status: early preview, 2026-11-08. Prompts `marty-prompts/7`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -15,7 +15,17 @@ the MCP server uses), so a run needs no MCP client.
    forces as arrows), then the inside of the one part that makes it work, cut
    open, then what the model does not show. It answers with a JSON plan:
    A well-known headline figure of the subject (thrust against weight, power,
-   top speed, range, capacity) goes in `given` with its source. The plan says
+   top speed, range, capacity) goes in `given` with its source. When the
+   question asks how a vehicle, aircraft or flying device flies, lifts or
+   hovers, `given` must hold its total thrust (kgf or N) and the weight it
+   lifts. The model gives only numbers it knows, each with its source name; if
+   it is not sure, it writes "about" and the source "estimate", never a company
+   or person. When a flight question (a flight word such as fly or hover, or
+   lift with a flight context such as jet, drone or wing; "a hydraulic lift" is
+   not one) gets a plan with no thrust entry, Marty asks once more (`plan.lint`,
+   reason `plan.given.thrust`, with `fixed`). Only the reply's `given` is taken,
+   and only when it names thrust with a number; a partial, empty or bad reply,
+   or an adapter failure, keeps the original plan, and authoring goes on. The plan says
    whether the subject is in scope, the `form` (`solid`, or `explainer`: the 3D
    model with a 2D table of published numbers beside it), `whole`, `inside`,
    `given` (numbers it knows
@@ -33,12 +43,16 @@ the MCP server uses), so a run needs no MCP client.
    marked `unchecked`, so it shows as Not checked. The guide also asks: people
    as the `mannequin` component with worn parts hung on its anchors, small
    turbines and turbochargers with `centrifugalCompressor`, every part attached
-   where it really is, inside views cut or ghosted in place with `focus` on that
-   step, at most 5 labels or arrows per step (an `annotate` list on every step),
-   force arrows that start outside the body, and each given figure shown with
-   its source. In an explainer the table is added by a beat command in the first
-   beat that needs it and stays (the engine's legend counts only 2D items still
-   on the board). When the plan chose the
+   where it really is (a back unit touches the torso: `pilot.back` is the middle
+   of the back surface), inside views as a `section` cut of the one part in
+   place (ghost only the parts in front of it) with `focus` on that step, at
+   most 5 labels and pointers per step plus its force arrows (an `annotate`
+   list on every step), one thrust arrow per thrust unit shown with both ends
+   on that unit, force arrows that start outside the body, a steering pose with
+   the arms unequal and "schematic" in the arrow text, and each given figure
+   shown with its source ("about" when the plan has it). In an explainer the
+   table is added by a beat command in beat 1 or 2 and stays (the engine's
+   legend counts only 2D items still on the board). When the plan chose the
    explainer form, the author prompt also gets the explainer section and a small
    accepted explainer (a table with a noted given number, which shows as Given,
    beside the 3D model); other prompts stay smaller. It gets a short format guide, the `explain` entries of the
@@ -109,7 +123,22 @@ the MCP server uses), so a run needs no MCP client.
    `camera` ops, ops on text items, sets of a `text` or `label` key, and the
    `label` and `text` of an item are words). The answer prompt gets the accepted change with values before and
    after: the solid parts, the other solid keys, the board keys and items and the beat
-   ops that changed. In an explainer, a force arrow whose direction the model
+   ops that changed. A modelled answer also gets the document's given figures
+   (unchecked labels and arrows, and rows of noted explainer tables, with their
+   source; a table whose cells a later beat sets is listed again, marked with
+   that beat, after any header change; at most 12); a refused answer does not.
+   Numbers from the structured values keep their short text (integers exactly,
+   a float as its shortest round-trip text with any exponent written out), and
+   matching ignores thousands commas and trailing decimal zeros. The answer prompt says that a
+   claim about sizes, shares or comparisons must come from a given figure or an
+   engine number, or be hedged. A sentence with "most", "the majority", "all
+   of", "more than" or a similar word, with no hedge (about, in this schematic)
+   and no number that is also in the evidence (the given figures shown, the
+   engine fact texts and ratios, numbers set in the change; never raw JSON),
+   gets one rewrite request; `answerLint` records the sentences and whether the
+   rewrite cleared them. A rewrite that fails in the adapter keeps the first
+   answer (`fixed` false). In
+   an explainer, a force arrow whose direction the model
    sets may be marked `unchecked: "schematic direction"`; an arrow whose
    definition changed is listed in `forceArrowsMoved`.
 
@@ -150,12 +179,12 @@ One `receipt.json` per run, with sorted keys:
 | --- | --- |
 | `format`, `prompts`, `model`, `engine` | Versions: receipt format, prompt set, adapter id, engine repository and commit. |
 | `question`, `options`, `startedAt` | The input, the options (repairs, render, size) and the UTC start time. |
-| `plan` | The plan reply, the chosen ids and the dropped ids. |
+| `plan` | The plan reply, the chosen ids and the dropped ids; `lint` when a flight question first had no thrust in `given`. |
 | `attempts` | One entry per author or repair attempt: `ok`, `reason`, `part`, `ref`, `component`. |
 | `accepted`, `final` | Whether a document was accepted, and its title, part ids, ratios, checks, `ref`, triangles and steps. |
 | `render`, `lesson` | Render `ok`, `reason` (when it failed), directory, file digests and timing; `lesson.json`. |
 | `adapterErrors` | Reasons of model calls that failed in the adapter (for example `adapter.timeout`). Present only when one failed. If the last plan call fails in the adapter (no plan was received), the run stops there. |
-| `followUp` | The question, its attempts, `changed` (the engine accepted a patch), `modelled` (the engine solved the change, or none was needed), `ratiosChanged`, `forceArrowsMoved` (force arrows that the accepted change may have moved; their shown direction is schematic), the report after the change, the answer and `answerSource`. `ok` means an answer was written: also an honest "this model cannot show it" when `modelled` is false. `ok` is false when no answer was written (for example an adapter failure). |
+| `followUp` | The question, its attempts, `changed` (the engine accepted a patch), `modelled` (the engine solved the change, or none was needed), `ratiosChanged`, `forceArrowsMoved` (force arrows that the accepted change may have moved; their shown direction is schematic), the report after the change, the answer, `answerLint` (when a comparison without a figure was sent back once) and `answerSource`. `ok` means an answer was written: also an honest "this model cannot show it" when `modelled` is false. `ok` is false when no answer was written (for example an adapter failure). |
 | `calls` | Every model call: phase, attempt, prompt files with sizes and digests, reply file, seconds, adapter facts (tokens, cost equivalent) and the engine outcome. |
 | `seconds`, `modelSeconds`, `contextBytes` | Wall time, model time and prompt sizes. |
 

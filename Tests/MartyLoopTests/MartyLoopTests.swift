@@ -117,6 +117,8 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(tableEdit["changed"] as? Bool, true, "\(tableEdit["attempts"] ?? "")")
         // The answer gets the changed values, before and after.
         XCTAssertTrue(mTable.prompts[3].user.contains("3000") && mTable.prompts[3].user.contains("3500"), mTable.prompts[3].user)
+        // The answer gets the given figures of the accepted explainer, with their source.
+        XCTAssertTrue(mTable.prompts[3].user.contains("- Rated rpm 3500 — maker's data sheet (given)"), mTable.prompts[3].user)
         let summary = MartyLoop.changeSummary(from: ["board": ["params": ["angle": 10]]], to: ["board": ["params": ["angle": 30]]])
         XCTAssertTrue(summary.contains("10") && summary.contains("30") && summary.contains("board"), summary)
         // A gravity arrow is checked again by the engine: no schematic-direction line.
@@ -202,19 +204,139 @@ final class MartyLoopTests: XCTestCase {
     /// arrow starts outside the body, and the compressor default fits.
     func testGuidePeopleAndCompressorPatterns() throws {
         let doc: [String: Any] = ["v": 2, "kind": "assembly", "title": "A worn unit", "units": "mm", "parts": [
-            ["id": "pilot", "use": "mannequin", "with": ["leftShoulder": 30, "rightShoulder": 30]],
+            ["id": "pilot", "use": "mannequin", "with": ["leftShoulder": 30, "rightShoulder": 50]],
             ["id": "jet", "name": "Arm unit (schematic)", "parent": "pilot.rightHand", "at": [-85, -62, 0],
              "shape": ["shaft": ["radius": 50, "length": 300, "z0": -80]]],
-            ["id": "pack", "name": "Back unit (schematic)", "parent": "pilot.back", "at": [0, 90, 0],
+            ["id": "pack", "name": "Back unit (schematic)", "parent": "pilot.back", "at": [0, 60, 0],
              "shape": ["shaft": ["radius": 60, "length": 300, "z0": -150]]],
             ["id": "comp", "use": "centrifugalCompressor", "with": ["diameter": 80], "at": [600, 0, 900]]],
             "annotations": ["arrows": [["id": "aW", "meaning": "force", "cause": "gravity",
                                          "from": ["part": "pilot.body", "offset": [0, -260, -400]],
-                                         "to": ["part": "pilot.body", "offset": [0, -260, -700]], "text": "Weight"]]],
-            "steps": [["say": "A schematic pilot wears two units.", "annotate": ["aW"]],
+                                         "to": ["part": "pilot.body", "offset": [0, -260, -700]], "text": "Weight"],
+                                        ["id": "aJet", "meaning": "force", "from": ["part": "jet", "offset": [0, 0, -120]],
+                                         "to": ["part": "jet", "offset": [0, 0, -400]], "text": "Thrust (schematic)"]]],
+            "steps": [["say": "A schematic pilot wears two units.", "annotate": ["aW", "aJet"]],
                       ["say": "The compressor wheel turns.", "highlight": ["comp.input"], "focus": ["comp.input"], "annotate": []]]]
         let r = try MartyEngine(outputRoot: nil).check(document: doc, ref: nil, components: [], strict: true)
         XCTAssertEqual(r["ok"] as? Bool, true, "\(r["reason"] ?? "") \(r["part"] ?? "")")
+    }
+
+    /// A question about how something flies needs thrust in "given": one more plan request when it is missing,
+    /// recorded in the receipt; other questions get none.
+    func testPlanAsksForThrustOnFlightQuestions() throws {
+        let noThrust = #"{"components": ["spurPair"], "primitives": [], "given": ["weight 30 kg (maker)"]}"#
+        let withThrust = #"{"components": ["spurPair"], "primitives": [], "given": ["thrust about 150 kgf (estimate)"]}"#
+        let doc = #"{"document": \#(Self.spurReduction)}"#
+        let model = ScriptedAdapter(replies: [noThrust, withThrust, doc])
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: .init()).run(question: "How does a jet suit fly?")
+        XCTAssertTrue(model.prompts[1].user.contains("has no thrust figure"), model.prompts[1].user)
+        let lint = try XCTUnwrap((r["plan"] as? [String: Any])?["lint"] as? [String: Any])
+        XCTAssertEqual(lint["reason"] as? String, "plan.given.thrust")
+        XCTAssertEqual(lint["fixed"] as? Bool, true)
+        XCTAssertTrue(model.prompts[2].user.contains("150 kgf"), "the author gets the fixed plan")
+        XCTAssertTrue(MartyLoop.asksHowItFlies("How does a helicopter hover?"))
+        XCTAssertTrue(MartyLoop.asksHowItFlies("How does a jet suit lift a person?"))
+        XCTAssertFalse(MartyLoop.asksHowItFlies("How does a hydraulic lift work?"))
+        XCTAssertFalse(MartyLoop.asksHowItFlies("How does a gear reduction work?"))
+        let calls = try XCTUnwrap(r["calls"] as? [[String: Any]])
+        XCTAssertTrue(calls.contains { $0["phase"] as? String == "plan" && $0["attempt"] as? Int == 2
+            && ($0["outcome"] as? [String: Any])?["ok"] as? Bool == true })
+        // Only "given" is taken from the reply, and only when it names thrust; a partial, bad or failed reply keeps
+        // the original plan.
+        func lintRun(_ second: [String]) throws -> (ScriptedAdapter, [String: Any]) {
+            let m = ScriptedAdapter(replies: [noThrust] + second)
+            let o = tempOut()
+            defer { try? FileManager.default.removeItem(at: o) }
+            return (m, try MartyLoop(model: m, out: o, options: .init()).run(question: "How does a drone fly?"))
+        }
+        for second in [[#"{"given": []}"#, doc], ["not json", doc], ["{}", doc], []] {
+            let (m, rr) = try lintRun(second)
+            let p = try XCTUnwrap(rr["plan"] as? [String: Any])
+            XCTAssertEqual((p["lint"] as? [String: Any])?["fixed"] as? Bool, false, "\(second)")
+            XCTAssertEqual((p["reply"] as? [String: Any])?["given"] as? [String], ["weight 30 kg (maker)"], "\(second)")
+            XCTAssertEqual(p["chosen"] as? [String], ["spurPair"], "\(second)")
+            if second.isEmpty { XCTAssertEqual(m.prompts.count, 3, "plan, failed lint call, then the author call (which fails too)") }
+        }
+        let (_, partial) = try lintRun([#"{"given": ["thrust about 150 kgf (estimate)"]}"#, doc])
+        let pp = try XCTUnwrap((partial["plan"] as? [String: Any])?["reply"] as? [String: Any])
+        XCTAssertEqual(pp["given"] as? [String], ["thrust about 150 kgf (estimate)"])
+        XCTAssertEqual(pp["components"] as? [String], ["spurPair"], "the rest of the plan stays")
+        let other = ScriptedAdapter(replies: [noThrust, doc])
+        let out2 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out2) }
+        let r2 = try MartyLoop(model: other, out: out2, options: .init()).run(question: "How does a gear reduction work?")
+        XCTAssertNil((r2["plan"] as? [String: Any])?["lint"])
+        XCTAssertEqual(other.prompts.count, 2)
+    }
+
+    /// A follow-up answer that compares shares with no figure and no hedge gets one rewrite request.
+    func testAnswerComparativeLint() throws {
+        let src = [#"{"labels": [{"text": "Back unit", "unchecked": "maker: 100 kgf"}]}"#]
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("The back engine gives most of the lift. The arms steer.", sources: src),
+                       ["The back engine gives most of the lift"])
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("The back engine gives about a third of the lift.", sources: src), [])
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("In this schematic most of the lift comes from the arms.", sources: src), [])
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("The back unit gives 100 kgf, most of the lift.", sources: src), [])
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("The back unit gives 400 kgf, most of the lift.", sources: src).count, 1)
+        // Decimals stay whole; promised phrases are covered; only evidence counts (no raw JSON).
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("The main unit supplies 1.5 kgf, most of the lift.", sources: ["Main 1.5 kgf — maker (given)"]), [])
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("The main unit supplies 5 kgf, most of the lift.", sources: ["Main 1.5 kgf — maker (given)"]).count, 1)
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("Most of the lift comes from 2 rear engines.", sources: MartyLoop.numberLeaves(["v": 1])).count, 1)
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("The back unit provides more than half the lift.", sources: []).count, 1)
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("All of its thrust comes from the back unit.", sources: []).count, 1)
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("The arms steer the suit. The back unit holds it up.", sources: []), [])
+        XCTAssertEqual(MartyLoop.numberLeaves(["a": [3000, 1.5, true], "id": "u2"]).sorted(), ["1.5", "3000"])
+        XCTAssertEqual(MartyLoop.numberLeaves([0.0000001, 1e20, 9007199254740993 as Int64, 3000.0]), ["0.0000001", "100000000000000000000", "9007199254740993", "3000"])
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("Most of it is 1 unit.", sources: MartyLoop.numberLeaves([0.0000001])).count, 1)
+        // A table set in a later beat is listed too, marked with its beat.
+        let doc: [String: Any] = ["notes": ["t": ["basis": "maker"]], "board": ["items": [Any]()], "beats": [
+            ["ops": [["op": "add", "item": ["id": "t", "k": "table", "header": true, "cells": [["Item", "Value"], ["Rated rpm", 3000]]]]]],
+            ["ops": [["op": "set", "id": "t", "key": "cells", "value": [["Item", "Value"], ["Rated rpm", 3500]]]]]]]
+        XCTAssertEqual(MartyLoop.givenFigures(doc), ["Rated rpm 3000 — maker (given)", "Rated rpm 3500 — maker (given) (from beat 2)"])
+        // Header changes replay in order, in both directions.
+        func headerDoc(_ start: Bool, _ ops: [[String: Any]]) -> [String: Any] {
+            ["notes": ["t": ["basis": "maker"]], "board": ["items": [["id": "t", "k": "table", "header": start, "cells": [["A", 1]]]]],
+             "beats": [["ops": ops]]]
+        }
+        XCTAssertEqual(MartyLoop.givenFigures(headerDoc(true, [["op": "set", "id": "t", "key": "header", "value": false],
+                                                               ["op": "set", "id": "t", "key": "cells", "value": [["Rated rpm", 3500]]]])),
+                       ["Rated rpm 3500 — maker (given) (from beat 1)"])
+        XCTAssertEqual(MartyLoop.givenFigures(headerDoc(false, [["op": "set", "id": "t", "key": "header", "value": true],
+                                                                ["op": "set", "id": "t", "key": "cells", "value": [["Item", "Value"], ["B", 2]]]])),
+                       ["A 1 — maker (given)", "B 2 — maker (given) (from beat 1)"])
+        // Floats keep their short text, with exponents written out; matching ignores trailing zeros.
+        XCTAssertEqual(MartyLoop.numberLeaves([579.988, 0.1, 1.5e-7, 1e200]).prefix(3), ["579.988", "0.1", "0.00000015"])
+        XCTAssertEqual(MartyLoop.numberLeaves([1e200]).first?.count, 201)
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("Most of it, 579.988 kgf, is from the back.", sources: MartyLoop.numberLeaves([579.988])), [])
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("Most of it, 3000.0 rpm, is the rotor.", sources: ["3000 rpm"]), [])
+        // The refused answer gets no given figures; a modelled one does.
+        XCTAssertFalse(MartyPrompts.answerUser(followUp: "q", before: "{}", after: nil, refused: "x", given: ["T 1 kgf — m"]).contains("Given figures"))
+        XCTAssertTrue(MartyPrompts.answerUser(followUp: "q", before: "{}", after: "{}", given: ["T 1 kgf — m"]).contains("- T 1 kgf — m"))
+        let plan = #"{"components": ["spurPair"], "primitives": []}"#
+        let good = #"{"document": \#(Self.spurReduction)}"#
+        let patch = #"{"patch": {"parts": {"pair": {"with": {"pinionTeeth": 12, "wheelTeeth": 72}}}}}"#
+        let model = ScriptedAdapter(replies: [plan, good, patch, "The wheel does most of the work now.", "The wheel now turns more slowly."])
+        var options = MartyLoop.Options()
+        options.followUp = "What if the wheel had more teeth?"
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: options).run(question: "How does a gear reduction work?")
+        let f = try XCTUnwrap(r["followUp"] as? [String: Any])
+        XCTAssertEqual(f["answer"] as? String, "The wheel now turns more slowly.")
+        let lint = try XCTUnwrap(f["answerLint"] as? [String: Any])
+        XCTAssertEqual(lint["reason"] as? String, "answer.comparative")
+        XCTAssertEqual(lint["fixed"] as? Bool, true)
+        XCTAssertTrue(model.prompts[4].user.contains("compare sizes or shares"))
+        // A rewrite that fails in the adapter keeps the first answer, with fixed false.
+        let failing = ScriptedAdapter(replies: [plan, good, patch, "The wheel does most of the work now."])
+        let out2 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out2) }
+        let f2 = try XCTUnwrap(try MartyLoop(model: failing, out: out2, options: options).run(question: "How does a gear reduction work?")["followUp"] as? [String: Any])
+        XCTAssertEqual(f2["answer"] as? String, "The wheel does most of the work now.")
+        XCTAssertEqual(f2["ok"] as? Bool, true)
+        XCTAssertEqual((f2["answerLint"] as? [String: Any])?["fixed"] as? Bool, false)
     }
 
     func testReplyJSON() {

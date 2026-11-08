@@ -5,7 +5,7 @@ import Foundation
 /// author step sees a short format guide plus `explain` entries for the parts the plan chose. The receipt records the
 /// size and SHA-256 of every prompt, so a change in context is always measured.
 public enum MartyPrompts {
-    public static let version = "marty-prompts/6"
+    public static let version = "marty-prompts/7"
 
     static let role = """
         You are Marty, a teacher who explains how things work with checked 3D models. A deterministic engine \
@@ -30,7 +30,10 @@ public enum MartyPrompts {
         not one), any person or load it carries as a simple schematic figure, and the forces that matter as arrows \
         (weight; thrust, lift or push); (2) then the inside of the ONE part that makes it work, cut open; (3) then \
         what the model does not show. When the subject has a well-known headline figure (thrust against weight, power, \
-        top speed, range, capacity), name it in "given" with its source.
+        top speed, range, capacity), name it in "given" with its source. When the question asks how a vehicle, aircraft \
+        or flying device flies, lifts or hovers, "given" MUST hold its total thrust (kgf or N) and the weight it lifts. \
+        Give only numbers you know, each with the name of its source (a maker's data sheet, a record, a test); if you \
+        are not sure, write "about" and the source "estimate", never a company or person.
 
         Reply with ONE JSON object only, no prose and no code fences:
         {"inScope": true, "subject": "<5-10 words>", "form": "solid", \
@@ -116,11 +119,16 @@ public enum MartyPrompts {
           A small gas turbine or turbocharger compressor is {"use": "centrifugalCompressor", "with": {"diameter": 80}}
           (radial impeller, axis +Z, air in at -Z and out sideways; bore below 0.075 x diameter).
         - A wing or body that has no library part is a few boxes and shafts named "(schematic)".
-        - Every part is attached where it really is (with "parent"): no loose parts beside the model. Show an inside by
-          cutting or ghosting the part in place, and put "focus": [its ids] on that step so the cutaway fills the frame.
-        - Show at most 5 labels or arrows in one step: give every step an "annotate" list. Start a force arrow outside
-          the body it acts on (beside or below it), never inside it. Show each given figure from the plan as an
-          unchecked label (or a noted table row) with its source.
+        - Every part is attached where it really is (with "parent"): no loose parts beside the model. A back unit
+          touches the torso: "parent": "pilot.back" (the middle of the back surface; +Y points backward), "at": [0,
+          <its radius or half depth>, 0]. Show an inside with a "section" cut of that one part in place (ghost only the
+          parts in front of it, never the part itself), with "focus": [its ids] on that step so the cutaway fills the frame.
+        - Give every step an "annotate" list: at most 5 labels and pointers in one step, plus its force arrows. Draw one
+          thrust arrow for each thrust unit shown (5 units, 5 arrows), both ends on that unit so it turns with it.
+          Start a force arrow outside the body it acts on (beside or below it), never inside it. Steering: pose the
+          arms unequally in the mannequin's "with" so they visibly tilt, and put "schematic" in the arrow text.
+        - Show each given figure from the plan as an unchecked label (or a noted table row) with its source, and
+          "about" when the plan has it.
         - If the engine cannot show part of the subject, build the best schematic and say so in the title or a step
           (for example "schematic: chain not modelled"). Never present an unchecked fake as real.
         """
@@ -132,7 +140,7 @@ public enum MartyPrompts {
          "at": [6, 7], "text": "Key figures"}]}, "solid": { ...the assembly as above, without "kind", "title" and
          "steps"... }, "beats": [...]}
         - Keep the table small (at most 4 rows; 12 characters a cell; numbers with absolute value below 1000000) and add
-          it in the first beat that needs it: {"op": "add", "item": {"id": "t", "k": "table", "at": [6, 4], "header":
+          it in beat 1 or 2 (the first beat that needs it): {"op": "add", "item": {"id": "t", "k": "table", "at": [6, 4], "header":
           true, "cells": [["Item", "Value"], ["<name>", <number>]]}} in that beat's "ops". Do not remove it later: the
           legend counts only 2D items still on the board.
         - beats (1 to 16) replace steps: {"say": "<= 200 chars", "highlight": [ids, also "t.r1" for row 1; the header
@@ -268,6 +276,19 @@ public enum MartyPrompts {
         "Original question: \(question)\n\nChecked document:\n\(document)\n\nEngine report:\n\(report)\n\nLearner asks: \(followUp)"
     }
 
+    /// One more plan request when a question about flight has no thrust figure in "given".
+    public static let planThrustRepair = """
+        Your plan's "given" has no thrust figure, but the question asks how it flies or lifts. Add its total thrust (kgf \
+        or N) and the weight it lifts, each with the name of its source; if you are not sure, write "about" and the \
+        source "estimate", never a company or person. Reply with the whole corrected plan, ONE JSON object only.
+        """
+
+    /// One rewrite request when an answer compares sizes or shares without a figure.
+    public static let answerComparativeRepair = """
+        These sentences compare sizes or shares without a given figure or an engine number. Hedge them (about, in \
+        this schematic) or leave them out, and reply with the whole answer text only:
+        """
+
     public static func answerSystem() -> String {
         """
         \(role)
@@ -276,7 +297,9 @@ public enum MartyPrompts {
         reports below (the facts, as written there, and the solved ratios) and sizes set in the model or in the change. \
         Prefer a fact over your own arithmetic; if you must compute, use only simple, exact arithmetic on those numbers. \
         If the message lists force arrows that the change moved, say that the force direction shown there is \
-        schematic; say nothing of that kind otherwise (the engine checks a gravity arrow). Reply with the answer text only.
+        schematic; say nothing of that kind otherwise (the engine checks a gravity arrow). A claim about sizes, shares \
+        or comparisons (most, the majority, all of, more than) must come from a given figure listed below (say its \
+        source) or an engine number; otherwise hedge it (about, in this schematic) or leave it out. Reply with the answer text only.
         """
     }
 
@@ -293,8 +316,12 @@ public enum MartyPrompts {
     }
 
     public static func answerUser(followUp: String, before: String, after: String?, patch: String? = nil, ratiosChanged: Bool = false,
-                                  refused: String? = nil, engineSawAPatch: Bool = true, movedForceArrows: [String] = []) -> String {
+                                  refused: String? = nil, engineSawAPatch: Bool = true, movedForceArrows: [String] = [], given: [String] = []) -> String {
         var s = "Learner asks: \(followUp)\n\nEngine report before:\n\(before)\n\n"
+        if refused == nil, !given.isEmpty {
+            s += "Given figures in the document (not solved by the engine; state the source):\n"
+                + given.map { "- \($0)" }.joined(separator: "\n") + "\n\n"
+        }
         if let refused {
             return s + (engineSawAPatch
                 ? "The engine refused every change that was tried (last reason: \(refused)), so this model cannot show the what-if.\n"
