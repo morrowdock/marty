@@ -5,7 +5,7 @@ import Foundation
 /// author step sees a short format guide plus `explain` entries for the parts the plan chose. The receipt records the
 /// size and SHA-256 of every prompt, so a change in context is always measured.
 public enum MartyPrompts {
-    public static let version = "marty-prompts/13"
+    public static let version = "marty-prompts/14"
 
     static let role = """
         You are Marty, a teacher who explains how things work with checked 3D models. A deterministic engine \
@@ -27,7 +27,7 @@ public enum MartyPrompts {
         \(catalog)
 
         Plan in this order: (1) the WHOLE system first: every main unit in its real place and number (all of them, \
-        not one), any person or load it carries as a simple schematic figure, and the forces that matter as arrows \
+        not one; the number and arrangement from the fact table), any person or load it carries as a simple schematic figure, and the forces that matter as arrows \
         (weight; thrust, lift or push); (2) then the inside of the ONE part that makes it work, cut open; (3) then \
         what the model does not show. "given" holds the headline figures of the subject (thrust against weight, power, \
         top speed, range, capacity; for something that flies, lifts or hovers, its thrust and the weight it lifts), \
@@ -134,7 +134,7 @@ public enum MartyPrompts {
           arrow without "text" does not count). Draw one thrust arrow for each thrust unit shown (5 units, 5 arrows),
           both ends on that unit so it turns with it; give them no text and name them with one label.
           Start a force arrow outside the body it acts on (beside or below it), never inside it. Steering: one step
-          with the arms posed ("pose": {"pilot": {"with": {...}}}), and "schematic" in the arrow text.
+          with ONE arm posed ("pose": {"pilot": {"with": {...}}}; equal arms cancel), "schematic" in the arrow text.
         - Facts beyond the engine: a figure, date, product name or version, or load share only from the fact table, in
           an unchecked label or a noted table row whose "unchecked" text or note starts with its row id ("F3 <publisher>
           <year>"), in the row's wording (VERIFIED plainly, CLAIM "claimed", PLAUSIBLE "likely" or "example", UNKNOWN
@@ -325,7 +325,7 @@ public enum MartyPrompts {
         "constraints" and "steps" (replace the whole list), "title". In a v2 document every number in a step's say must be \
         a {fact} placeholder, and every claim must still hold for the changed model: change or remove a claim that the \
         what-if makes false. A steering or pose what-if (move the arms, tilt a unit) does NOT patch the base: add one \
-        step that poses parts for that step only, {"step": {"say": "...", "pose": {"<instance>": {"with": {...}}, \
+        step that poses parts for that step only, {"step": {"say": "<= 240 characters", "pose": {"<instance>": {"with": {...}}, \
         "<part>": {"rot": [ax, ay, az, degrees]}}, "show": [ids shown only in this step], "annotate": [ids]}} (add \
         "replace": <step number> to edit that step instead). A pose may not move a part of a gear solve. An arrow end on \
         a part moves and turns with that part (and the parts it hangs on); an end at a world point stays. The engine \
@@ -343,7 +343,7 @@ public enum MartyPrompts {
 
         Follow-up: the learner asks a what-if question about the checked explainer. Change the explainer so the engine \
         checks the new case: send the WHOLE changed explainer document. A steering or pose what-if keeps the solid as it \
-        is and adds (or edits) ONE beat whose "view" has "pose": {"<instance>": {"with": {...}}, "<part>": {"rot": \
+        is and adds (or edits) ONE beat ("say" at most 200 characters) whose "view" has "pose": {"<instance>": {"with": {...}}, "<part>": {"rot": \
         [...]}} and "show": [ids shown only in that beat]. An arrow end on a part moves with that part; an end at a \
         world point stays. A force arrow \
         (not gravity) whose direction you set gets "unchecked": "schematic direction". Every number in a say is still a {fact} placeholder, and every claim must \
@@ -377,6 +377,11 @@ public enum MartyPrompts {
         These sentences compare sizes or shares without a given figure or an engine number, or state a number, year or \
         version that is not in the fact table, the engine reports or the question. Hedge a comparison (about, in this \
         schematic) or leave it out, leave out the unsourced number, and reply with the whole answer text only:
+        """
+
+    /// The repair note for `followup.direction`.
+    public static let directionRepair = """
+        The words of the posed step disagree with what its thrust arrows do at the pose (from the engine):
         """
 
     /// The repair note for `fact.unsourced.<field>`.
@@ -415,7 +420,7 @@ public enum MartyPrompts {
 
     public static func answerUser(followUp: String, before: String, after: String?, patch: String? = nil, ratiosChanged: Bool = false,
                                   refused: String? = nil, engineSawAPatch: Bool = true, movedForceArrows: [String] = [], given: [String] = [],
-                                  table: String? = nil) -> String {
+                                  table: String? = nil, push: String? = nil) -> String {
         var s = "Learner asks: \(followUp)\n\nEngine report before:\n\(before)\n\n"
         if refused == nil, let table { s += "\(table)\n\n" }
         if refused == nil, !given.isEmpty {
@@ -431,6 +436,7 @@ public enum MartyPrompts {
         if let patch { s += "The change you made (sizes you set may be stated):\n\(patch)\n\n" }
         s += "Engine report after the change:\n\(after)\n"
         if !ratiosChanged { s += "The solved speed ratios did not change.\n" }
+        if let push { s += "\(push) Say directions as these do.\n" }
         if !movedForceArrows.isEmpty {
             s += "Force arrows the change moved (their direction is schematic, not checked): \(movedForceArrows.joined(separator: ", ")).\n"
         }
