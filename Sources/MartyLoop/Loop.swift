@@ -367,10 +367,20 @@ public final class MartyLoop {
         let engineSawAPatch = attempts.contains { !marty.contains($0["reason"] as? String ?? "") }
         // Show the engine's own last reason when there is one (a later bad reply is Marty's json, not the engine's).
         let shownReason = engineSawAPatch ? (attempts.last { !marty.contains($0["reason"] as? String ?? "") }?["reason"] as? String ?? lastReason) : lastReason
+        // Force arrows (not gravity) that the accepted patch may have moved: their shown direction is schematic.
+        var moved: [String] = []
+        if let p = acceptedPatch as? [String: Any],
+           let doc = (try? JSONSerialization.jsonObject(with: Data(docText.utf8))) as? [String: Any] {
+            moved = Self.movedForceArrows(annotations: doc["annotations"], parts: doc["parts"] as? [[String: Any]] ?? [],
+                                          moved: Set((p["parts"] as? [String: Any] ?? [:]).keys),
+                                          all: !Set(p.keys).isDisjoint(with: ["params", "constraints", "joints"]))
+            result["forceArrowsMoved"] = moved
+        }
         let (answer, i) = ask("answer", attempt: 0, system: modelled ? MartyPrompts.answerSystem() : MartyPrompts.answerRefusedSystem(),
                               user: MartyPrompts.answerUser(followUp: followUp, before: before, after: after.map { Self.compact(Self.summary($0)) },
                                                             patch: acceptedPatch.map { Self.compact($0) }, ratiosChanged: ratiosChanged,
-                                                            refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAPatch))
+                                                            refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAPatch,
+                                                            movedForceArrows: moved))
         note(i, ["ok": answer != nil])
         result["ok"] = answer != nil
         result["answer"] = answer.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) as Any } ?? NSNull()
@@ -392,6 +402,7 @@ extension MartyLoop {
         var attempts: [[String: Any]] = []
         var after: [String: Any]? = nil
         var acceptedChange: String? = nil
+        var moved: [String] = []
         var noChange = false
         for attempt in 0...options.repairs {
             let (text, i) = ask("followup", attempt: attempt, system: system, user: user)
@@ -418,7 +429,11 @@ extension MartyLoop {
                 catch let e as ToolError { r = ["ok": false, "reason": e.reason] }
             }
             note(i, Self.outcome(r)); attempts.append(Self.outcome(r))
-            if (r["ok"] as? Bool) == true { after = r; acceptedChange = Self.changeSummary(from: base, to: changed); break }
+            if (r["ok"] as? Bool) == true {
+                after = r; acceptedChange = Self.changeSummary(from: base, to: changed)
+                moved = Self.movedForceArrows(explainerFrom: base, to: changed)
+                break
+            }
             let reason = r["reason"] as? String ?? "unknown"
             let (facts, readBack) = repairContext(reason: reason, report: r, document: changed, components: components)
             // Built in parts: one long concatenation is too slow to type-check.
@@ -443,6 +458,7 @@ extension MartyLoop {
             result["after"] = Self.summary(after).merging(["ref": after["ref"] ?? NSNull()]) { a, _ in a }
             ratiosChanged = MartyJSON.data(after["ratios"] ?? [String: Any]()) != MartyJSON.data(report["ratios"] ?? [String: Any]())
             result["ratiosChanged"] = ratiosChanged
+            result["forceArrowsMoved"] = moved
         }
         let lastReason = attempts.last?["reason"] as? String
         guard modelled || (lastReason != nil && lastReason != "adapter") else { result["ok"] = false; return result }
@@ -452,7 +468,8 @@ extension MartyLoop {
         let (answer, i) = ask("answer", attempt: 0, system: modelled ? MartyPrompts.answerSystem() : MartyPrompts.answerRefusedSystem(),
                               user: MartyPrompts.answerUser(followUp: followUp, before: before, after: after.map { Self.compact(Self.summary($0)) },
                                                             patch: acceptedChange, ratiosChanged: ratiosChanged,
-                                                            refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAChange))
+                                                            refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAChange,
+                                                            movedForceArrows: moved))
         note(i, ["ok": answer != nil])
         result["ok"] = answer != nil
         result["answer"] = answer.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) as Any } ?? NSNull()
@@ -460,37 +477,139 @@ extension MartyLoop {
         return result
     }
 
-    /// What a follow-up may change in an explainer, without its words: the solid, the board items other than text
-    /// items, and each beat's ops (where tables are added). A change of words only (captions, title, notes, text items)
-    /// gives the same bytes.
+    /// What a follow-up may change in an explainer, without its words: the solid (without label and arrow text), the
+    /// board items other than text items, and the beats' model ops in order (an absent or empty ops list adds nothing;
+    /// title and camera ops and ops on text items or on a "text" or "label" key are words). A change of words only
+    /// (captions, titles, notes, text items, an added caption-only beat) gives the same bytes.
     static func modelContent(_ d: [String: Any]) -> Data {
-        var board = d["board"] as? [String: Any] ?? [:]
-        if let items = board["items"] as? [[String: Any]] { board["items"] = items.filter { $0["k"] as? String != "text" } }
-        let ops = (d["beats"] as? [[String: Any]] ?? []).map { $0["ops"] ?? NSNull() }
-        return MartyJSON.data(["solid": d["solid"] ?? NSNull(), "board": board, "ops": ops])
+        MartyJSON.data(["solid": modelSolid(d), "board": modelBoardItems(d), "ops": modelOps(d)])
     }
 
-    /// The accepted change of an explainer follow-up, for the answer prompt: the solid parts added, changed or removed
-    /// (by id, with their new fields), and whether the board or beat ops changed.
+    static func modelSolid(_ d: [String: Any]) -> Any {
+        guard var solid = d["solid"] as? [String: Any] else { return d["solid"] ?? NSNull() }
+        solid["title"] = nil
+        if var ann = solid["annotations"] as? [String: Any] {
+            for key in ["labels", "arrows", "dimensions"] {
+                if let list = ann[key] as? [[String: Any]] { ann[key] = list.map { var o = $0; o["text"] = nil; return o } }
+            }
+            solid["annotations"] = ann
+        }
+        return solid
+    }
+
+    static func textItemIds(_ d: [String: Any]) -> Set<String> {
+        var ids = Set(((d["board"] as? [String: Any])?["items"] as? [[String: Any]] ?? [])
+            .filter { $0["k"] as? String == "text" }.compactMap { $0["id"] as? String })
+        for beat in d["beats"] as? [[String: Any]] ?? [] {
+            for case let o as [String: Any] in beat["ops"] as? [Any] ?? [] where o["op"] as? String == "add" {
+                if let item = o["item"] as? [String: Any], item["k"] as? String == "text", let id = item["id"] as? String { ids.insert(id) }
+            }
+        }
+        return ids
+    }
+
+    /// The board items other than text items, by id (an item without an id keeps its place under "#<index>").
+    static func modelBoardItems(_ d: [String: Any]) -> [String: Any] {
+        var out: [String: Any] = [:]
+        for (n, item) in ((d["board"] as? [String: Any])?["items"] as? [[String: Any]] ?? []).enumerated() where item["k"] as? String != "text" {
+            out[item["id"] as? String ?? "#\(n)"] = item
+        }
+        return out
+    }
+
+    static func modelOps(_ d: [String: Any]) -> [Any] {
+        let text = textItemIds(d)
+        var ops: [Any] = []
+        for beat in d["beats"] as? [[String: Any]] ?? [] {
+            guard let raw = beat["ops"] else { continue }
+            guard let list = raw as? [Any] else { ops.append(raw); continue }
+            for op in list {
+                guard let o = op as? [String: Any] else { ops.append(op); continue }
+                switch o["op"] as? String {
+                case "title", "camera": continue
+                case "add":
+                    if let item = o["item"] as? [String: Any], item["k"] as? String == "text" { continue }
+                case "set", "remove":
+                    if let id = o["id"] as? String, text.contains(id) { continue }
+                    if let key = o["key"] as? String, key == "text" || key == "label" { continue }
+                default: break
+                }
+                ops.append(o)
+            }
+        }
+        return ops
+    }
+
+    /// The accepted change of an explainer follow-up, for the answer prompt, with values before and after: the solid
+    /// parts added, changed or removed (by id), other solid keys (params, constraints, annotations), the board items
+    /// other than text items, and the beats' model ops.
     static func changeSummary(from base: [String: Any], to new: [String: Any]) -> String {
-        func parts(_ d: [String: Any]) -> [String: [String: Any]] {
-            var out: [String: [String: Any]] = [:]
+        func diff(_ a: [String: Any], _ b: [String: Any]) -> [String: Any] {
+            var out: [String: Any] = [:]
+            for k in Set(a.keys).union(b.keys).sorted() where MartyJSON.data(a[k] ?? NSNull()) != MartyJSON.data(b[k] ?? NSNull()) {
+                out[k] = ["before": a[k] ?? "absent", "after": b[k] ?? "absent"]
+            }
+            return out
+        }
+        func parts(_ d: [String: Any]) -> [String: Any] {
+            var out: [String: Any] = [:]
             for p in ((d["solid"] as? [String: Any])?["parts"] as? [[String: Any]] ?? []) { if let id = p["id"] as? String { out[id] = p } }
             return out
         }
-        let a = parts(base), b = parts(new)
-        var changed: [String: Any] = [:]
-        for id in Set(a.keys).union(b.keys).sorted() {
-            let before = a[id].map { MartyJSON.data($0) }, after = b[id].map { MartyJSON.data($0) }
-            if before != after { changed[id] = b[id] ?? "removed" }
-        }
-        var summary: [String: Any] = ["parts": changed]
-        let solidA = (base["solid"] as? [String: Any] ?? [:]).filter { $0.key != "parts" }
-        let solidB = (new["solid"] as? [String: Any] ?? [:]).filter { $0.key != "parts" }
-        if MartyJSON.data(solidA) != MartyJSON.data(solidB) { summary["solidOther"] = "changed (constraints, annotations or params)" }
-        if modelContent(["board": base["board"] ?? NSNull(), "beats": base["beats"] ?? NSNull()])
-            != modelContent(["board": new["board"] ?? NSNull(), "beats": new["beats"] ?? NSNull()]) { summary["boardOrOps"] = "changed" }
+        var summary: [String: Any] = [:]
+        let p = diff(parts(base), parts(new))
+        if !p.isEmpty { summary["solid parts"] = p }
+        let other = diff((base["solid"] as? [String: Any] ?? [:]).filter { $0.key != "parts" },
+                         (new["solid"] as? [String: Any] ?? [:]).filter { $0.key != "parts" })
+        if !other.isEmpty { summary["solid other"] = other }
+        let items = diff(modelBoardItems(base), modelBoardItems(new))
+        if !items.isEmpty { summary["board items"] = items }
+        let opsA = modelOps(base), opsB = modelOps(new)
+        if MartyJSON.data(opsA) != MartyJSON.data(opsB) { summary["beat ops"] = ["before": opsA, "after": opsB] }
         return MartyJSON.string(summary)
+    }
+
+    /// The force arrows without a checked cause (not gravity) that a change may have moved or turned: an arrow with an
+    /// end (or its "on" part) on a moved part or on a part hung below one, and an arrow whose definition changed. With
+    /// `all` (the change touched params, constraints or joints) every such arrow counts. The engine checks a gravity
+    /// arrow again in the changed model, so it is never listed.
+    static func movedForceArrows(annotations: Any?, parts: [[String: Any]], moved: Set<String>, all: Bool,
+                                 changedArrows: Set<String> = []) -> [String] {
+        var m = moved
+        func hit(_ ref: String) -> Bool { m.contains(ref) || m.contains { ref.hasPrefix($0 + ".") } }
+        var grew = true
+        while grew {
+            grew = false
+            for p in parts {
+                guard let id = p["id"] as? String, !hit(id), let parent = p["parent"] as? String, hit(parent) else { continue }
+                m.insert(id); grew = true
+            }
+        }
+        func ref(_ a: Any?) -> String? { (a as? String) ?? ((a as? [String: Any])?["part"] as? String) }
+        let arrows = (annotations as? [String: Any])?["arrows"] as? [[String: Any]] ?? []
+        return arrows.compactMap { a in
+            guard a["meaning"] as? String == "force", a["cause"] as? String != "gravity", let id = a["id"] as? String else { return nil }
+            if all || changedArrows.contains(id) { return id }
+            return [a["from"], a["to"], a["on"]].compactMap(ref).contains(where: hit) ? id : nil
+        }
+    }
+
+    /// The force arrows that an accepted explainer change may have moved: the solid parts it added or changed, every
+    /// arrow when other model keys of the solid changed, and the arrows whose definition changed.
+    static func movedForceArrows(explainerFrom base: [String: Any], to new: [String: Any]) -> [String] {
+        let a = base["solid"] as? [String: Any] ?? [:], b = new["solid"] as? [String: Any] ?? [:]
+        func byId(_ list: Any?) -> [String: Data] {
+            var out: [String: Data] = [:]
+            for o in list as? [[String: Any]] ?? [] { if let id = o["id"] as? String { out[id] = MartyJSON.data(o) } }
+            return out
+        }
+        let pa = byId(a["parts"]), pb = byId(b["parts"])
+        let movedParts = Set(pb.keys.filter { pa[$0] != pb[$0] }).union(pa.keys.filter { pb[$0] == nil })
+        let aa = byId((a["annotations"] as? [String: Any])?["arrows"]), ab = byId((b["annotations"] as? [String: Any])?["arrows"])
+        let words: Set<String> = ["parts", "annotations", "title", "steps"]
+        let all = Set(a.keys).union(b.keys).subtracting(words).contains { MartyJSON.data(a[$0] ?? NSNull()) != MartyJSON.data(b[$0] ?? NSNull()) }
+        return movedForceArrows(annotations: b["annotations"], parts: b["parts"] as? [[String: Any]] ?? [], moved: movedParts,
+                                all: all, changedArrows: Set(ab.keys.filter { aa[$0] != ab[$0] }))
     }
 
     /// The engine replaces a part field as a whole, so `{"stage": {"with": {"planets": 4}}}` would reset every other

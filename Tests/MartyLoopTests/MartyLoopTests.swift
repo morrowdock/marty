@@ -113,8 +113,13 @@ final class MartyLoopTests: XCTestCase {
         // A table edit in a beat's ops is a model change; a board text item edit alone is words only.
         let table = MartyExamples.explainerExample.replacingOccurrences(of: #"["Rated rpm",3000]"#, with: #"["Rated rpm",3500]"#)
         XCTAssertNotEqual(table, MartyExamples.explainerExample)
-        let (_, tableEdit) = try run([#"{"document": \#(table)}"#, "The rated speed is higher."])
+        let (mTable, tableEdit) = try run([#"{"document": \#(table)}"#, "The rated speed is higher."])
         XCTAssertEqual(tableEdit["changed"] as? Bool, true, "\(tableEdit["attempts"] ?? "")")
+        // The answer gets the changed values, before and after.
+        XCTAssertTrue(mTable.prompts[3].user.contains("3000") && mTable.prompts[3].user.contains("3500"), mTable.prompts[3].user)
+        // A gravity arrow is checked again by the engine: no schematic-direction line.
+        XCTAssertEqual(ok["forceArrowsMoved"] as? [String], [])
+        XCTAssertFalse(mOK.prompts[3].user.contains("Force arrows the change moved"))
         let caption = MartyExamples.explainerExample.replacingOccurrences(of: #""text":"Key figures""#, with: #""text":"Figures""#)
         XCTAssertNotEqual(caption, MartyExamples.explainerExample)
         let (_, captionEdit) = try run([#"{"document": \#(caption)}"#, #"{"document": null}"#, "No change."])
@@ -127,6 +132,57 @@ final class MartyLoopTests: XCTestCase {
         let (m, text) = try run([#"{"document": \#(words)}"#, #"{"document": null}"#, "No change."])
         XCTAssertEqual((text["attempts"] as? [[String: Any]])?.first?["reason"] as? String, "followup.textOnly")
         XCTAssertTrue(m.prompts[3].user.contains("Only the words changed"))
+    }
+
+    /// Words only give the same model content: a caption-only beat, an added text item, a text or label set, a
+    /// title or camera op, arrow text. A table cell, a part or an arrow end does not.
+    func testExplainerModelContentIgnoresWords() throws {
+        let base = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(MartyExamples.explainerExample.utf8)) as? [String: Any])
+        func edited(_ f: (inout [String: Any]) -> Void) -> [String: Any] { var d = base; f(&d); return d }
+        func beats(_ d: [String: Any]) -> [[String: Any]] { d["beats"] as? [[String: Any]] ?? [] }
+        let same = MartyLoop.modelContent(base)
+        let wordsOnly: [[String: Any]] = [
+            edited { d in d["beats"] = beats(d) + [["say": "A new caption."]] },
+            edited { d in d["beats"] = beats(d) + [["say": "A new caption.", "ops": [Any]()]] },
+            edited { d in d["beats"] = beats(d) + [["say": "Note.", "ops": [["op": "add", "item": ["id": "n", "k": "text", "at": [1, 1], "text": "Note"]],
+                                                                            ["op": "set", "id": "n", "key": "text", "value": "Note 2"],
+                                                                            ["op": "set", "id": "cap", "key": "text", "value": "Figures"],
+                                                                            ["op": "title", "title": "New"], ["op": "camera", "camera": [Any]()]]]] },
+            edited { d in
+                var solid = d["solid"] as! [String: Any], ann = solid["annotations"] as! [String: Any]
+                var arrows = ann["arrows"] as! [[String: Any]]; arrows[0]["text"] = "Its weight"
+                ann["arrows"] = arrows; solid["annotations"] = ann; d["solid"] = solid
+            }]
+        for (n, d) in wordsOnly.enumerated() { XCTAssertEqual(MartyLoop.modelContent(d), same, "case \(n)") }
+        let modelChanges: [[String: Any]] = [
+            edited { d in d["beats"] = beats(d) + [["say": "Gone.", "ops": [["op": "remove", "id": "t"]]]] },
+            edited { d in
+                var solid = d["solid"] as! [String: Any], ann = solid["annotations"] as! [String: Any]
+                var arrows = ann["arrows"] as! [[String: Any]]; arrows[0]["to"] = ["world": [0, 0, -80]]
+                ann["arrows"] = arrows; solid["annotations"] = ann; d["solid"] = solid
+            }]
+        for (n, d) in modelChanges.enumerated() { XCTAssertNotEqual(MartyLoop.modelContent(d), same, "case \(n)") }
+    }
+
+    /// Force arrows a change may move: an end on a moved part or on a part hung below it (part, mixed or "on" anchors),
+    /// not an arrow with only world ends, never a gravity arrow; every force arrow when params or joints changed.
+    func testMovedForceArrows() {
+        let parts: [[String: Any]] = [["id": "pilot", "use": "mannequin"], ["id": "jet", "parent": "pilot.rightHand"],
+                                      ["id": "nozzle", "parent": "jet"], ["id": "base"]]
+        let annotations: [String: Any] = ["arrows": [
+            ["id": "aT", "meaning": "force", "from": ["part": "nozzle", "offset": [0, 0, -10]], "to": ["part": "nozzle", "offset": [0, 0, -90]]],
+            ["id": "aMix", "meaning": "force", "from": ["world": [0, 0, 0]], "to": "jet"],
+            ["id": "aWorld", "meaning": "force", "from": ["world": [0, 0, 0]], "to": ["world": [0, 0, 50]]],
+            ["id": "aBase", "meaning": "force", "from": "base", "to": ["part": "base", "offset": [0, 0, 9]]],
+            ["id": "aW", "meaning": "force", "cause": "gravity", "from": "nozzle", "to": ["part": "nozzle", "offset": [0, 0, -50]]],
+            ["id": "aFlow", "meaning": "flow", "from": "nozzle", "to": "base"]]]
+        XCTAssertEqual(MartyLoop.movedForceArrows(annotations: annotations, parts: parts, moved: ["pilot"], all: false), ["aT", "aMix"])
+        XCTAssertEqual(MartyLoop.movedForceArrows(annotations: annotations, parts: parts, moved: ["base"], all: false), ["aBase"])
+        XCTAssertEqual(MartyLoop.movedForceArrows(annotations: annotations, parts: parts, moved: [], all: true), ["aT", "aMix", "aWorld", "aBase"])
+        XCTAssertEqual(MartyLoop.movedForceArrows(annotations: annotations, parts: parts, moved: [], all: false, changedArrows: ["aWorld"]), ["aWorld"])
+        let line = MartyPrompts.answerUser(followUp: "q", before: "{}", after: "{}", movedForceArrows: ["aT"])
+        XCTAssertTrue(line.contains("Force arrows the change moved (their direction is schematic, not checked): aT."))
+        XCTAssertFalse(MartyPrompts.answerUser(followUp: "q", before: "{}", after: "{}").contains("Force arrows"))
     }
 
     /// The guide's people and compressor patterns are true engine rules: worn parts hang on mannequin anchors, a force

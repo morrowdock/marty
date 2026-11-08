@@ -239,7 +239,8 @@ public enum MartyPrompts {
         "constraints" and "steps" (replace the whole list), "title". In a v2 document every number in a step's say must be \
         a {fact} placeholder, and every claim must still hold for the changed model: change or remove a claim that the \
         what-if makes false. A steering or what-if question may move a part (a mannequin arm angle in its "with", or a \
-        part's "rot"). A patch cannot change annotations; force arrows ride their parts and turn with them.
+        part's "rot"). A patch cannot change annotations: an arrow end on a part moves and turns with that part (and with \
+        the parts it hangs on), and an end at a world point stays where it is. The engine checks a gravity arrow again.
 
         Reply with ONE JSON object only, no prose and no code fences:
         {"patch": { ... }} or, when no model change is needed, {"patch": null}.
@@ -253,8 +254,9 @@ public enum MartyPrompts {
 
         Follow-up: the learner asks a what-if question about the checked explainer. Change the explainer so the engine \
         checks the new case: send the WHOLE changed explainer document. A steering or what-if question may move a part \
-        (a mannequin arm angle in its "with", or a part's "rot"); a force arrow whose new direction you set gets \
-        "unchecked": "schematic direction". Every number in a say is still a {fact} placeholder, and every claim must \
+        (a mannequin arm angle in its "with", or a part's "rot"). An arrow end on a part moves with that part; an end \
+        at a world point stays, so give a force arrow that must turn with a part both ends on that part. A force arrow \
+        (not gravity) whose direction you set gets "unchecked": "schematic direction". Every number in a say is still a {fact} placeholder, and every claim must \
         hold for the changed model. A change of words only is refused.
 
         Reply with ONE JSON object only, no prose and no code fences:
@@ -273,8 +275,8 @@ public enum MartyPrompts {
         Answer the learner's follow-up in 2 to 4 short sentences, in plain words. Use only numbers from the engine \
         reports below (the facts, as written there, and the solved ratios) and sizes set in the model or in the change. \
         Prefer a fact over your own arithmetic; if you must compute, use only simple, exact arithmetic on those numbers. \
-        If the change moved a part that carries a force arrow, say that the force direction shown is schematic. Reply \
-        with the answer text only.
+        If the message lists force arrows that the change moved, say that the force direction shown there is \
+        schematic; say nothing of that kind otherwise (the engine checks a gravity arrow). Reply with the answer text only.
         """
     }
 
@@ -291,7 +293,7 @@ public enum MartyPrompts {
     }
 
     public static func answerUser(followUp: String, before: String, after: String?, patch: String? = nil, ratiosChanged: Bool = false,
-                                  refused: String? = nil, engineSawAPatch: Bool = true) -> String {
+                                  refused: String? = nil, engineSawAPatch: Bool = true, movedForceArrows: [String] = []) -> String {
         var s = "Learner asks: \(followUp)\n\nEngine report before:\n\(before)\n\n"
         if let refused {
             return s + (engineSawAPatch
@@ -302,6 +304,9 @@ public enum MartyPrompts {
         if let patch { s += "The change you made (sizes you set may be stated):\n\(patch)\n\n" }
         s += "Engine report after the change:\n\(after)\n"
         if !ratiosChanged { s += "The solved speed ratios did not change.\n" }
+        if !movedForceArrows.isEmpty {
+            s += "Force arrows the change moved (their direction is schematic, not checked): \(movedForceArrows.joined(separator: ", ")).\n"
+        }
         return s
     }
 }

@@ -89,18 +89,27 @@ the MCP server uses), so a run needs no MCP client.
    `followup.textOnly` problems), the prompt says "no change could be checked"
    instead of "the engine refused". An empty follow-up (the out-of-scope bench questions have
    none) means no follow-up turn. A what-if may move a part (a mannequin arm
-   angle, a part's `rot`). A patch cannot change annotations: force arrows ride
-   their parts and turn with them, and the answer says that such a force
-   direction is schematic. An explainer has no engine patch format, so its
-   follow-up sends the whole changed explainer (`{"document": …}`, or
-   `{"document": null}` for no change; any other value is repaired), which must
-   stay an explainer (`followup.kind`) and is checked in strict mode (at most 3
-   repairs). A change of words only is refused as `followup.textOnly`: the model
-   content compared is the solid, the board items other than text items, and
-   each beat's `ops`. The answer prompt gets the accepted change (the solid
-   parts added, changed or removed, and whether the board or ops changed). In
-   an explainer, a force arrow whose new direction the model sets may be marked
-   `unchecked: "schematic direction"`.
+   angle, a part's `rot`). A patch cannot change annotations: an arrow end on a
+   part moves and turns with that part (and with the parts it hangs on), and an
+   end at a world point stays where it is. The engine checks a gravity arrow
+   again in the changed model. Marty lists the other force arrows that the
+   accepted change may have moved (an end or `on` part on a changed part or on a
+   part hung below one; every force arrow when params, constraints or joints
+   changed) in `forceArrowsMoved`, and only then does the answer prompt ask the
+   model to say that their direction is schematic. An explainer has no engine
+   patch format, so its follow-up sends the whole changed explainer
+   (`{"document": …}`, or `{"document": null}` for no change; any other value is
+   repaired), which must stay an explainer (`followup.kind`) and is checked in
+   strict mode (at most 3 repairs). A change of words only is refused as
+   `followup.textOnly`: the model content compared is the solid (without its
+   title and annotation text), the board items other than text items, and the
+   beats' model ops in order (an absent or empty `ops` adds nothing; `title` and
+   `camera` ops, ops on text items and sets of a `text` or `label` key are
+   words). The answer prompt gets the accepted change with values before and
+   after: the solid parts, the other solid keys, the board items and the beat
+   ops that changed. In an explainer, a force arrow whose direction the model
+   sets may be marked `unchecked: "schematic direction"`; an arrow whose
+   definition changed is listed in `forceArrowsMoved`.
 
 Model text is only parsed as JSON and given to the engine. It is never run.
 
@@ -144,7 +153,7 @@ One `receipt.json` per run, with sorted keys:
 | `accepted`, `final` | Whether a document was accepted, and its title, part ids, ratios, checks, `ref`, triangles and steps. |
 | `render`, `lesson` | Render `ok`, `reason` (when it failed), directory, file digests and timing; `lesson.json`. |
 | `adapterErrors` | Reasons of model calls that failed in the adapter (for example `adapter.timeout`). Present only when one failed. If the last plan call fails in the adapter (no plan was received), the run stops there. |
-| `followUp` | The question, its attempts, `changed` (the engine accepted a patch), `modelled` (the engine solved the change, or none was needed), `ratiosChanged`, the report after the change, the answer and `answerSource`. `ok` means an answer was written: also an honest "this model cannot show it" when `modelled` is false. `ok` is false when no answer was written (for example an adapter failure). |
+| `followUp` | The question, its attempts, `changed` (the engine accepted a patch), `modelled` (the engine solved the change, or none was needed), `ratiosChanged`, `forceArrowsMoved` (force arrows that the accepted change may have moved; their shown direction is schematic), the report after the change, the answer and `answerSource`. `ok` means an answer was written: also an honest "this model cannot show it" when `modelled` is false. `ok` is false when no answer was written (for example an adapter failure). |
 | `calls` | Every model call: phase, attempt, prompt files with sizes and digests, reply file, seconds, adapter facts (tokens, cost equivalent) and the engine outcome. |
 | `seconds`, `modelSeconds`, `contextBytes` | Wall time, model time and prompt sizes. |
 
