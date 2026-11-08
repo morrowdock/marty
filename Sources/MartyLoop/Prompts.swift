@@ -108,7 +108,7 @@ public enum MartyPrompts {
           "b": <anchor>} shows {dim.len} mm.
         - A number the engine cannot solve (a published weight, thrust, power, count or speed) goes only in a label or
           arrow with "unchecked": "<source, 1-60 chars>" (shown as Not checked) or, in the explainer form, in a table
-          with a note (shown as Given). Never put it in a claim.
+          with a "basis" note (shown as Given) or an "unchecked" note (Not checked). Never put it in a claim.
         - A person, wing or body that has no library part is a few boxes and shafts named "(schematic)".
         - If the engine cannot show part of the subject, build the best schematic and say so in the title or a step
           (for example "schematic: chain not modelled"). Never present an unchecked fake as real.
