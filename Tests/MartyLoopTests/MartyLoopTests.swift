@@ -750,6 +750,14 @@ final class MartyLoopTests: XCTestCase {
         let v2: [String: Any] = ["v": 2, "kind": "assembly", "title": "t", "steps": [["say": "It turns {pair.wheel.speed|abs|frac}."], ["say": "Released {2017}"]]]
         XCTAssertEqual(FactCheck.findings(v2, evidence: e0).map(\.token), ["2017"], "only a fact name is a placeholder")
         XCTAssertNil(FactCheck.fraction(1e20)); XCTAssertNil(FactCheck.fraction(1e-20))
+        // A patch of a v1 base shows braces as typed; notes and unchecked reasons never fill placeholders.
+        let v1base: [String: Any] = ["v": 1, "kind": "assembly", "title": "t"]
+        let v1patch: [String: Any] = ["params": ["input": 1], "title": "Released {year.2017}"]
+        XCTAssertEqual(FactCheck.findings(v1patch, evidence: e0, filledBy: v1base).map(\.token), ["2017"])
+        XCTAssertEqual(FactCheck.findings(v1patch, evidence: e0, filledBy: ["v": 2, "kind": "assembly"]), [])
+        let literal: [String: Any] = ["v": 1, "kind": "explainer", "notes": ["t": ["basis": "First flown {year.2017}"]],
+                                      "beats": [["say": "It flies.", "unchecked": "since {year.2016}"]]]
+        XCTAssertEqual(Set(FactCheck.findings(literal, evidence: e0).map(\.field)), ["note.t.basis", "beat1.unchecked"])
         XCTAssertEqual(MartyLoop.unsourcedSentences("It has more than 1e-20 parts.", sources: ["0.00000000000000000001"]).count, 1)
     }
 

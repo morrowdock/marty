@@ -432,7 +432,8 @@ public final class MartyLoop {
                 let base = (try? JSONSerialization.jsonObject(with: Data(docText.utf8))) as? [String: Any]
                 let unsourced = FactCheck.findings(merged, evidence: .build(table: facts, question: question, report: r, model: base,
                                                                             extra: [followUp] + Self.numberLeaves((merged as? [String: Any])?["parts"])
-                                                                                + Self.numberLeaves((merged as? [String: Any])?["params"])))
+                                                                                + Self.numberLeaves((merged as? [String: Any])?["params"])),
+                                                   filledBy: base)
                 if let reason = FactCheck.reason(unsourced) { r = ["ok": false, "reason": reason, "unsourced": unsourced.map(\.line)] }
             }
             note(i, Self.outcome(r)); attempts.append(Self.outcome(r))

@@ -117,12 +117,12 @@ import MartyEngine
     static let shownKeys: Set<String> = ["text", "label", "xl", "yl", "cells", "bars", "unit", "vals", "ptrs", "xr", "yr"]
 
     /// The text fields of an assembly (v1 or v2), an explainer or a follow-up patch, with their field names.
-    static func fields(_ d: [String: Any]) -> [(field: String, text: String, namesOnly: Bool)] {
-        // (The engine fills placeholders in v2 assemblies and explainers; see `findings`.)
-        var out: [(String, String, Bool)] = []
-        func add(_ f: String, _ v: Any?, namesOnly: Bool = false) {
-            if let s = v as? String, !s.isEmpty { out.append((f, s, namesOnly)) }
-            else if let n = v as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() { out.append((f, "\(n)", namesOnly)) }
+    /// `literal`: a field the engine shows as typed, never filling placeholders (notes, `unchecked` reasons).
+    static func fields(_ d: [String: Any]) -> [(field: String, text: String, namesOnly: Bool, literal: Bool)] {
+        var out: [(String, String, Bool, Bool)] = []
+        func add(_ f: String, _ v: Any?, namesOnly: Bool = false, literal: Bool = false) {
+            if let s = v as? String, !s.isEmpty { out.append((f, s, namesOnly, literal)) }
+            else if let n = v as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() { out.append((f, "\(n)", namesOnly, literal)) }
         }
         func annotations(_ a: Any?) {
             guard let a = a as? [String: Any] else { return }
@@ -131,7 +131,7 @@ import MartyEngine
                     let id = x["id"] as? String ?? "?"
                     // A number labelled "assumed example" is an example, not a fact (it shows as Not checked).
                     if ((x["unchecked"] as? String) ?? "").lowercased().hasPrefix("assumed example") { continue }
-                    add("annotation.\(id)", x["text"]); add("annotation.\(id).unchecked", x["unchecked"])
+                    add("annotation.\(id)", x["text"]); add("annotation.\(id).unchecked", x["unchecked"], literal: true)
                 }
             }
         }
@@ -167,7 +167,7 @@ import MartyEngine
         parts(d["parts"])
         annotations(d["annotations"])
         for (n, s) in (d["steps"] as? [[String: Any]] ?? []).enumerated() {
-            add("step\(n + 1).say", s["say"]); add("step\(n + 1).unchecked", s["unchecked"])
+            add("step\(n + 1).say", s["say"]); add("step\(n + 1).unchecked", s["unchecked"], literal: true)
         }
         if let solid = d["solid"] as? [String: Any] {
             add("solid.title", solid["title"])
@@ -181,10 +181,11 @@ import MartyEngine
             if let id = o["id"] as? String, let key = o["key"] as? String { edit(id, key, o["value"], "board.over.") }
         }
         for (id, note) in d["notes"] as? [String: Any] ?? [:] {
-            add("note.\(id).basis", (note as? [String: Any])?["basis"]); add("note.\(id).unchecked", (note as? [String: Any])?["unchecked"])
+            add("note.\(id).basis", (note as? [String: Any])?["basis"], literal: true)
+            add("note.\(id).unchecked", (note as? [String: Any])?["unchecked"], literal: true)
         }
         for (n, b) in (d["beats"] as? [[String: Any]] ?? []).enumerated() {
-            add("beat\(n + 1).say", b["say"]); add("beat\(n + 1).unchecked", b["unchecked"])
+            add("beat\(n + 1).say", b["say"]); add("beat\(n + 1).unchecked", b["unchecked"], literal: true)
             for case let o as [String: Any] in b["ops"] as? [Any] ?? [] {
                 if let item = o["item"] as? [String: Any] { board(item, "beat\(n + 1).") }
                 if o["op"] as? String == "set", let id = o["id"] as? String, let key = o["key"] as? String {
@@ -198,13 +199,16 @@ import MartyEngine
     }
 
     /// All findings of a document or patch, in field order, at most `limit`.
-    public static func findings(_ document: Any, evidence: Evidence, limit: Int = 12) -> [Finding] {
+    /// `filledBy`: the document whose format decides whether the engine fills placeholders (the base document for a
+    /// follow-up patch, which has no "v"); by default `document` itself.
+    public static func findings(_ document: Any, evidence: Evidence, filledBy format: Any? = nil, limit: Int = 12) -> [Finding] {
         guard let d = document as? [String: Any] else { return [] }
-        // A v1 assembly shows "{...}" as typed text; v2 assemblies, explainers and patches of v2 documents fill it.
-        let filled = !(d["v"] as? Int == 1 && d["kind"] as? String == "assembly")
+        // A v1 assembly shows "{...}" as typed text; v2 assemblies and explainers fill it (literal fields never).
+        let f0 = (format as? [String: Any]) ?? d
+        let filled = !(f0["v"] as? Int == 1 && f0["kind"] as? String == "assembly")
         var out: [Finding] = []
         for f in fields(d) {
-            for x in check(f.field, f.text, evidence, namesOnly: f.namesOnly, placeholders: filled) where !out.contains(x) { out.append(x) }
+            for x in check(f.field, f.text, evidence, namesOnly: f.namesOnly, placeholders: filled && !f.literal) where !out.contains(x) { out.append(x) }
             if out.count >= limit { break }
         }
         return Array(out.prefix(limit))
