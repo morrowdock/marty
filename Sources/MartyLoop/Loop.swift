@@ -89,6 +89,7 @@ public final class MartyLoop {
                                 "ref": r["ref"] ?? NSNull(), "error": r["error"] ?? NSNull(), "component": r["component"] ?? NSNull()]
         if let v = r["visibility"] { o["visibility"] = v }
         if let l = r["limit"] { o["limit"] = l }
+        if let u = r["unsourced"] { o["unsourced"] = u }
         return o
     }
 
@@ -282,6 +283,21 @@ public final class MartyLoop {
             }
             note(i, Self.outcome(report))
             attempts.append(Self.outcome(report))
+            if (report["ok"] as? Bool) == true, let document,
+               case let unsourced = FactCheck.findings(document, evidence: .build(table: facts, question: question, report: report, model: document)),
+               let reason = FactCheck.reason(unsourced) {
+                // A number, year or version that is not in the fact table, the question or the model: refused like an
+                // engine refusal (a normal repair; no fallback).
+                attempts[attempts.count - 1]["ok"] = false
+                attempts[attempts.count - 1]["reason"] = reason
+                attempts[attempts.count - 1]["engineOk"] = true
+                attempts[attempts.count - 1]["unsourced"] = unsourced.map(\.line)
+                note(i, attempts[attempts.count - 1])
+                user = MartyPrompts.repairUser(question: question, plan: planText, previous: text, reason: reason, part: nil,
+                                               hint: MartyPrompts.factRepair + "\n" + unsourced.map { "- \($0.line)" }.joined(separator: "\n"),
+                                               table: factBlock)
+                continue
+            }
             if (report["ok"] as? Bool) == true {
                 // Marty's lint on the accepted document (too many texts in a step, a comparison with no figure). It
                 // only asks for one more repair when one is left; the accepted document is kept as the fallback.
@@ -411,6 +427,14 @@ public final class MartyLoop {
             let merged = Self.mergingWith(patch, base: docText)
             do { r = try engine.patch(document: nil, ref: ref, patch: merged, components: components, returnDocument: false, strict: true) }
             catch let e as ToolError { r = ["ok": false, "reason": e.reason] }
+            // The patch's own text (title, steps, part names) is checked for unsourced facts like a document.
+            if (r["ok"] as? Bool) == true {
+                let base = (try? JSONSerialization.jsonObject(with: Data(docText.utf8))) as? [String: Any]
+                let unsourced = FactCheck.findings(merged, evidence: .build(table: facts, question: question, report: r, model: base,
+                                                                            extra: [followUp] + Self.numberLeaves((merged as? [String: Any])?["parts"])
+                                                                                + Self.numberLeaves((merged as? [String: Any])?["params"])))
+                if let reason = FactCheck.reason(unsourced) { r = ["ok": false, "reason": reason, "unsourced": unsourced.map(\.line)] }
+            }
             note(i, Self.outcome(r)); attempts.append(Self.outcome(r))
             if (r["ok"] as? Bool) == true { after = r; acceptedPatch = merged; break }
             let reason = r["reason"] as? String ?? "unknown"
@@ -427,6 +451,7 @@ public final class MartyLoop {
                 + ((r["part"] as? String).map { " on part `\($0)`" } ?? "") + "." + (MartyPrompts.hint(for: reason).map { " \($0)" } ?? "")
                 + ((r["visibility"] as? [String: Any]).flatMap(MartyPrompts.visibilityLine).map { " \($0)" } ?? "")
                 + ((r["limit"] as? [String: Any]).flatMap(MartyPrompts.limitLine).map { " \($0)" } ?? "")
+                + ((r["unsourced"] as? [String]).map { " " + MartyPrompts.factRepair + "\n" + $0.map { "- \($0)" }.joined(separator: "\n") } ?? "")
                 + (facts.map { "\n\nFacts the engine solved for the changed model (name: value):\n\($0)" } ?? "")
                 + "\n\nReply with a corrected JSON object only."
         }
@@ -467,7 +492,7 @@ public final class MartyLoop {
                                                                patch: acceptedPatch.map { Self.compact($0) }, ratiosChanged: ratiosChanged,
                                                                refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAPatch,
                                                                movedForceArrows: moved, given: given, table: modelled ? factBlock : nil),
-                                 sources: evidence, result: &result)
+                                 sources: evidence + [question, followUp], result: &result)
         result["ok"] = answer != nil
         result["answer"] = answer.map { $0 as Any } ?? NSNull()
         result["answerSource"] = "model text written from the engine reports; its numbers are not checked"
@@ -514,6 +539,11 @@ extension MartyLoop {
             } else {
                 do { r = try engine.check(document: changed, ref: nil, components: components, strict: true) }
                 catch let e as ToolError { r = ["ok": false, "reason": e.reason] }
+                if (r["ok"] as? Bool) == true {
+                    let unsourced = FactCheck.findings(changed, evidence: .build(table: facts, question: question, report: r, model: changed,
+                                                                                 extra: [followUp]))
+                    if let reason = FactCheck.reason(unsourced) { r = ["ok": false, "reason": reason, "unsourced": unsourced.map(\.line)] }
+                }
             }
             note(i, Self.outcome(r)); attempts.append(Self.outcome(r))
             if (r["ok"] as? Bool) == true {
@@ -533,6 +563,7 @@ extension MartyLoop {
             if let h = MartyPrompts.hint(for: reason) { u += " \(h)" }
             if let v = (r["visibility"] as? [String: Any]).flatMap(MartyPrompts.visibilityLine) { u += " \(v)" }
             if let l = (r["limit"] as? [String: Any]).flatMap(MartyPrompts.limitLine) { u += " \(l)" }
+            if let lines = r["unsourced"] as? [String] { u += " " + MartyPrompts.factRepair + "\n" + lines.map { "- \($0)" }.joined(separator: "\n") }
             if let facts { u += "\n\nFacts the engine solved (name: value):\n\(facts)" }
             if let readBack { u += "\n\nEngine read-back:\n\(readBack)" }
             u += "\n\nReply with a corrected JSON object only."
@@ -563,7 +594,7 @@ extension MartyLoop {
                                                                patch: acceptedChange, ratiosChanged: ratiosChanged,
                                                                refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAChange,
                                                                movedForceArrows: moved, given: given, table: modelled ? factBlock : nil),
-                                 sources: evidence, result: &result)
+                                 sources: evidence + [question, followUp], result: &result)
         result["ok"] = answer != nil
         result["answer"] = answer.map { $0 as Any } ?? NSNull()
         result["answerSource"] = "model text written from the engine reports; its numbers are not checked"
@@ -577,18 +608,37 @@ extension MartyLoop {
         let (first, i) = ask("answer", attempt: 0, system: system, user: user)
         note(i, ["ok": first != nil])
         guard var answer = first?.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
-        let flagged = Self.unsupportedComparatives(answer, sources: sources)
+        func problems(_ text: String) -> (comparative: [String], unsourced: [String]) {
+            let c = Self.unsupportedComparatives(text, sources: sources)
+            return (c, Self.unsourcedSentences(text, sources: sources).filter { !c.contains($0) })
+        }
+        let (comparative, unsourced) = problems(answer)
+        let flagged = comparative + unsourced
         guard !flagged.isEmpty else { return answer }
-        var lint: [String: Any] = ["reason": "answer.comparative", "sentences": flagged, "fixed": false]
+        var lint: [String: Any] = ["reason": unsourced.isEmpty ? "answer.comparative" : "answer.unsourced", "sentences": flagged, "fixed": false]
         let (second, j) = ask("answer", attempt: 1, system: system, user: user + "\n\nYour previous answer:\n\(answer)\n\n"
             + MartyPrompts.answerComparativeRepair + "\n" + flagged.joined(separator: "\n"))
-        note(j, ["ok": second != nil, "reason": "answer.comparative"])
+        note(j, ["ok": second != nil, "reason": lint["reason"] ?? "answer.comparative"])
         if let s = second?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty {
             answer = s
-            lint["fixed"] = Self.unsupportedComparatives(s, sources: sources).isEmpty
+            let again = problems(s)
+            lint["fixed"] = again.comparative.isEmpty && again.unsourced.isEmpty
         }
         result["answerLint"] = lint
         return answer
+    }
+
+    /// Sentences of an answer with a number or a version that is in none of the sources (the fact table, the
+    /// reports, the change, the question).
+    static func unsourcedSentences(_ text: String, sources: [String]) -> [String] {
+        var nums = Set(sources.flatMap(numbers))
+        // A solved decimal may be written as its exact fraction or its inverse.
+        for t in nums where t.contains(".") {
+            guard let v = Double(t), v != 0 else { continue }
+            for (p, q) in [FactCheck.fraction(abs(v)), FactCheck.fraction(1 / abs(v))].compactMap({ $0 }) { nums.insert(String(p)); nums.insert(String(q)) }
+        }
+        let e = FactCheck.Evidence(numbers: nums, versions: Set(sources.flatMap(FactCheck.versions)))
+        return sentences(text).filter { !FactCheck.check("answer", $0, e).isEmpty }
     }
 
     static let flightWords = #"(?i)\b(fly|flies|flying|flight|flown|hover|hovers|hovering|airborne|take ?off|takes off|soar|soars)\b"#
@@ -996,5 +1046,5 @@ extension MartyLoop {
 public enum MartyExamples {
     public static let formatExample = #"{"v":2,"kind":"assembly","title":"A shaft held in two bearings","units":"mm","parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"labels":[{"id":"lShaft","at":{"part":"shaft.input","offset":[0,0,60]},"text":"Shaft"},{"id":"lRated","at":{"world":[0,-70,20]},"text":"Rated 3000 rpm","unchecked":"assumed example"}],"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-20]},"to":{"part":"base.base","offset":[0,0,-60]},"text":"Weight"}]},"steps":[{"say":"Two bearings hold a shaft in line on a base.","camera":"hero","annotate":["lShaft","lRated","aW"]},{"say":"Input: the shaft makes {shaft.input.speed} turn for each input turn.","highlight":["shaft.input"],"spin":1,"check":[{"value":"shaft.input.speed","eq":1}],"annotate":["lShaft"]},{"say":"Cut open: the lower bearing rings the shaft.","section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"highlight":["shaft.lowerBearing"],"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]},{"say":"Seen through the base.","ghost":["base.base"],"annotate":["aW"]}]}"#
     /// A small explainer: the same shaft with a table of one given number (with its source) and one engine fact.
-    public static let explainerExample = #"{"v":1,"kind":"explainer","title":"A shaft held in two bearings","primary":"solid","notes":{"t":{"basis":"maker's data sheet, 2024, claimed"}},"board":{"v":1,"items":[{"id":"cap","k":"text","at":[6,7],"text":"Key figures"}]},"solid":{"v":2,"parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-20]},"to":{"part":"base.base","offset":[0,0,-60]},"text":"Weight"}]}},"beats":[{"say":"Two bearings hold a shaft on a base; the table gives its rated speed.","highlight":["t.r1","shaft.shaft"],"ops":[{"op":"add","item":{"id":"t","k":"table","at":[6,4],"header":true,"cells":[["Item","Value"],["Rated rpm",3000],["Turns/input","{shaft.input.speed}"]]}}],"view":{"annotate":["aW"]}},{"say":"Cut open: the lower bearing rings the shaft.","highlight":["shaft.lowerBearing"],"view":{"section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]}}]}"#
+    public static let explainerExample = #"{"v":1,"kind":"explainer","title":"A shaft held in two bearings","primary":"solid","notes":{"t":{"basis":"F1 maker's data sheet, 2024, claimed"}},"board":{"v":1,"items":[{"id":"cap","k":"text","at":[6,7],"text":"Key figures"}]},"solid":{"v":2,"parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-20]},"to":{"part":"base.base","offset":[0,0,-60]},"text":"Weight"}]}},"beats":[{"say":"Two bearings hold a shaft on a base; the table gives its rated speed.","highlight":["t.r1","shaft.shaft"],"ops":[{"op":"add","item":{"id":"t","k":"table","at":[6,4],"header":true,"cells":[["Item","Value"],["Rated rpm",3000],["Turns/input","{shaft.input.speed}"]]}}],"view":{"annotate":["aW"]}},{"say":"Cut open: the lower bearing rings the shaft.","highlight":["shaft.lowerBearing"],"view":{"section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]}}]}"#
 }

@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-08. Prompts `marty-prompts/11`. Engine pin as in
+Status: early preview, 2026-11-08. Prompts `marty-prompts/12`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -113,7 +113,22 @@ the MCP server uses), so a run needs no MCP client.
    accepted example. It answers with `{"document": ..., "components": [...]}`.
 3. **Check.** The engine checks the document in its strict profile (also
    refuses idle joints and turn axes that miss their part). An accepted
-   document gets a `ref`. Then Marty lints it: a step or beat that shows more
+   document gets a `ref`. Then Marty checks its facts (`fact.unsourced.<field>`):
+   every typed number, year and product version ("Mk 4", "Mark II", "v2",
+   "Gen 3", "Series 5", "Model 3") in every text field (title, part names,
+   captions, `unchecked` texts, annotation texts, board items, table cells, notes
+   and beat commands) must be in the evidence: the fact table (values, claims,
+   `appliesTo`, source dates), the question, the engine's facts and ratios (also
+   as their exact fraction or inverse) and the sizes set in the model. Engine
+   placeholders, row ids (`F3`) and "2D"/"3D" are not facts; a part name is
+   checked for years and versions only ("Jet 2" counts units); a label whose
+   `unchecked` text starts with "assumed example" is exempt. A finding is a
+   refusal like an engine refusal (attempt reason `fact.unsourced.<field>` of
+   the first finding, `engineOk` true, `unsourced` lists up to 12 findings) and
+   gets a normal repair with the findings and the table; with no repair left the
+   document is not accepted. Follow-up changes are checked the same way (a
+   patch's title, steps and part names; a whole changed explainer), with the
+   follow-up question as evidence too. Then Marty lints it: a step or beat that shows more
    than 5 texts (labels, dimensions and arrows with text; an arrow without text
    does not count), and a sentence in a say or an annotation text that compares
    sizes or shares (most, all of, more than) with no hedge, no `{fact}`
@@ -210,8 +225,10 @@ the MCP server uses), so a run needs no MCP client.
    and no number that is also in the evidence (the given figures shown, the
    engine fact texts and ratios, numbers set in the change; never raw JSON),
    gets one rewrite request; `answerLint` records the sentences and whether the
-   rewrite cleared them. A rewrite that fails in the adapter keeps the first
-   answer (`fixed` false). In
+   rewrite cleared them. A sentence with a number, year or version that is in no
+   source (the fact table, the reports, the change, the question and the
+   follow-up) gets the same one rewrite (`answer.unsourced`). A rewrite that
+   fails in the adapter keeps the first answer (`fixed` false). In
    an explainer, a force arrow whose direction the model
    sets may be marked `unchecked: "schematic direction"`; an arrow whose
    definition changed is listed in `forceArrowsMoved`.

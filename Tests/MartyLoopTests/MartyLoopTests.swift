@@ -19,6 +19,9 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue((r["steps"] as? [String] ?? []).contains { $0.contains("makes 1 turn") }, "the placeholder is filled by the engine")
     }
 
+    /// The fact table the explainer example's given figure cites (row F1), as a research reply (test data only).
+    static let exampleTable = #"{"needed": true, "rows": [{"id": "F1", "claim": "Rated speed of the example shaft", "value": "3000", "unit": "rpm", "label": "CLAIM", "appliesTo": "example shaft", "sources": [{"url": "https://example.org/shaft", "publisher": "maker's data sheet", "date": "2024", "quote": "3000 rpm"}]}]}"#
+
     /// A gear reduction document, as a model might write it (test data only; not a prompt example).
     static let spurReduction = #"{"v":1,"kind":"assembly","title":"Spur gear reduction","units":"mm","parts":[{"id":"pair","use":"spurPair","with":{"pinionTeeth":12,"wheelTeeth":36}}],"steps":[{"say":"A small pinion drives a larger wheel.","camera":"hero"},{"say":"Input: the pinion (12 teeth) turns once.","highlight":["pair.pinion"],"spin":1},{"say":"The wheel (36 teeth) turns 12/36 = 1/3 of a turn, the other way.","highlight":["pair.wheel"],"spin":1}]}"#
 
@@ -63,7 +66,7 @@ final class MartyLoopTests: XCTestCase {
     func testExplainerFormEndToEnd() throws {
         let plan = #"{"form": "explainer", "components": ["shaftWithBearing"], "primitives": []}"#
         let doc = #"{"document": \#(MartyExamples.explainerExample)}"#
-        let model = ScriptedAdapter(replies: [plan, doc, #"{"document": null}"#, "Nothing needs to change."])
+        let model = ScriptedAdapter(replies: [plan, doc, #"{"document": null}"#, "Nothing needs to change."], research: [Self.exampleTable])
         var options = MartyLoop.Options()
         options.followUp = "What if the shaft were longer?"
         let out = tempOut()
@@ -97,10 +100,10 @@ final class MartyLoopTests: XCTestCase {
         let words = MartyExamples.explainerExample.replacingOccurrences(of: "Cut open: the lower", with: "Cut open now: the lower")
         XCTAssertNotEqual(changed, MartyExamples.explainerExample)
         XCTAssertNotEqual(words, MartyExamples.explainerExample)
-        func run(_ followReplies: [String]) throws -> (ScriptedAdapter, [String: Any]) {
-            let model = ScriptedAdapter(replies: [plan, doc] + followReplies)
+        func run(_ followReplies: [String], ask: String = "What if the shaft were thicker?") throws -> (ScriptedAdapter, [String: Any]) {
+            let model = ScriptedAdapter(replies: [plan, doc] + followReplies, research: [Self.exampleTable])
             var options = MartyLoop.Options()
-            options.followUp = "What if the shaft were thicker?"
+            options.followUp = ask
             let out = tempOut()
             defer { try? FileManager.default.removeItem(at: out) }
             let r = try MartyLoop(model: model, out: out, options: options).run(question: "q")
@@ -113,12 +116,15 @@ final class MartyLoopTests: XCTestCase {
         // A table edit in a beat's ops is a model change; a board text item edit alone is words only.
         let table = MartyExamples.explainerExample.replacingOccurrences(of: #"["Rated rpm",3000]"#, with: #"["Rated rpm",3500]"#)
         XCTAssertNotEqual(table, MartyExamples.explainerExample)
-        let (mTable, tableEdit) = try run([#"{"document": \#(table)}"#, "The rated speed is higher."])
+        // The learner names the new figure, so it is evidence; an invented one is refused (fact.unsourced).
+        let (_, invented) = try run([#"{"document": \#(table)}"#, #"{"document": null}"#, "No change."])
+        XCTAssertEqual((invented["attempts"] as? [[String: Any]])?.first?["reason"] as? String, "fact.unsourced.beat1.t.r1c1")
+        let (mTable, tableEdit) = try run([#"{"document": \#(table)}"#, "The rated speed is higher."], ask: "What if the rated speed were 3500 rpm?")
         XCTAssertEqual(tableEdit["changed"] as? Bool, true, "\(tableEdit["attempts"] ?? "")")
         // The answer gets the changed values, before and after.
         XCTAssertTrue(mTable.prompts[3].user.contains("3000") && mTable.prompts[3].user.contains("3500"), mTable.prompts[3].user)
         // The answer gets the given figures of the accepted explainer, with their source.
-        XCTAssertTrue(mTable.prompts[3].user.contains("- Rated rpm 3500 — maker's data sheet, 2024, claimed (given)"), mTable.prompts[3].user)
+        XCTAssertTrue(mTable.prompts[3].user.contains("- Rated rpm 3500 — F1 maker's data sheet, 2024, claimed (given)"), mTable.prompts[3].user)
         let summary = MartyLoop.changeSummary(from: ["board": ["params": ["angle": 10]]], to: ["board": ["params": ["angle": 30]]])
         XCTAssertTrue(summary.contains("10") && summary.contains("30") && summary.contains("board"), summary)
         // A gravity arrow is checked again by the engine: no schematic-direction line.
@@ -667,6 +673,61 @@ final class MartyLoopTests: XCTestCase {
         let deny = r[r.firstIndex(of: "--disallowedTools")! + 1]
         XCTAssertTrue(deny.contains("WebFetch(domain:github.com)") && deny.contains("WebFetch(domain:*.github.com)"), deny)
         XCTAssertTrue(r.contains("--setting-sources") && r.contains("--strict-mcp-config"))
+    }
+
+    /// fact.unsourced: numbers, years and versions in any text field must be in the fact table, the question or the
+    /// model; placeholders, row ids and "3D" are not facts; a part name is checked for years and versions only; an
+    /// "assumed example" label is exempt; a solved value may appear as its exact fraction.
+    func testFactUnsourced() throws {
+        let table = try XCTUnwrap(FactTable.parse(#"{"rows": [{"id": "F1", "claim": "Thrust of the suit", "value": "144", "unit": "kgf", "label": "CLAIM", "appliesTo": "Mk 2, 2019", "sources": [{"url": "https://example.org/a", "publisher": "Example", "date": "2020", "quote": "144 kgf"}]}]}"#))
+        func doc(label: String, unchecked: String = "F1 Example 2020", name: String = "Jet 2 (schematic)", title: String = "A suit") -> [String: Any] {
+            ["v": 2, "kind": "assembly", "title": title, "units": "mm",
+             "parts": [["id": "jet", "name": name, "shape": ["box": ["size": [40, 40, 40]]]]],
+             "annotations": ["labels": [["id": "l0", "at": ["world": [0, 0, 60]], "text": label, "unchecked": unchecked]]],
+             "steps": [["say": "The suit and its units.", "annotate": ["l0"]]]]
+        }
+        func check(_ d: [String: Any], question: String = "How does it fly?") -> [String] {
+            FactCheck.findings(d, evidence: .build(table: table, question: question, report: nil, model: d)).map(\.line)
+        }
+        XCTAssertEqual(check(doc(label: "Thrust 144 kgf (Mk 2)")), [])
+        XCTAssertEqual(check(doc(label: "Thrust 155 kgf")), [#"annotation.l0: "155" is not in the fact table, the question or the model"#])
+        XCTAssertEqual(check(doc(label: "Five engines since 2017")).count, 1)
+        XCTAssertEqual(check(doc(label: "The Mk 4 suit")), [#"annotation.l0: "mk 4" is not in the fact table, the question or the model"#])
+        XCTAssertEqual(check(doc(label: "The Mark II suit")).count, 1)
+        XCTAssertEqual(check(doc(label: "Thrust 155 kgf"), question: "What if it gave 155 kgf?"), [], "the question's numbers are evidence")
+        XCTAssertEqual(check(doc(label: "Thrust 144 kgf", unchecked: "F1 Example 2021")).count, 1, "a source year not in the table")
+        XCTAssertEqual(check(doc(label: "Thrust", name: "2017 suit body")).count, 1, "a year in a part name")
+        XCTAssertEqual(check(doc(label: "Mass 100 kg", unchecked: "assumed example")), [], "an assumed example is exempt")
+        XCTAssertEqual(check(doc(label: "Thrust", title: "Three Engines")), [])
+        XCTAssertNil(FactCheck.plain("{jet.speed|frac} F12 in 3D").rangeOfCharacter(from: .decimalDigits), "placeholders, row ids and 3D are not facts")
+        // An explainer table cell and note; a model size is evidence.
+        var ex = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(MartyExamples.explainerExample.utf8)) as? [String: Any])
+        XCTAssertEqual(FactCheck.findings(ex, evidence: .build(table: .empty, question: "q", report: nil, model: ex)).map(\.field),
+                       ["note.t.basis", "beat1.t.r1c1"])
+        XCTAssertEqual(FactCheck.findings(ex, evidence: .build(table: try XCTUnwrap(FactTable.parse(Self.exampleTable)), question: "q",
+                                                               report: nil, model: ex)), [])
+        ex["title"] = "A shaft 80 mm long"
+        XCTAssertEqual(FactCheck.findings(ex, evidence: .build(table: try XCTUnwrap(FactTable.parse(Self.exampleTable)), question: "q",
+                                                               report: nil, model: ex)), [], "80 is the shaft length set in the model")
+        // A solved value as its exact fraction (the test gearbox: 12/36 = 1/3).
+        let gear = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(Self.spurReduction.utf8)) as? [String: Any])
+        let report = try MartyEngine(outputRoot: nil).check(document: gear, ref: nil, components: [], strict: true)
+        XCTAssertEqual(FactCheck.findings(gear, evidence: .build(table: .empty, question: "q", report: report, model: gear)), [])
+        // The loop refuses and repairs; the answer gets one rewrite for an unsourced year.
+        let plan = #"{"components": [], "primitives": ["box"], "given": ["F1: thrust 144 kgf, claimed by Example"]}"#
+        func reply(_ d: [String: Any]) -> String { #"{"document": "# + MartyJSON.string(d) + "}" }
+        let research = #"{"rows": [{"id": "F1", "claim": "Thrust of the suit", "value": "144", "unit": "kgf", "label": "CLAIM", "appliesTo": "Mk 2, 2019", "sources": [{"url": "https://example.org/a", "publisher": "Example", "date": "2020", "quote": "144 kgf"}]}]}"#
+        let model = ScriptedAdapter(replies: [plan, reply(doc(label: "Thrust 155 kgf")), reply(doc(label: "Thrust 144 kgf"))], research: [research])
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: .init()).run(question: "How does it fly?")
+        XCTAssertEqual(r["accepted"] as? Bool, true, "\(r["attempts"] ?? "")")
+        let first = try XCTUnwrap((r["attempts"] as? [[String: Any]])?.first)
+        XCTAssertEqual(first["reason"] as? String, "fact.unsourced.annotation.l0")
+        XCTAssertEqual(first["engineOk"] as? Bool, true)
+        XCTAssertTrue(model.prompts[2].user.contains("must come from the fact table"), model.prompts[2].user)
+        XCTAssertEqual(MartyLoop.unsourcedSentences("It first flew in 2017. It gives 144 kgf.", sources: table.lines), ["It first flew in 2017"])
+        XCTAssertEqual(MartyLoop.unsourcedSentences("It turns 1/6 of a turn.", sources: ["-0.16666666666666666"]), [])
     }
 
     func testReplyJSON() {

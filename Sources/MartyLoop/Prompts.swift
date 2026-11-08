@@ -5,7 +5,7 @@ import Foundation
 /// author step sees a short format guide plus `explain` entries for the parts the plan chose. The receipt records the
 /// size and SHA-256 of every prompt, so a change in context is always measured.
 public enum MartyPrompts {
-    public static let version = "marty-prompts/11"
+    public static let version = "marty-prompts/12"
 
     static let role = """
         You are Marty, a teacher who explains how things work with checked 3D models. A deterministic engine \
@@ -368,10 +368,18 @@ public enum MartyPrompts {
         The engine accepted it, but Marty's checks found these problems. Fix them and keep the rest:
         """
 
-    /// One rewrite request when an answer compares sizes or shares without a figure.
+    /// One rewrite request when an answer compares sizes or shares without a figure, or states a number that is in
+    /// no source.
     public static let answerComparativeRepair = """
-        These sentences compare sizes or shares without a given figure or an engine number. Hedge them (about, in \
-        this schematic) or leave them out, and reply with the whole answer text only:
+        These sentences compare sizes or shares without a given figure or an engine number, or state a number, year or \
+        version that is not in the fact table, the engine reports or the question. Hedge a comparison (about, in this \
+        schematic) or leave it out, leave out the unsourced number, and reply with the whole answer text only:
+        """
+
+    /// The repair note for `fact.unsourced.<field>`.
+    public static let factRepair = """
+        Each number, year and product version in the text must come from the fact table (with its row id), the \
+        question or the model itself. Remove these or replace them with a table fact:
         """
 
     public static func answerSystem() -> String {
