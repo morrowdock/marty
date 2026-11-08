@@ -540,11 +540,38 @@ extension MartyLoop {
     static let comparativeWords = #"(?i)\b(most|mostly|majority|all of|all the|all its|the bulk|nearly all|almost all|mainly|largely|more than|less than|twice|half of|the largest|the biggest|the lion's share)\b"#
     static let hedgeWords = #"(?i)\b(about|roughly|around|approximately|estimated?|schematic|not checked|may|might|perhaps|likely)\b"#
 
-    /// The numbers in a text ("1,500" and "1.5" stay whole; a trailing period is not a decimal point).
+    /// The numbers in a text ("1,500" and "1.5" stay whole; a trailing period is not a decimal point), normalized:
+    /// no thousands commas, no trailing decimal zeros ("1.50" and "1.5", "3000.0" and "3000" match).
     static func numbers(_ s: String) -> [String] {
         guard let re = try? NSRegularExpression(pattern: #"\d+(?:[.,]\d+)*"#) else { return [] }
-        return re.matches(in: s, range: NSRange(s.startIndex..., in: s))
-            .compactMap { Range($0.range, in: s).map { String(s[$0]).replacingOccurrences(of: ",", with: "") } }
+        return re.matches(in: s, range: NSRange(s.startIndex..., in: s)).compactMap { m in
+            Range(m.range, in: s).map { r in
+                trimmedDecimal(String(s[r]).replacingOccurrences(of: ",", with: ""))
+            }
+        }
+    }
+
+    /// A number's text with its exponent written out: "1.5e-07" is "0.00000015", "1e+20" is "100000000000000000000".
+    static func plainDecimal(_ s: String) -> String {
+        guard let e = s.firstIndex(where: { $0 == "e" || $0 == "E" }), let exp = Int(s[s.index(after: e)...]) else { return s }
+        var m = String(s[..<e])
+        let negative = m.hasPrefix("-")
+        if negative { m.removeFirst() }
+        let parts = m.split(separator: ".", omittingEmptySubsequences: false)
+        let whole = String(parts[0]), digits = whole + (parts.count > 1 ? String(parts[1]) : "")
+        let point = whole.count + exp
+        let out: String
+        if point <= 0 { out = "0." + String(repeating: "0", count: -point) + digits }
+        else if point >= digits.count { out = digits + String(repeating: "0", count: point - digits.count) }
+        else { out = String(digits.prefix(point)) + "." + String(digits.dropFirst(point)) }
+        return (negative ? "-" : "") + out
+    }
+
+    /// A float's text without trailing decimal zeros ("3000.0" is "3000").
+    static func trimmedDecimal(_ s: String) -> String {
+        var t = s
+        if t.contains(".") { while t.hasSuffix("0") { t.removeLast() }; if t.hasSuffix(".") { t.removeLast() } }
+        return t
     }
 
     /// Sentences: split after ".", "!" or "?" followed by a space or the end, and at line breaks (so "1.5" stays whole).
@@ -570,8 +597,9 @@ extension MartyLoop {
     static func numberLeaves(_ v: Any?) -> [String] {
         switch v {
         case let n as NSNumber where CFGetTypeID(n) != CFBooleanGetTypeID():
-            // Plain decimal notation, never an exponent ("0.0000001", not "1e-07"), and exact for integers.
-            return [NSDecimalNumber(decimal: n.decimalValue).stringValue]
+            // Integers exactly; a float from its shortest round-trip text ("579.988", "0.1"), with any exponent
+            // written out ("1e-07" is "0.0000001"), so it matches the same number in an answer.
+            return [CFNumberIsFloatType(n) ? trimmedDecimal(plainDecimal("\(n.doubleValue)")) : n.stringValue]
         case let a as [Any]: return a.flatMap { numberLeaves($0) }
         case let o as [String: Any]: return o.values.flatMap { numberLeaves($0) }
         default: return []
@@ -611,9 +639,9 @@ extension MartyLoop {
                         versions.append((id, n + 1, header[id]!, t["cells"] as? [[Any]] ?? []))
                     }
                 case "set":
-                    if let id = o["id"] as? String, let h = header[id], o["key"] as? String == "cells", let cells = o["value"] as? [[Any]] {
-                        versions.append((id, n + 1, h, cells))
-                    }
+                    guard let id = o["id"] as? String, let h = header[id] else { break }
+                    if o["key"] as? String == "header" { header[id] = o["value"] as? Bool == true }
+                    if o["key"] as? String == "cells", let cells = o["value"] as? [[Any]] { versions.append((id, n + 1, h, cells)) }
                 default: break
                 }
             }

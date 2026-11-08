@@ -288,13 +288,29 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(MartyLoop.unsupportedComparatives("All of its thrust comes from the back unit.", sources: []).count, 1)
         XCTAssertEqual(MartyLoop.unsupportedComparatives("The arms steer the suit. The back unit holds it up.", sources: []), [])
         XCTAssertEqual(MartyLoop.numberLeaves(["a": [3000, 1.5, true], "id": "u2"]).sorted(), ["1.5", "3000"])
-        XCTAssertEqual(MartyLoop.numberLeaves([0.0000001, 1e20, 9007199254740993 as Int64]), ["0.0000001", "100000000000000000000", "9007199254740993"])
+        XCTAssertEqual(MartyLoop.numberLeaves([0.0000001, 1e20, 9007199254740993 as Int64, 3000.0]), ["0.0000001", "100000000000000000000", "9007199254740993", "3000"])
         XCTAssertEqual(MartyLoop.unsupportedComparatives("Most of it is 1 unit.", sources: MartyLoop.numberLeaves([0.0000001])).count, 1)
         // A table set in a later beat is listed too, marked with its beat.
         let doc: [String: Any] = ["notes": ["t": ["basis": "maker"]], "board": ["items": [Any]()], "beats": [
             ["ops": [["op": "add", "item": ["id": "t", "k": "table", "header": true, "cells": [["Item", "Value"], ["Rated rpm", 3000]]]]]],
             ["ops": [["op": "set", "id": "t", "key": "cells", "value": [["Item", "Value"], ["Rated rpm", 3500]]]]]]]
         XCTAssertEqual(MartyLoop.givenFigures(doc), ["Rated rpm 3000 — maker (given)", "Rated rpm 3500 — maker (given) (from beat 2)"])
+        // Header changes replay in order, in both directions.
+        func headerDoc(_ start: Bool, _ ops: [[String: Any]]) -> [String: Any] {
+            ["notes": ["t": ["basis": "maker"]], "board": ["items": [["id": "t", "k": "table", "header": start, "cells": [["A", 1]]]]],
+             "beats": [["ops": ops]]]
+        }
+        XCTAssertEqual(MartyLoop.givenFigures(headerDoc(true, [["op": "set", "id": "t", "key": "header", "value": false],
+                                                               ["op": "set", "id": "t", "key": "cells", "value": [["Rated rpm", 3500]]]])),
+                       ["Rated rpm 3500 — maker (given) (from beat 1)"])
+        XCTAssertEqual(MartyLoop.givenFigures(headerDoc(false, [["op": "set", "id": "t", "key": "header", "value": true],
+                                                                ["op": "set", "id": "t", "key": "cells", "value": [["Item", "Value"], ["B", 2]]]])),
+                       ["A 1 — maker (given)", "B 2 — maker (given) (from beat 1)"])
+        // Floats keep their short text, with exponents written out; matching ignores trailing zeros.
+        XCTAssertEqual(MartyLoop.numberLeaves([579.988, 0.1, 1.5e-7, 1e200]).prefix(3), ["579.988", "0.1", "0.00000015"])
+        XCTAssertEqual(MartyLoop.numberLeaves([1e200]).first?.count, 201)
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("Most of it, 579.988 kgf, is from the back.", sources: MartyLoop.numberLeaves([579.988])), [])
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("Most of it, 3000.0 rpm, is the rotor.", sources: ["3000 rpm"]), [])
         // The refused answer gets no given figures; a modelled one does.
         XCTAssertFalse(MartyPrompts.answerUser(followUp: "q", before: "{}", after: nil, refused: "x", given: ["T 1 kgf — m"]).contains("Given figures"))
         XCTAssertTrue(MartyPrompts.answerUser(followUp: "q", before: "{}", after: "{}", given: ["T 1 kgf — m"]).contains("- T 1 kgf — m"))

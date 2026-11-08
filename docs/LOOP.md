@@ -126,9 +126,10 @@ the MCP server uses), so a run needs no MCP client.
    ops that changed. A modelled answer also gets the document's given figures
    (unchecked labels and arrows, and rows of noted explainer tables, with their
    source; a table whose cells a later beat sets is listed again, marked with
-   that beat; at most 12); a refused answer does not. Numbers from the
-   structured values are written in plain decimal notation, never with an
-   exponent. The answer prompt says that a
+   that beat, after any header change; at most 12); a refused answer does not.
+   Numbers from the structured values keep their short text (integers exactly,
+   a float as its shortest round-trip text with any exponent written out), and
+   matching ignores thousands commas and trailing decimal zeros. The answer prompt says that a
    claim about sizes, shares or comparisons must come from a given figure or an
    engine number, or be hedged. A sentence with "most", "the majority", "all
    of", "more than" or a similar word, with no hedge (about, in this schematic)
