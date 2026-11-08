@@ -16,6 +16,31 @@ public protocol ModelAdapter {
     /// For the receipt, for example `claude-cli:claude-haiku-5-5`.
     var id: String { get }
     func reply(system: String, user: String) throws -> ModelReply
+    /// One research call with web search and web fetch only (no other tool), at most `limits.maxTurns` turns. An
+    /// adapter without web tools throws `adapter.research.unsupported`; the loop then goes on without a fact table.
+    func research(system: String, user: String, limits: ResearchLimits) throws -> ModelReply
+    /// Whether `research` can run (the loop skips the phase, with no call, when it cannot).
+    var supportsResearch: Bool { get }
+}
+
+/// Bounds of the research call.
+public struct ResearchLimits {
+    /// Agent turns of the research call (each search or fetch takes a turn).
+    public var maxTurns: Int
+    /// Domains whose pages the research call may not fetch and that never count as a source (our own repositories
+    /// hold grading material).
+    public var blockedDomains: [String]
+    public static let defaultBlocked = ["github.com", "raw.githubusercontent.com", "gist.github.com", "githubusercontent.com"]
+    public init(maxTurns: Int = 12, blockedDomains: [String] = ResearchLimits.defaultBlocked) {
+        self.maxTurns = maxTurns; self.blockedDomains = blockedDomains
+    }
+}
+
+extension ModelAdapter {
+    public var supportsResearch: Bool { false }
+    public func research(system: String, user: String, limits: ResearchLimits) throws -> ModelReply {
+        throw AdapterError(reason: "adapter.research.unsupported", detail: "\(id) has no web tools")
+    }
 }
 
 public struct AdapterError: Error, CustomStringConvertible {
@@ -68,6 +93,31 @@ public struct ClaudeCLIAdapter: ModelAdapter {
     static let maxOutputBytes = 8 << 20
 
     public func reply(system: String, user: String) throws -> ModelReply {
+        try run(system: system, user: user, tools: nil)
+    }
+
+    /// The research call: the built-in WebSearch and WebFetch tools only, allowed without a prompt, WebFetch denied
+    /// on the blocked domains, and at most `limits.maxTurns` turns. Everything else is as in `reply`.
+    public func research(system: String, user: String, limits: ResearchLimits) throws -> ModelReply {
+        try run(system: system, user: user, tools: limits)
+    }
+    public var supportsResearch: Bool { true }
+
+    /// The CLI arguments: no tools at all for a normal call; for a research call only WebSearch and WebFetch.
+    static func arguments(model: String, systemFile: String, research: ResearchLimits?) -> [String] {
+        var a = ["-p", "--model", model]
+        if let r = research {
+            a += ["--tools", "WebSearch,WebFetch", "--allowedTools", "WebSearch,WebFetch",
+                  "--disallowedTools", r.blockedDomains.flatMap { ["WebFetch(domain:\($0))", "WebFetch(domain:*.\($0))"] }.joined(separator: ","),
+                  "--max-turns", String(max(1, min(r.maxTurns, 40)))]
+        } else {
+            a += ["--tools", ""]
+        }
+        return a + ["--strict-mcp-config", "--disable-slash-commands", "--setting-sources", "", "--no-session-persistence",
+                    "--output-format", "json", "--system-prompt-file", systemFile]
+    }
+
+    func run(system: String, user: String, tools: ResearchLimits?) throws -> ModelReply {
         let fm = FileManager.default
         let work = fm.temporaryDirectory.appendingPathComponent("marty-model-\(UUID().uuidString)", isDirectory: true)
         let ctx = fm.temporaryDirectory.appendingPathComponent("marty-prompt-\(UUID().uuidString)", isDirectory: true)
@@ -81,11 +131,10 @@ public struct ClaudeCLIAdapter: ModelAdapter {
         p.currentDirectoryURL = work
         let env = ProcessInfo.processInfo.environment
         p.environment = env.filter { Self.environmentAllowlist.contains($0.key) }
-        // No tools, no MCP servers, no slash commands, no user/project/local settings (so no hooks or plugins),
-        // no session file. The system prompt replaces Claude Code's own.
-        p.arguments = ["-p", "--model", model, "--tools", "", "--strict-mcp-config", "--disable-slash-commands",
-                       "--setting-sources", "", "--no-session-persistence", "--output-format", "json",
-                       "--system-prompt-file", systemFile.path]
+        // No tools (a research call: web search and fetch only), no MCP servers, no slash commands, no
+        // user/project/local settings (so no hooks or plugins), no session file. The system prompt replaces Claude
+        // Code's own.
+        p.arguments = Self.arguments(model: model, systemFile: systemFile.path, research: tools)
         let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
         p.standardInput = stdin; p.standardOutput = stdout; p.standardError = stderr
         // A child that exits without reading must give us EPIPE, not a SIGPIPE that kills this process.
@@ -141,6 +190,9 @@ public struct ClaudeCLIAdapter: ModelAdapter {
         for key in ["is_error", "total_cost_usd", "duration_ms", "num_turns", "stop_reason"] { if let v = env[key] { meta[key] = v } }
         if let u = env["usage"] as? [String: Any] {
             meta["usage"] = u.filter { ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"].contains($0.key) }
+            if let t = u["server_tool_use"] as? [String: Any] {
+                meta["webTools"] = t.filter { ["web_search_requests", "web_fetch_requests"].contains($0.key) }
+            }
         }
         if (env["is_error"] as? Bool) == true {
             throw AdapterError(reason: "adapter.error", detail: String((env["result"] as? String ?? "").prefix(400)))
@@ -155,11 +207,26 @@ public final class ScriptedAdapter: ModelAdapter {
     private var replies: [String]
     public private(set) var prompts: [(system: String, user: String)] = []
 
-    public init(id: String = "scripted", replies: [String]) { self.id = id; self.replies = replies }
+    private var researchReplies: [String]?
+    public private(set) var researchPrompts: [(system: String, user: String)] = []
+
+    /// `research`: replies for research calls; nil means this adapter has no web tools.
+    public init(id: String = "scripted", replies: [String], research: [String]? = nil) {
+        self.id = id; self.replies = replies; self.researchReplies = research
+    }
 
     public func reply(system: String, user: String) throws -> ModelReply {
         prompts.append((system, user))
         guard !replies.isEmpty else { throw AdapterError(reason: "adapter.scripted.empty", detail: "no more scripted replies") }
         return ModelReply(text: replies.removeFirst(), seconds: 0)
+    }
+
+    public var supportsResearch: Bool { researchReplies != nil }
+
+    public func research(system: String, user: String, limits: ResearchLimits) throws -> ModelReply {
+        guard researchReplies != nil else { throw AdapterError(reason: "adapter.research.unsupported", detail: "\(id) has no web tools") }
+        researchPrompts.append((system, user))
+        guard !(researchReplies!.isEmpty) else { throw AdapterError(reason: "adapter.scripted.empty", detail: "no more research replies") }
+        return ModelReply(text: researchReplies!.removeFirst(), seconds: 0, meta: ["webTools": ["web_search_requests": 0]])
     }
 }

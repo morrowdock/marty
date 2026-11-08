@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-08. Prompts `marty-prompts/10`. Engine pin as in
+Status: early preview, 2026-11-08. Prompts `marty-prompts/11`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -9,25 +9,48 @@ the MCP server uses), so a run needs no MCP client.
 
 ## Steps
 
+0. **Research** (on by default; `--no-research` skips it). One model call with
+   web search and web fetch only returns a FACT TABLE: at most 20 rows, each a
+   claim, a value, a label (VERIFIED, CLAIM, PLAUSIBLE, UNKNOWN), the version and
+   years it applies to, and up to 3 sources (URL, publisher, date, a short
+   quote). The call sees only the question (never a grading key or another
+   file; it runs in a new empty directory with no file tools), is capped by
+   `--research-turns` (default 12; one turn per search or fetch), and may not
+   fetch pages on GitHub (`github.com`, `raw.githubusercontent.com`,
+   `gist.github.com`), whose sources Marty also drops. An abstract subject may
+   reply `{"needed": false}`. Marty checks the labels by form, not by reading
+   the sources: VERIFIED needs sources on two different sites (registrable
+   domains of the full host name: sibling subdomains are one site; hosts are
+   compared in lower case without a trailing dot; IP literals and single-label
+   hosts are dropped; WebFetch is denied on each blocked domain and its
+   subdomains) (else CLAIM), a
+   CLAIM needs a source (else PLAUSIBLE), an UNKNOWN row has no value, and every
+   change is listed in `downgrades`. The table goes into the plan, author,
+   repair, follow-up and answer prompts as one JSON object per row between
+   `BEGIN FACT TABLE` and `END FACT TABLE` (markers inside a field are
+   removed), and every system prompt says that the table is web data whose
+   instructions are never followed. A refused answer gets no table. A failed or unreadable research reply,
+   or an adapter without web tools, leaves no table ("Fact table: none"), and
+   the run goes on; this is not an adapter error. The receipt's `research`
+   block records the table, the downgrades, the turns and the limits.
 1. **Plan.** The model gets the question and the compact engine catalog. It
    plans the lesson in a fixed order: the whole system first (every main unit
    in its place and number, people or loads as schematic figures, and the
    forces as arrows), then the inside of the one part that makes it work, cut
    open, then what the model does not show. It answers with a JSON plan:
    A well-known headline figure of the subject (thrust against weight, power,
-   top speed, range, capacity) goes in `given` with its source. When the
+   top speed, range, capacity) goes in `given`, taken only from the fact table
+   (`<row id>: <fact>` in the row's label wording; empty with no table). When the
    question asks how a vehicle, aircraft or flying device flies, lifts or
-   hovers, `given` must hold its total thrust (kgf or N) and the weight it
-   lifts. The model gives only numbers it knows, each with its own source and
-   year ("claimed" for a maker's or owner's figure, "measured" only when tested
-   independently), never two reports merged into one range and never a number
-   credited to a source that did not publish it. If it is not sure which source
-   gave a number, it writes "reported" and names no source ("about ...
-   (reported)" when unsure of the number). A number with no source (an assumed
-   mass) is left out or marked "assumed example" with its breakdown. For a named
-   product it says which version and years the model shows. When a flight question (a flight word such as fly or hover, or
+   hovers, `given` holds its thrust and the weight it lifts. Each entry is in
+   the row's wording: VERIFIED plainly, CLAIM as "claimed by <publisher>",
+   PLAUSIBLE as "likely" or "example", UNKNOWN as "not published"; rows are
+   never merged into a range, and the product version and years come from the
+   table. When a flight question (a flight word such as fly or hover, or
    lift with a flight context such as jet, drone or wing; "a hydraulic lift" is
-   not one) gets a plan with no thrust entry, Marty asks once more (`plan.lint`,
+   not one) gets a plan with no thrust entry while the fact table has a thrust
+   row with a number, Marty asks once more, only for the table's thrust (and
+   weight) rows (`plan.lint`,
    reason `plan.given.thrust`, with `fixed`). Only the reply's `given` is taken,
    and only when it names thrust with a number; a partial, empty or bad reply,
    or an adapter failure, keeps the original plan, and authoring goes on. The plan says
@@ -55,9 +78,14 @@ the MCP server uses), so a run needs no MCP client.
    `annotate` list on every step), one thrust arrow per thrust unit shown with
    both ends on that unit and no text (one label names them), force arrows
    that start outside the body, a steering pose with the arms unequal and
-   "schematic" in the text, each given figure shown with its source as the plan
-   has it ("reported" when it names none), and no share or comparison without a
-   given figure, a `{fact}` or a hedge. The same general honesty rules apply to
+   "schematic" in the text, facts beyond the engine (a figure, date, product
+   name or version, load share) only from the fact table, in an unchecked label
+   or a noted table row whose text or note starts with its row id ("F3
+   <publisher> <year>") in the row's wording (UNKNOWN only as "not published"),
+   and no share or comparison without a row, a `{fact}` or a hedge. Each inside
+   label is anchored on the named inner part, not on the casing or body, and an
+   inside whose real parts are not public is labelled "<class>-style <kind>
+   (example)" with "Not confirmed <brand> hardware". The same general honesty rules apply to
    every subject: a load share is quoted with its source, never invented; no
    performance figure is derived from the simple model; the product version and
    years are named; an inside whose real parts are not public is labelled on
@@ -203,8 +231,8 @@ the first question, or a summary that could not be written.
 
 | Adapter | Use |
 | --- | --- |
-| `claude-cli:<model>` | The local Claude Code CLI in print mode (`claude -p`), with the account that is logged in there. Every call is a new process in a new empty directory, with no tools, no MCP servers, no slash commands, no user/project/local settings (so no hooks or plugins) and no session persistence. The child gets only an allowlist of variables: HOME, PATH, USER, LOGNAME, TMPDIR, the locale, the subscription login (`CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CONFIG_DIR`), proxies and CA certificates. No `ANTHROPIC_*` variable passes, so an exported `ANTHROPIC_API_KEY` is never used. Managed (administrator) settings still apply. The prompt goes in on standard input. The timeout (default 900 s) is on the child's exit. After it: SIGTERM, then SIGKILL after 5 s if the child still runs, then up to 5 s more for it to exit (at most timeout + 10 s in all). After a normal exit, Marty waits at most 5 s for the pipes to close and then uses what it read (a pipe that a grandchild keeps open is abandoned). The CLI adds its own fixed context: about 640 tokens in a probe on 2026-11-06. That figure, and that no CLAUDE.md or memory loads in the empty working directory, rest on that measurement, not on a documented guarantee. |
-| `scripted` | Replays fixed replies. For tests, and to replay a recorded run. |
+| `claude-cli:<model>` | The local Claude Code CLI in print mode (`claude -p`), with the account that is logged in there. Every call is a new process in a new empty directory, with no tools (the research call: only the built-in WebSearch and WebFetch, allowed without a prompt, WebFetch denied on the blocked domains, `--max-turns`), no MCP servers, no slash commands, no user/project/local settings (so no hooks or plugins) and no session persistence. The child gets only an allowlist of variables: HOME, PATH, USER, LOGNAME, TMPDIR, the locale, the subscription login (`CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CONFIG_DIR`), proxies and CA certificates. No `ANTHROPIC_*` variable passes, so an exported `ANTHROPIC_API_KEY` is never used. Managed (administrator) settings still apply. The prompt goes in on standard input. The timeout (default 900 s) is on the child's exit. After it: SIGTERM, then SIGKILL after 5 s if the child still runs, then up to 5 s more for it to exit (at most timeout + 10 s in all). After a normal exit, Marty waits at most 5 s for the pipes to close and then uses what it read (a pipe that a grandchild keeps open is abandoned). The CLI adds its own fixed context: about 640 tokens in a probe on 2026-11-06. That figure, and that no CLAUDE.md or memory loads in the empty working directory, rest on that measurement, not on a documented guarantee. |
+| `scripted` | Replays fixed replies (and, when given, fixed research replies). For tests, and to replay a recorded run. |
 
 An adapter is one function: system prompt and user message in, text out. Other
 models (an open-weight model, a future small Marty model) need only a new
@@ -214,7 +242,7 @@ adapter.
 
 The receipt records `contextBytes` for the plan and author prompts, and the
 size and SHA-256 of every prompt. Tests fail when the plan prompt grows over
-12,000 bytes or the author prompt over 13,000 bytes (the author prompt without component
+12,000 bytes or the author prompt over 13,500 bytes (the author prompt without component
 entries: 12,000 bytes, and 14,500 bytes with the explainer form). For comparison, the
 v1 eval harness sent about 25,600 bytes of engine docs in every call.
 
@@ -226,6 +254,7 @@ One `receipt.json` per run, with sorted keys:
 | --- | --- |
 | `format`, `prompts`, `model`, `engine` | Versions: receipt format, prompt set, adapter id, engine repository and commit. |
 | `question`, `options`, `startedAt` | The input, the options (repairs, render, size) and the UTC start time. |
+| `research` | The research phase: `ok`, `reason` when it failed (`research.unavailable`, `research.json`, an adapter reason), `needed`, the fact table `rows`, `downgrades`, `turns`, `webTools`, `maxTurns` and `blockedDomains`. |
 | `plan` | The plan reply, the chosen ids and the dropped ids; `lint` when a flight question first had no thrust in `given`. |
 | `attempts` | One entry per author or repair attempt: `ok`, `reason`, `part`, `ref`, `component`. |
 | `accepted`, `final` | Whether a document was accepted, and its title, part ids, ratios, checks, `ref`, triangles and steps. |

@@ -10,6 +10,8 @@ let usage = """
       MODEL is --model ID (a Claude model id for the local `claude -p` CLI; default claude-haiku-5-5)
             or --scripted REPLIES.json (replay a JSON array of reply strings; `ask` only)
       --repairs N   repairs after the first attempt, 0-3 (default 3)
+      --no-research         skip the research phase (no web search; no fact table)
+      --research-turns N    turns of the research call, 2-40 (default 12)
     """
 
 func fail(_ s: String) -> Never { FileHandle.standardError.write(Data((s + "\n").utf8)); exit(2) }
@@ -38,6 +40,10 @@ func fail(_ s: String) -> Never { FileHandle.standardError.write(Data((s + "\n")
         case "--size":
             options.size = value()
             guard MartyEngine.parseSize(options.size) != nil else { fail("--size is WIDTHxHEIGHT, width 320-1920 and height 200-1200") }
+        case "--no-research": options.research = false
+        case "--research-turns":
+            guard let n = Int(value()), (2...40).contains(n) else { fail("--research-turns is 2-40") }
+            options.researchTurns = n
         case "--repairs":
             guard let n = Int(value()), (0...3).contains(n) else { fail("--repairs is 0-3") }
             options.repairs = n

@@ -12,6 +12,9 @@ public final class MartyLoop {
         public var render = false
         public var size = "1280x800"
         public var followUp: String? = nil
+        /// The research phase (web search through the adapter's research call). An adapter without web tools skips it.
+        public var research = true
+        public var researchTurns = 12
         public init() {}
     }
 
@@ -26,6 +29,9 @@ public final class MartyLoop {
     var savedSystems: Set<String> = []
     /// Reasons of model calls that failed in the adapter (timeout, not logged in, ...): infrastructure, not the model.
     var adapterErrors: [String] = []
+    /// The research phase's fact table (empty without research), and its prompt block.
+    var facts = FactTable.empty
+    var factBlock: String { facts.promptBlock }
 
     /// `out` must not exist; its parent must. Renders go to `out/render`.
     public init(model: ModelAdapter, out: URL, options: Options) throws {
@@ -50,7 +56,7 @@ public final class MartyLoop {
     func write(_ text: String, _ name: String) { try? Data(text.utf8).write(to: out.appendingPathComponent(name)) }
 
     /// One model call, recorded: prompt sizes and digests, the reply file, time and adapter facts.
-    func ask(_ phase: String, attempt: Int, system: String, user: String) -> (text: String?, index: Int) {
+    func ask(_ phase: String, attempt: Int, system: String, user: String, research: ResearchLimits? = nil) -> (text: String?, index: Int) {
         let n = calls.count + 1
         let sysSHA = MartyJSON.sha256(Data(system.utf8))
         if !savedSystems.contains(sysSHA) { savedSystems.insert(sysSHA); write(system, "calls/system-\(sysSHA.prefix(12)).txt") }
@@ -60,7 +66,7 @@ public final class MartyLoop {
                                    "system": ["file": "calls/system-\(sysSHA.prefix(12)).txt", "bytes": system.utf8.count, "sha256": sysSHA],
                                    "user": ["file": stem + "-user.txt", "bytes": user.utf8.count, "sha256": MartyJSON.sha256(Data(user.utf8))]]
         do {
-            let r = try model.reply(system: system, user: user)
+            let r = try research.map { try model.research(system: system, user: user, limits: $0) } ?? model.reply(system: system, user: user)
             write(r.text, stem + "-reply.txt")
             call["reply"] = ["file": stem + "-reply.txt", "bytes": r.text.utf8.count]
             call["seconds"] = (r.seconds * 10).rounded() / 10
@@ -69,7 +75,8 @@ public final class MartyLoop {
             return (r.text, calls.count - 1)
         } catch {
             call["error"] = "\(error)"
-            adapterErrors.append((error as? AdapterError)?.reason ?? "adapter")
+            // A research call that fails is recorded in the receipt's research block; the run goes on without a table.
+            if research == nil { adapterErrors.append((error as? AdapterError)?.reason ?? "adapter") }
             calls.append(call)
             return (nil, calls.count - 1)
         }
@@ -169,11 +176,36 @@ public final class MartyLoop {
         var receipt: [String: Any] = [
             "format": Self.receiptFormat, "prompts": MartyPrompts.version, "model": model.id,
             "engine": ["repository": MartyPin.engineRepository, "revision": MartyPin.engineRevision],
-            "question": question, "options": ["repairs": options.repairs, "render": options.render, "size": options.size],
+            "question": question, "options": ["repairs": options.repairs, "render": options.render, "size": options.size,
+                                              "research": options.research, "researchTurns": options.researchTurns],
             "startedAt": ISO8601DateFormatter().string(from: started),
         ]
 
-        // 1. Plan: the compact catalog only.
+        // 0. Research: one bounded web search call returns the fact table that the plan, author and follow-up may state.
+        if options.research, !model.supportsResearch {
+            receipt["research"] = ["ok": false, "reason": "research.unavailable"]
+        } else if options.research {
+            let limits = ResearchLimits(maxTurns: options.researchTurns)
+            let (text, i) = ask("research", attempt: 0, system: MartyPrompts.researchSystem(maxSearches: max(1, limits.maxTurns - 1)),
+                                user: "Question: \(question)", research: limits)
+            var block: [String: Any] = ["maxTurns": limits.maxTurns, "blockedDomains": limits.blockedDomains]
+            // `turns` shows that tools ran (one turn per search or fetch); the CLI's WebSearch runs as its own
+            // sub-request, so the top-level `webTools` counters can stay 0.
+            if let m = calls[i]["model"] as? [String: Any] { block["turns"] = m["num_turns"] ?? NSNull(); block["webTools"] = m["webTools"] ?? NSNull() }
+            if let text, let table = FactTable.parse(text, blocked: limits.blockedDomains) {
+                facts = table
+                block.merge(table.json) { a, _ in a }
+                block["ok"] = true
+                note(i, ["ok": true, "rows": table.rows.count])
+            } else {
+                let reason = text == nil ? ((calls[i]["error"] as? String).map { $0.components(separatedBy: ":").first ?? "adapter" } ?? "adapter") : "research.json"
+                block["ok"] = false; block["reason"] = reason
+                note(i, ["ok": false, "reason": reason])
+            }
+            receipt["research"] = block
+        }
+
+        // 1. Plan: the compact catalog only (and the fact table).
         let catalog = try engine.catalog(compact: true, components: [])
         let known = Set(((catalog["components"] as? [String: Any])?["components"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String })
             .union(MartyPrimitive.all.map(\.id))
@@ -181,15 +213,19 @@ public final class MartyLoop {
         var plan: [String: Any] = [:]
         var planAdapterFailed = false
         for attempt in 0..<2 {
-            let (text, i) = ask("plan", attempt: attempt, system: planSystem, user: "Question: \(question)")
+            let (text, i) = ask("plan", attempt: attempt, system: planSystem, user: "Question: \(question)\n\n\(factBlock)")
             if let t = text, let p = ReplyJSON.object(t) { plan = p; note(i, ["ok": true]); planAdapterFailed = false; break }
             note(i, ["ok": false, "reason": text == nil ? "adapter" : "plan.json"])
             planAdapterFailed = text == nil
         }
         // A question about how something flies needs its thrust against weight in "given": ask once more if it is missing.
         var planLint: [String: Any]? = nil
-        if !planAdapterFailed, !plan.isEmpty, Self.asksHowItFlies(question), !Self.givenHasThrust(plan) {
-            let u = "Question: \(question)\n\nYour plan:\n\(Self.compact(plan))\n\n" + MartyPrompts.planThrustRepair
+        // Only when the fact table has a thrust row: without one, a re-ask would only invite a guess.
+        let tableHasThrust = facts.rows.contains { r in
+            r.label != .unknown && r.claim.lowercased().contains("thrust") && r.value.rangeOfCharacter(from: .decimalDigits) != nil
+        }
+        if !planAdapterFailed, !plan.isEmpty, tableHasThrust, Self.asksHowItFlies(question), !Self.givenHasThrust(plan) {
+            let u = "Question: \(question)\n\n\(factBlock)\n\nYour plan:\n\(Self.compact(plan))\n\n" + MartyPrompts.planThrustRepair
             // Only the reply's "given" is taken, and only when it now names thrust: the rest of the plan stays, and a
             // partial, empty or bad reply (or an adapter failure) keeps the original plan.
             let (text, i) = ask("plan", attempt: 2, system: planSystem, user: u)
@@ -217,7 +253,7 @@ public final class MartyLoop {
                                                      example: MartyExamples.formatExample,
                                                      explainer: explainerForm ? MartyExamples.explainerExample : nil)
         let planText = Self.compact(plan)
-        var user = MartyPrompts.authorUser(question: question, plan: planText)
+        var user = MartyPrompts.authorUser(question: question, plan: planText, table: factBlock)
         var accepted: [String: Any]? = nil
         var acceptedComponents: [Any] = []
         var attempts: [[String: Any]] = []
@@ -260,7 +296,8 @@ public final class MartyLoop {
                 if lintRepairUsed || attempt == options.repairs { break }
                 lintRepairUsed = true
                 user = MartyPrompts.repairUser(question: question, plan: planText, previous: text, reason: "marty.lint", part: nil,
-                                               hint: MartyPrompts.lintRepair + "\n" + lint.map { "- \($0)" }.joined(separator: "\n"))
+                                               hint: MartyPrompts.lintRepair + "\n" + lint.map { "- \($0)" }.joined(separator: "\n"),
+                                               table: factBlock)
                 continue
             }
             let reason = report["reason"] as? String ?? "unknown"
@@ -271,7 +308,8 @@ public final class MartyLoop {
             let (facts, readBack) = repairContext(reason: reason, report: report, document: document, components: components)
             user = MartyPrompts.repairUser(question: question, plan: planText, previous: text, reason: reason, part: part,
                                            hint: MartyPrompts.hint(for: reason), facts: facts, readBack: readBack,
-                                           visibility: report["visibility"] as? [String: Any], limit: report["limit"] as? [String: Any])
+                                           visibility: report["visibility"] as? [String: Any], limit: report["limit"] as? [String: Any],
+                                           table: factBlock)
         }
         if accepted == nil, let f = fallback {
             accepted = f.report; acceptedComponents = f.components
@@ -343,7 +381,7 @@ public final class MartyLoop {
                                          components: components)
         }
         let system = MartyPrompts.followUpSystem()
-        var user = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp)
+        var user = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp, table: factBlock)
         var result: [String: Any] = ["question": followUp]
         var after: [String: Any]? = nil
         var attempts: [[String: Any]] = []
@@ -363,7 +401,7 @@ public final class MartyLoop {
             if let keys = (patch as? [String: Any]).map({ Set($0.keys) }), !keys.isEmpty, keys.isSubset(of: ["title", "steps"]) {
                 let o: [String: Any] = ["ok": false, "reason": "followup.textOnly"]
                 note(i, o); attempts.append(o)
-                user = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp)
+                user = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp, table: factBlock)
                     + "\n\nYour previous reply:\n\(text)\n\nThat patch changes only text (title or steps), so the engine solves the same "
                     + "motion as before and the new text would not be true. Change parts, drives or constraints so the engine solves the "
                     + "new case (for a component, \"<instance>.<inner id>\" edits an inner part), or reply {\"patch\": null}."
@@ -384,7 +422,7 @@ public final class MartyLoop {
                     facts = Self.factLines(fr, limit: 80)?.joined(separator: "\n")
                 }
             }
-            user = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp)
+            user = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp, table: factBlock)
                 + "\n\nYour previous reply:\n\(text)\n\nThe engine refused the patch with reason `\(reason)`"
                 + ((r["part"] as? String).map { " on part `\($0)`" } ?? "") + "." + (MartyPrompts.hint(for: reason).map { " \($0)" } ?? "")
                 + ((r["visibility"] as? [String: Any]).flatMap(MartyPrompts.visibilityLine).map { " \($0)" } ?? "")
@@ -422,13 +460,13 @@ public final class MartyLoop {
         }
         // Given figures go to a modelled answer only; the refused answer keeps to the report before.
         let given = modelled ? Self.givenFigures(try? JSONSerialization.jsonObject(with: Data(docText.utf8))) : []
-        let evidence = given + Self.factTexts(report) + Self.factTexts(after) + Self.numberLeaves(report["ratios"])
+        let evidence = given + (modelled ? facts.lines : []) + Self.factTexts(report) + Self.factTexts(after) + Self.numberLeaves(report["ratios"])
             + Self.numberLeaves(after?["ratios"]) + Self.numberLeaves(acceptedPatch)
         let answer = writeAnswer(system: modelled ? MartyPrompts.answerSystem() : MartyPrompts.answerRefusedSystem(),
                                  user: MartyPrompts.answerUser(followUp: followUp, before: before, after: after.map { Self.compact(Self.summary($0)) },
                                                                patch: acceptedPatch.map { Self.compact($0) }, ratiosChanged: ratiosChanged,
                                                                refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAPatch,
-                                                               movedForceArrows: moved, given: given),
+                                                               movedForceArrows: moved, given: given, table: modelled ? factBlock : nil),
                                  sources: evidence, result: &result)
         result["ok"] = answer != nil
         result["answer"] = answer.map { $0 as Any } ?? NSNull()
@@ -445,7 +483,7 @@ extension MartyLoop {
         let base = (try? JSONSerialization.jsonObject(with: Data(docText.utf8))) as? [String: Any] ?? [:]
         let views = Self.modelContent
         let system = MartyPrompts.followUpExplainerSystem()
-        var user = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp)
+        var user = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp, table: factBlock)
         var result: [String: Any] = ["question": followUp]
         var attempts: [[String: Any]] = []
         var after: [String: Any]? = nil
@@ -486,7 +524,7 @@ extension MartyLoop {
             let reason = r["reason"] as? String ?? "unknown"
             let (facts, readBack) = repairContext(reason: reason, report: r, document: changed, components: components)
             // Built in parts: one long concatenation is too slow to type-check.
-            var u = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp)
+            var u = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp, table: factBlock)
             u += "\n\nYour previous reply:\n\(text)\n\nThe engine refused it with reason `\(reason)`"
             if let part = r["part"] as? String { u += " on part `\(part)`" }
             u += "."
@@ -518,13 +556,13 @@ extension MartyLoop {
         let shownReason = engineSawAChange ? (attempts.last { !marty.contains($0["reason"] as? String ?? "") }?["reason"] as? String ?? lastReason) : lastReason
         let given = modelled ? Self.givenFigures(acceptedDoc ?? base) : []
         let changeObject = acceptedChange.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) }
-        let evidence = given + Self.factTexts(report) + Self.factTexts(after) + Self.numberLeaves(report["ratios"])
+        let evidence = given + (modelled ? facts.lines : []) + Self.factTexts(report) + Self.factTexts(after) + Self.numberLeaves(report["ratios"])
             + Self.numberLeaves(after?["ratios"]) + Self.numberLeaves(changeObject)
         let answer = writeAnswer(system: modelled ? MartyPrompts.answerSystem() : MartyPrompts.answerRefusedSystem(),
                                  user: MartyPrompts.answerUser(followUp: followUp, before: before, after: after.map { Self.compact(Self.summary($0)) },
                                                                patch: acceptedChange, ratiosChanged: ratiosChanged,
                                                                refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAChange,
-                                                               movedForceArrows: moved, given: given),
+                                                               movedForceArrows: moved, given: given, table: modelled ? factBlock : nil),
                                  sources: evidence, result: &result)
         result["ok"] = answer != nil
         result["answer"] = answer.map { $0 as Any } ?? NSNull()
