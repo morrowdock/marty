@@ -114,13 +114,19 @@ the MCP server uses), so a run needs no MCP client.
 3. **Check.** The engine checks the document in its strict profile (also
    refuses idle joints and turn axes that miss their part). An accepted
    document gets a `ref`. Then Marty checks its facts (`fact.unsourced.<field>`):
-   every typed number, year and product version ("Mk 4", "Mark II", "v2",
-   "Gen 3", "Series 5", "Model 3") in every text field (title, part names,
-   captions, `unchecked` texts, annotation texts, board items, table cells, notes
-   and beat commands) must be in the evidence: the fact table (values, claims,
+   every typed number, year and product version ("Mk 4", "Mark II", "Gen 3",
+   "v2" written together, and a capitalized "Model 3", "Series 5" or "Version 2"
+   that does not start a sentence) in every shown text field must be in the
+   evidence. The fields are the title, part names, captions, `unchecked` texts,
+   annotation texts, notes, and every shown key of a 2D item (`text`, `label`,
+   `xl`, `yl`, `cells`, `bars` labels and values, `unit`, `vals`, `ptrs`, `xr`,
+   `yr`), also in board `over` edits, beat `add` and `set` commands (a `set` only
+   when its key is shown) and beat `bind` control labels. The evidence is: the fact table (values, claims,
    `appliesTo`, source dates), the question, the engine's facts and ratios (also
    as their exact fraction or inverse) and the sizes set in the model. Engine
-   placeholders, row ids (`F3`) and "2D"/"3D" are not facts; a part name is
+   placeholders (a fact name in braces, in v2 assemblies and explainers, where
+   the engine fills them; a v1 assembly shows braces as typed), row ids (`F3`)
+   and "2D"/"3D" are not facts; a part name is
    checked for years and versions only ("Jet 2" counts units); a label whose
    `unchecked` text starts with "assumed example" is exempt. A finding is a
    refusal like an engine refusal (attempt reason `fact.unsourced.<field>` of
@@ -227,7 +233,8 @@ the MCP server uses), so a run needs no MCP client.
    gets one rewrite request; `answerLint` records the sentences and whether the
    rewrite cleared them. A sentence with a number, year or version that is in no
    source (the fact table, the reports, the change, the question and the
-   follow-up) gets the same one rewrite (`answer.unsourced`). A rewrite that
+   follow-up; for a refused answer only the report before, not the rejected
+   what-if) gets the same one rewrite (`answer.unsourced`). A rewrite that
    fails in the adapter keeps the first answer (`fixed` false). In
    an explainer, a force arrow whose direction the model
    sets may be marked `unchecked: "schematic direction"`; an arrow whose
