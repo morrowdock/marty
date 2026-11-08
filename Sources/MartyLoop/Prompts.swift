@@ -5,7 +5,7 @@ import Foundation
 /// author step sees a short format guide plus `explain` entries for the parts the plan chose. The receipt records the
 /// size and SHA-256 of every prompt, so a change in context is always measured.
 public enum MartyPrompts {
-    public static let version = "marty-prompts/5"
+    public static let version = "marty-prompts/6"
 
     static let role = """
         You are Marty, a teacher who explains how things work with checked 3D models. A deterministic engine \
@@ -29,7 +29,8 @@ public enum MartyPrompts {
         Plan in this order: (1) the WHOLE system first: every main unit in its real place and number (all of them, \
         not one), any person or load it carries as a simple schematic figure, and the forces that matter as arrows \
         (weight; thrust, lift or push); (2) then the inside of the ONE part that makes it work, cut open; (3) then \
-        what the model does not show.
+        what the model does not show. When the subject has a well-known headline figure (thrust against weight, power, \
+        top speed, range, capacity), name it in "given" with its source.
 
         Reply with ONE JSON object only, no prose and no code fences:
         {"inScope": true, "subject": "<5-10 words>", "form": "solid", \
@@ -109,7 +110,17 @@ public enum MartyPrompts {
         - A number the engine cannot solve (a published weight, thrust, power, count or speed) goes only in a label or
           arrow with "unchecked": "<source, 1-60 chars>" (shown as Not checked) or, in the explainer form, in a table
           with a "basis" note (shown as Given) or an "unchecked" note (Not checked). Never put it in a claim.
-        - A person, wing or body that has no library part is a few boxes and shafts named "(schematic)".
+        - People: {"id": "pilot", "use": "mannequin", "with": {"leftShoulder": 30, "rightShoulder": 30}} (schematic,
+          1.75 m, faces -Y, feet at z = 0). Worn or carried parts hang on its anchors with "parent" and a short "at":
+          pilot.back, pilot.head, pilot.leftHand / pilot.rightHand (wrist; local +Z runs up the forearm), pilot.leftFoot.
+          A small gas turbine or turbocharger compressor is {"use": "centrifugalCompressor", "with": {"diameter": 80}}
+          (radial impeller, axis +Z, air in at -Z and out sideways; bore below 0.075 x diameter).
+        - A wing or body that has no library part is a few boxes and shafts named "(schematic)".
+        - Every part is attached where it really is (with "parent"): no loose parts beside the model. Show an inside by
+          cutting or ghosting the part in place, and put "focus": [its ids] on that step so the cutaway fills the frame.
+        - Show at most 5 labels or arrows in one step: give every step an "annotate" list. Start a force arrow outside
+          the body it acts on (beside or below it), never inside it. Show each given figure from the plan as an
+          unchecked label (or a noted table row) with its source.
         - If the engine cannot show part of the subject, build the best schematic and say so in the title or a step
           (for example "schematic: chain not modelled"). Never present an unchecked fake as real.
         """
@@ -117,13 +128,17 @@ public enum MartyPrompts {
     /// The explainer form (MartyGraphics docs/EXPLAINER.md), added to the author prompt only when the plan chose it.
     static let explainerGuide = """
         Explainer form (your plan chose it): {"v": 1, "kind": "explainer", "title": "...", "notes": {"<table id>":
-         {"basis": "<source>"}}, "board": {"v": 1, "items": [{"id": "t", "k": "table", "at": [6, 4], "header": true,
-         "cells": [["Item", "Value"], ["<name>", <number>]]}]} (at most 8 rows, 6 columns, 12 characters a cell,
-         numbers with absolute value below 1000000), "solid": { ...the assembly as above, without "kind",
-         "title" and "steps"... }, "beats": [...]}
+         {"basis": "<source>"}}, "primary": "solid", "board": {"v": 1, "items": [{"id": "cap", "k": "text",
+         "at": [6, 7], "text": "Key figures"}]}, "solid": { ...the assembly as above, without "kind", "title" and
+         "steps"... }, "beats": [...]}
+        - Keep the table small (at most 4 rows; 12 characters a cell; numbers with absolute value below 1000000) and add
+          it in the first beat that needs it: {"op": "add", "item": {"id": "t", "k": "table", "at": [6, 4], "header":
+          true, "cells": [["Item", "Value"], ["<name>", <number>]]}} in that beat's "ops". Do not remove it later: the
+          legend counts only 2D items still on the board.
         - beats (1 to 16) replace steps: {"say": "<= 200 chars", "highlight": [ids, also "t.r1" for row 1; the header
           is row 0], "view":
-          {"camera", "spin", "explode", "orbit", "section", "ghost"}, "check": [claims], "unchecked": "<why>"}.
+          {"camera", "spin", "explode", "orbit", "section", "ghost", "focus", "annotate"}, "ops": [table commands],
+          "check": [claims], "unchecked": "<why>"}.
         - A table may type numbers only with a note on it ({"basis": "<source>"} shows as Given, {"unchecked": "<why>"}
           as Not checked); a cell may
           also show a 3D fact, "{part.fact}". Every id is in one namespace: table ids differ from part ids.
@@ -223,10 +238,29 @@ public enum MartyPrompts {
         other "with" values), \
         "constraints" and "steps" (replace the whole list), "title". In a v2 document every number in a step's say must be \
         a {fact} placeholder, and every claim must still hold for the changed model: change or remove a claim that the \
-        what-if makes false.
+        what-if makes false. A steering or what-if question may move a part (a mannequin arm angle in its "with", or a \
+        part's "rot"). A patch cannot change annotations: an arrow end on a part moves and turns with that part (and with \
+        the parts it hangs on), and an end at a world point stays where it is. The engine checks a gravity arrow again.
 
         Reply with ONE JSON object only, no prose and no code fences:
         {"patch": { ... }} or, when no model change is needed, {"patch": null}.
+        """
+    }
+
+    /// For an explainer: the engine has no patch format, so the model sends the whole changed explainer.
+    public static func followUpExplainerSystem() -> String {
+        """
+        \(role)
+
+        Follow-up: the learner asks a what-if question about the checked explainer. Change the explainer so the engine \
+        checks the new case: send the WHOLE changed explainer document. A steering or what-if question may move a part \
+        (a mannequin arm angle in its "with", or a part's "rot"). An arrow end on a part moves with that part; an end \
+        at a world point stays, so give a force arrow that must turn with a part both ends on that part. A force arrow \
+        (not gravity) whose direction you set gets "unchecked": "schematic direction". Every number in a say is still a {fact} placeholder, and every claim must \
+        hold for the changed model. A change of words only is refused.
+
+        Reply with ONE JSON object only, no prose and no code fences:
+        {"document": { ...the whole changed explainer... }} or, when no model change is needed, {"document": null}.
         """
     }
 
@@ -241,7 +275,8 @@ public enum MartyPrompts {
         Answer the learner's follow-up in 2 to 4 short sentences, in plain words. Use only numbers from the engine \
         reports below (the facts, as written there, and the solved ratios) and sizes set in the model or in the change. \
         Prefer a fact over your own arithmetic; if you must compute, use only simple, exact arithmetic on those numbers. \
-        Reply with the answer text only.
+        If the message lists force arrows that the change moved, say that the force direction shown there is \
+        schematic; say nothing of that kind otherwise (the engine checks a gravity arrow). Reply with the answer text only.
         """
     }
 
@@ -258,7 +293,7 @@ public enum MartyPrompts {
     }
 
     public static func answerUser(followUp: String, before: String, after: String?, patch: String? = nil, ratiosChanged: Bool = false,
-                                  refused: String? = nil, engineSawAPatch: Bool = true) -> String {
+                                  refused: String? = nil, engineSawAPatch: Bool = true, movedForceArrows: [String] = []) -> String {
         var s = "Learner asks: \(followUp)\n\nEngine report before:\n\(before)\n\n"
         if let refused {
             return s + (engineSawAPatch
@@ -269,6 +304,9 @@ public enum MartyPrompts {
         if let patch { s += "The change you made (sizes you set may be stated):\n\(patch)\n\n" }
         s += "Engine report after the change:\n\(after)\n"
         if !ratiosChanged { s += "The solved speed ratios did not change.\n" }
+        if !movedForceArrows.isEmpty {
+            s += "Force arrows the change moved (their direction is schematic, not checked): \(movedForceArrows.joined(separator: ", ")).\n"
+        }
         return s
     }
 }

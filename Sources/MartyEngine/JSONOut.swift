@@ -6,7 +6,7 @@ import MartyGraphics
 /// The engine commit Marty is built against. A test checks that Package.resolved names the same commit.
 public enum MartyPin {
     public static let engineRepository = "https://github.com/morrowdock/martygraphics"
-    public static let engineRevision = "d0e59443916065faaec9a22fd1226dc923fbc3ea"
+    public static let engineRevision = "9cc429e10e391b3a75384d59c3b22125e83a931f"
 }
 
 /// Every input Marty accepts has a bound. Inputs over a bound are refused before they are parsed.
