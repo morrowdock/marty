@@ -131,10 +131,10 @@ public enum MartyPrompts {
          {"basis": "<source>"}}, "primary": "solid", "board": {"v": 1, "items": [{"id": "cap", "k": "text",
          "at": [6, 7], "text": "Key figures"}]}, "solid": { ...the assembly as above, without "kind", "title" and
          "steps"... }, "beats": [...]}
-        - Keep the table small (at most 4 rows; 12 characters a cell; numbers with absolute value below 1000000) and show
-          it only in the beat that needs it: {"op": "add", "item": {"id": "t", "k": "table", "at": [6, 4], "header":
-          true, "cells": [["Item", "Value"], ["<name>", <number>]]}} in that beat's "ops", {"op": "remove", "id": "t"}
-          in the next.
+        - Keep the table small (at most 4 rows; 12 characters a cell; numbers with absolute value below 1000000) and add
+          it in the first beat that needs it: {"op": "add", "item": {"id": "t", "k": "table", "at": [6, 4], "header":
+          true, "cells": [["Item", "Value"], ["<name>", <number>]]}} in that beat's "ops". Do not remove it later: the
+          legend counts only 2D items still on the board.
         - beats (1 to 16) replace steps: {"say": "<= 200 chars", "highlight": [ids, also "t.r1" for row 1; the header
           is row 0], "view":
           {"camera", "spin", "explode", "orbit", "section", "ghost", "focus", "annotate"}, "ops": [table commands],

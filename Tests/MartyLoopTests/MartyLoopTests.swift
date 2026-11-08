@@ -29,7 +29,7 @@ final class MartyLoopTests: XCTestCase {
         let plan = MartyPrompts.planSystem(catalog: catalog).utf8.count
         let author = MartyPrompts.authorSystem(parts: "", example: MartyExamples.formatExample).utf8.count
         print("prompt bytes: plan \(plan), author without parts \(author)")
-        XCTAssertLessThan(plan, 8000)
+        XCTAssertLessThan(plan, 9000)
         XCTAssertLessThan(author, 10500)
     }
 

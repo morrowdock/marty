@@ -36,7 +36,9 @@ the MCP server uses), so a run needs no MCP client.
    where it really is, inside views cut or ghosted in place with `focus` on that
    step, at most 5 labels or arrows per step (an `annotate` list on every step),
    force arrows that start outside the body, and each given figure shown with
-   its source. When the plan chose the
+   its source. In an explainer the table is added by a beat command in the first
+   beat that needs it and stays (the engine's legend counts only 2D items still
+   on the board). When the plan chose the
    explainer form, the author prompt also gets the explainer section and a small
    accepted explainer (a table with a noted given number, which shows as Given,
    beside the 3D model); other prompts stay smaller. It gets a short format guide, the `explain` entries of the
