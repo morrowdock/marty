@@ -116,7 +116,8 @@ public enum MartyPrompts {
     static let explainerGuide = """
         Explainer form (your plan chose it): {"v": 1, "kind": "explainer", "title": "...", "notes": {"<table id>":
          {"basis": "<source>"}}, "board": {"v": 1, "items": [{"id": "t", "k": "table", "at": [6, 4], "header": true,
-         "cells": [["Item", "Value"], ["<name>", <number>]]}]}, "solid": { ...the assembly as above, without "kind",
+         "cells": [["Item", "Value"], ["<name>", <number>]]}]} (at most 8 rows, 6 columns, 12 characters a cell,
+         numbers below 1000000), "solid": { ...the assembly as above, without "kind",
          "title" and "steps"... }, "beats": [...]}
         - beats (1 to 16) replace steps: {"say": "<= 200 chars", "highlight": [ids, also "t.r1" for row 1; the header
           is row 0], "view":
