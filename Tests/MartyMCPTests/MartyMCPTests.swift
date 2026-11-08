@@ -113,6 +113,24 @@ final class MCPServerTests: XCTestCase {
         XCTAssertNotNil(bad["strict"])
     }
 
+    /// An explainer document is checked by the engine's explainer report; patch and render say plainly they do not take one.
+    func testExplainerThroughMCP() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("marty-mcp-explainer-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let s = MCPServer(engine: MartyEngine(outputRoot: root))
+        let doc: [String: Any] = ["v": 1, "kind": "explainer", "title": "A gear pair",
+                                  "solid": ["v": 2, "parts": [["id": "pair", "use": "spurPair"]]],
+                                  "beats": [["say": "The wheel has {pair.wheel.teeth} teeth.", "highlight": ["pair.wheel"]]]]
+        let ok = try call(s, "check", ["document": doc]).result
+        XCTAssertEqual(ok["ok"] as? Bool, true, "\(ok["reason"] ?? "")")
+        XCTAssertEqual(ok["kind"] as? String, "explainer")
+        XCTAssertEqual((ok["steps"] as? [String])?.first, "The wheel has 36 teeth.")
+        let ref = try XCTUnwrap(ok["ref"] as? String)
+        XCTAssertEqual(try call(s, "patch", ["ref": ref, "patch": ["title": "x"]]).result["error"] as? String, "patch.explainer")
+        XCTAssertEqual(try call(s, "render", ["ref": ref]).result["error"] as? String, "render.explainer")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path), "nothing written for an explainer")
+    }
+
     func testLineSplitter() {
         var s = LineSplitter(limit: 8)
         XCTAssertEqual(s.feed(Data("abc\nde".utf8)), [Data("abc".utf8)])

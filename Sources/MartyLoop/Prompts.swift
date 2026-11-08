@@ -5,13 +5,14 @@ import Foundation
 /// author step sees a short format guide plus `explain` entries for the parts the plan chose. The receipt records the
 /// size and SHA-256 of every prompt, so a change in context is always measured.
 public enum MartyPrompts {
-    public static let version = "marty-prompts/4"
+    public static let version = "marty-prompts/5"
 
     static let role = """
         You are Marty, a teacher who explains how things work with checked 3D models. A deterministic engine \
         (MartyGraphics) builds your model, solves its motion, checks every number and refuses what is wrong with an \
         exact reason. The engine is the source of truth: never state a number that the engine did not solve or that is \
-        not a size you set in the model.
+        not a size you set in the model, except a given number shown with its source as not checked (an unchecked \
+        label or arrow, or a noted explainer table).
         """
 
     // MARK: plan
@@ -25,10 +26,20 @@ public enum MartyPrompts {
         Engine catalog (components with parameters, primitive ids, cameras, limits):
         \(catalog)
 
+        Plan in this order: (1) the WHOLE system first: every main unit in its real place and number (all of them, \
+        not one), any person or load it carries as a simple schematic figure, and the forces that matter as arrows \
+        (weight; thrust, lift or push); (2) then the inside of the ONE part that makes it work, cut open; (3) then \
+        what the model does not show.
+
         Reply with ONE JSON object only, no prose and no code fences:
-        {"inScope": true, "subject": "<5-10 words>", "beats": ["<one short teaching point>", "..."], \
-        "components": ["<component id>"], "primitives": ["<primitive id>"], "honesty": ""}
-        - beats: 2 to 6, in teaching order; each one is a step of the 3D lesson.
+        {"inScope": true, "subject": "<5-10 words>", "form": "solid", \
+        "whole": "<the whole system: main units, how many, where>", \
+        "inside": "<the one part to cut open>", "given": ["<a number you know but cannot compute, with source>"], \
+        "beats": ["<one short teaching point>", "..."], "components": ["<component id>"], "primitives": ["<id>"], \
+        "honesty": ""}
+        - beats: 3 to 8, in teaching order; each one is a step of the 3D lesson.
+        - form: "solid" (a 3D model) or "explainer" (the 3D model with a 2D table beside it, when published numbers \
+        belong next to the model).
         - components and primitives: only ids from the catalog (at most 6 in all). Prefer components.
         - inScope: false when the engine cannot show the core mechanism (for example chains, cams, worm or bevel \
         gears, fluids, biology). Then plan the best honest schematic, and say in "honesty" what is not modelled.
@@ -81,15 +92,51 @@ public enum MartyPrompts {
         - Materials: brushedSteel, polishedSteel, darkSteel, blackOxide, brass, bronze, aluminum, rubber, glass,
           titanium, nickelAlloy, composite, ceramic, anodized.<role>, plastic.<role> (roles: blue, red, green, orange,
           purple, yellow, teal, white, accent, muted).
+        - Inside views (step keys): "section": {"normal": [0, -1, 0], "offset": 0, "parts": ["casing"]} cuts the listed
+          parts open (the side where normal·p > offset is removed; the plane must cut each part); "ghost": ["casing"]
+          shows parts see-through. Part keys: "opacity": 0.1..1 (always faint), "emissive": {"role": "orange",
+          "intensity": 1} (a hot core glows).
+        - "annotations" (top level): {"labels": [{"id", "at", "text"}], "arrows": [{"id", "meaning", ...}],
+          "dimensions": [{"id", "a", "b"}]}. An anchor is "<part>", {"part": "<part>", "offset": [x,y,z]},
+          {"part": "<part>", "point": "centre"} or {"world": [x,y,z]}. Ids must differ from part ids. Text: at most 40
+          characters filled, numbers only as {fact} placeholders; at most 12 shown at once (a step's "annotate": [ids]
+          shows only those).
+          Weight: {"id": "aW", "meaning": "force", "cause": "gravity", "from": "<part>", "to": {"part": "<part>",
+          "offset": [0, 0, -60]}, "text": "Weight"} (the engine checks it points down; use a part that does not turn).
+          Thrust, lift, push: "meaning": "force" without "cause" (shown as not checked). Air or gas: "meaning": "flow",
+          "from" and "to" anchors. A plain callout: "meaning": "pointer". A measured size: {"id": "len", "a": <anchor>,
+          "b": <anchor>} shows {dim.len} mm.
+        - A number the engine cannot solve (a published weight, thrust, power, count or speed) goes only in a label or
+          arrow with "unchecked": "<source, 1-60 chars>" (shown as Not checked) or, in the explainer form, in a table
+          with a "basis" note (shown as Given) or an "unchecked" note (Not checked). Never put it in a claim.
+        - A person, wing or body that has no library part is a few boxes and shafts named "(schematic)".
         - If the engine cannot show part of the subject, build the best schematic and say so in the title or a step
           (for example "schematic: chain not modelled"). Never present an unchecked fake as real.
         """
 
-    public static func authorSystem(parts: String, example: String) -> String {
+    /// The explainer form (MartyGraphics docs/EXPLAINER.md), added to the author prompt only when the plan chose it.
+    static let explainerGuide = """
+        Explainer form (your plan chose it): {"v": 1, "kind": "explainer", "title": "...", "notes": {"<table id>":
+         {"basis": "<source>"}}, "board": {"v": 1, "items": [{"id": "t", "k": "table", "at": [6, 4], "header": true,
+         "cells": [["Item", "Value"], ["<name>", <number>]]}]} (at most 8 rows, 6 columns, 12 characters a cell,
+         numbers with absolute value below 1000000), "solid": { ...the assembly as above, without "kind",
+         "title" and "steps"... }, "beats": [...]}
+        - beats (1 to 16) replace steps: {"say": "<= 200 chars", "highlight": [ids, also "t.r1" for row 1; the header
+          is row 0], "view":
+          {"camera", "spin", "explode", "orbit", "section", "ghost"}, "check": [claims], "unchecked": "<why>"}.
+        - A table may type numbers only with a note on it ({"basis": "<source>"} shows as Given, {"unchecked": "<why>"}
+          as Not checked); a cell may
+          also show a 3D fact, "{part.fact}". Every id is in one namespace: table ids differ from part ids.
+        - Numbers in a say still come only from {fact} placeholders.
+        """
+
+    public static func authorSystem(parts: String, example: String, explainer: String? = nil) -> String {
         """
         \(role)
 
-        Step 2 of 3: write the 3D lesson as one engine document.
+        Step 2 of 3: write the 3D lesson as one engine document. Follow the plan: first steps show its whole system with \
+        its forces, a later step cuts open its inside part, and its given numbers appear only in unchecked labels or \
+        arrows (or, in the explainer form, in a table with a note).
 
         \(guide)
 
@@ -98,9 +145,9 @@ public enum MartyPrompts {
 
         A complete accepted document, for the format:
         \(example)
-
+        \(explainer.map { "\n\(explainerGuide)\nA complete accepted explainer:\n\($0)\n" } ?? "")
         Reply with ONE JSON object only, no prose and no code fences:
-        {"document": { ...the assembly... }, "components": []}
+        {"document": { ...the assembly or explainer... }, "components": []}
         "components" holds new component definitions only when the library has no fitting part (usually empty).
         """
     }
@@ -147,6 +194,12 @@ public enum MartyPrompts {
             ("text.placeholder", "A placeholder names no fact, or its form is wrong. Use a fact name the engine solved, as {name} or {name|mod}."),
             ("text.sign", "The abs modifier needs a claim in the same step that proves the sign: {\"value\": \"<fact>\", \"lt\": 0} or \"gt\": 0."),
             ("text.rounding", "That value would print as 0: use {name|frac} or {name|inv}."),
+            ("text.number.beat", "That beat's say has a typed number. Use a {fact} placeholder, or mark the beat \"unchecked\": \"<why>\"."),
+            ("text.number.item", "A 2D item shows a typed number without a note: add \"notes\": {\"<item id>\": {\"basis\": \"<source>\"}} (or {\"unchecked\": \"<why>\"}), or show an engine fact with a placeholder."),
+            ("notes.unused", "A note names no 2D item of the board: key each note by an item id, for example the table's id."),
+            ("beat.highlight.ref", "A highlight id names nothing at that beat: use a part id, a 2D item id, or a table row \"t.r<k>\" (the header is row 0)."),
+            ("explainer.solid.steps", "In an explainer the solid has no steps: the beats replace them (a beat's view holds camera, spin, section, ghost)."),
+            ("explainer.solid.title", "In an explainer the solid has no title: the explainer has the one title."),
             ("step.check", "A step's check is a list of 1 to 8 claims: [{\"value\": \"<fact>\", \"eq\" | \"lt\" | \"gt\": number, \"tol\": number (optional, with eq only)}] (v2 only)."),
             ("check.failed", "A claim in the step is false: the engine solved a different value. Change or remove the claim, or change the model."),
             ("check.fact", "A claim names no fact. Use a fact name the engine solved."),

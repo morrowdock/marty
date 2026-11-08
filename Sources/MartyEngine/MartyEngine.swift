@@ -99,8 +99,35 @@ public final class MartyEngine {
         (try? JSONSerialization.jsonObject(with: j.canonicalData)) as? [String: Any]
     }
 
+    /// True for an explainer document (`kind: "explainer"`, MartyGraphics docs/EXPLAINER.md).
+    public nonisolated static func isExplainer(_ json: MGJSON) -> Bool { json["kind"] == .string("explainer") }
+
+    /// The engine's explainer report (`MGExplainerReport`, exactly `marty-solid check [--strict]` on an explainer), plus
+    /// Marty's convenience copies from its 3D view for the loop: `steps` (the beat captions), `stepTiers`, `facts`,
+    /// `ratios`, `readBack`, `partIds`. The engine's own fields are unchanged.
+    static func explainerReport(_ json: MGJSON, _ lib: MGSolidLibrary, strict: Bool) -> [String: Any] {
+        let r = MGExplainerReport.check(data: json.canonicalData, library: lib, profile: strict ? .strict : .standard, engine: engineIdentity)
+        var out = plain(r.json) ?? ["ok": false, "reason": "report.encoding"]
+        if out["part"] == nil { out["part"] = NSNull() }
+        if let beats = out["beats"] as? [[String: Any]] {
+            out["steps"] = beats.map { $0["caption"] ?? NSNull() }
+            out["stepTiers"] = beats.map { $0["tier"] ?? NSNull() }
+        }
+        if let solid = (out["views"] as? [String: Any])?["solid"] as? [String: Any] {
+            for k in ["facts", "ratios", "readBack"] { if let v = solid[k] { out[k] = v } }
+        }
+        if let ids = (out["ids"] as? [String: Any])?["solid"] { out["partIds"] = ids }
+        if out["triangles"] == nil, let t = (out["budget"] as? [String: Any])?["triangles"] { out["triangles"] = t }
+        return out
+    }
+
     func checkJSON(_ json: MGJSON, _ lib: MGSolidLibrary, strict: Bool = false) -> (report: [String: Any], doc: MGSolidDocument?) {
         let ref = remember(json)
+        if Self.isExplainer(json) {
+            var r = Self.explainerReport(json, lib, strict: strict)
+            r["ref"] = ref
+            return (r, nil)
+        }
         switch MGSolidParser.document(json: json, library: lib) {
         case .failure(let issue):
             var r = Self.refusedReport(issue, strict: strict, json: json)
@@ -162,6 +189,8 @@ public final class MartyEngine {
         case .failure(let r): return ["ok": false, "reason": r.reason, "part": NSNull(), "strict": strict, "stage": "base"]
         case .success(let j): base = j
         }
+        // The engine has no patch format for explainers (docs/EXPLAINER.md); send the whole changed document to check.
+        if Self.isExplainer(base) { throw ToolError("patch.explainer", "explainer documents cannot be patched; send the changed document to check") }
         let p: MGJSON
         switch Decode.json(patch, limit: MartyLimits.patchBytes, tooLarge: "patch.bytes") {
         case .failure(let r): return ["ok": false, "reason": r.reason, "part": NSNull(), "strict": strict, "stage": "patch"]

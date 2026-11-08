@@ -1,9 +1,11 @@
 # Design note: the Marty MCP tool set
 
 Status: implemented in `marty-mcp` 0.2.0. Engine pin: MartyGraphics `main` at
-`d5f42c2e6124487d53f046171526d26d2128330d` (PR #20 lessons, PR #21 open vocabulary 1: facts,
-placeholders, truth tiers, frame lints, strict profile, and PR #30: the report and render
-plan as library API).
+`d0e59443916065faaec9a22fd1226dc923fbc3ea` (PR #20 lessons, PR #21 open vocabulary 1: facts,
+placeholders, truth tiers, frame lints, strict profile, PR #30: the report and render plan as
+library API, PR #31: annotations: labels, arrows, measured dimensions, and PR #32: explainer
+documents). `render` draws the
+annotation overlay on the hero and step stills, as `marty-solid render` does.
 
 ## Goal
 
@@ -94,6 +96,16 @@ to the parser.
 `check` and renders only an accepted document, so it also refuses
 `check.meshOpen` and `check.gearsInterpenetrate`. The engine's own CLI render
 does not run those two checks.
+
+**Explainers.** A document with `kind: "explainer"` (MartyGraphics PR #32: a
+2D board and/or a 3D solid on one beat timeline, one id namespace, one legend)
+is checked by `MGExplainerReport` (exactly `marty-solid check [--strict]` on
+it), with Marty's `ref`. For the Marty loop, Marty also copies the 3D view's
+`facts`, `ratios`, `readBack` and part ids, and the beat captions and tiers
+as `steps` and `stepTiers`, to the top level. `patch` (the engine has no patch
+format for explainers) and `render` (render it with `marty-solid render`) give
+the tool errors `patch.explainer` and `render.explainer`. Marty's 64 KiB
+document limit applies to explainers too (the engine allows 128 KiB).
 
 **Lessons.** Both lesson tools use the engine's own session
 (`MGLessonSession`) with immediate pacing and a manual clock, so results hold

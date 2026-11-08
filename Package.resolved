@@ -1,12 +1,12 @@
 {
-  "originHash" : "4e2baee7163ff30fd232965f11b6b6273a69d2eaaae874df46a117bf3a651ad8",
+  "originHash" : "00dd60d48428c42fd07f0797b87ddc2ff688961bea621f0e92cb609408a89652",
   "pins" : [
     {
       "identity" : "martygraphics",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/morrowdock/martygraphics.git",
       "state" : {
-        "revision" : "d5f42c2e6124487d53f046171526d26d2128330d"
+        "revision" : "d0e59443916065faaec9a22fd1226dc923fbc3ea"
       }
     }
   ],

@@ -24,6 +24,9 @@ extension MartyEngine {
         case .failure(let r): return ["ok": false, "reason": r.reason, "part": NSNull()]
         case .success(let j): json = j
         }
+        if Self.isExplainer(json) {
+            throw ToolError("render.explainer", "marty-mcp renders assemblies only; render an explainer with marty-solid render")
+        }
         let (report, compiled) = checkJSON(json, lib)
         guard let doc = compiled, (report["ok"] as? Bool) == true else { return report }
         let docRef = report["ref"] as! String
@@ -96,34 +99,44 @@ extension MartyEngine {
     }
 
     /// Changes whenever Marty's render sequence or manifest changes, so an old result is never reused for a new format.
-    public static let renderFormat = "marty-render/2"
+    public static let renderFormat = "marty-render/3"
 
     /// Takes the engine's render plan (`MGSolidRenderPlan`): captioned stills, the optional loop GIF and the snapshot.
     static func renderFiles(_ doc: MGSolidDocument, sourceName: String, source: MGSolidSource, into out: URL, width: Int, height: Int,
                             loop: Bool) throws -> (files: [[String: Any]], frames: Int, seconds: Double) {
         _ = NSApplication.shared
-        let r = MGSolidRenderer(assembly: doc.assembly)
+        let r = MGSolidRenderer(document: doc)
         let aspect = Double(width) / Double(height)
         let plan = MGSolidRenderPlan(doc, sourceName: sourceName, source: source, loop: loop)
         var files: [[String: Any]] = []
         var seconds = 0.0, frames = 0
+        var previousFrame: MGAnnotationFrame?
         func shot(_ s: MGSolidShot) throws -> CGImage {
             let p = MGSolidCamera.presets[s.preset] ?? MGSolidCamera.presets["hero"]!
-            // Each step shows its own section cuts and ghosts; other shots show the plain scene.
-            r.show(doc.view(step: s.step))
+            // As marty-solid render: each step shows its own section cuts, ghosts and annotations; annotations show on
+            // hero.png and the step stills only (`MGSolidShot.showsAnnotations`), and only where the engine checked
+            // the pose (inside the renderer and the frame).
+            let view = doc.view(step: s.step)
+            if s.showsAnnotations { r.show(document: doc, view: view) } else { r.show(view) }
             r.highlight(Set(s.highlight), dimOthers: !s.highlight.isEmpty)
             r.apply(s.params)
             r.frame(s.params, explodeRange: [0, s.params.explode], yaw: p.yaw + s.orbit, pitch: p.pitch, aspect: aspect, margin: s.margin)
             let t0 = Date()
             guard let img = r.render(width: width, height: height) else { throw ToolError("render.metal", "no Metal device") }
             seconds += Date().timeIntervalSince(t0); frames += 1
-            return img
+            guard s.showsAnnotations, !view.annotations.isEmpty else { return img }
+            let frame = MGSolidAnnotations.frame(document: doc, view: view, params: s.params, camera: r.camera, width: Double(width),
+                                                 height: Double(height), previous: previousFrame, highlight: s.highlight,
+                                                 caption: s.caption != nil, title: true)
+            previousFrame = frame
+            return Self.overlaid(img, frame, doc)
         }
         func record(_ name: String, _ fields: [String: Any]) throws {
             let d = try Data(contentsOf: out.appendingPathComponent(name))
             files.append(fields.merging(["file": name, "bytes": d.count, "sha256": MartyJSON.sha256(d)]) { a, _ in a })
         }
         for s in plan.stills {
+            previousFrame = nil
             let img = caption(try shot(s), title: s.title ?? doc.title, text: s.caption, footer: plan.footer)
             try writePNG(img, out.appendingPathComponent(s.file))
             try record(s.file, ["width": img.width, "height": img.height])
@@ -146,6 +159,16 @@ extension MartyEngine {
 
     /// Sorted-key JSON of an engine value.
     static func MJ(_ j: MGJSON) -> Data { MartyJSON.data(j.any) }
+
+    /// The engine's annotation overlay (labels, leaders, value texts, callouts, legend) over a rendered frame.
+    static func overlaid(_ image: CGImage, _ frame: MGAnnotationFrame, _ doc: MGSolidDocument) -> CGImage {
+        let w = image.width, h = image.height
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return image }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        MGSolidOverlay.draw(frame, document: doc, legend: true, in: ctx, width: w, height: h)
+        return ctx.makeImage() ?? image
+    }
 
     static func caption(_ image: CGImage, title: String, text: String?, footer: String) -> CGImage {
         let w = image.width, h = image.height
