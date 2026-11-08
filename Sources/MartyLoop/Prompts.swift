@@ -277,7 +277,7 @@ public enum MartyPrompts {
             ("step.check", "A step's check is a list of 1 to 8 claims: [{\"value\": \"<fact>\", \"eq\" | \"lt\" | \"gt\": number, \"tol\": number (optional, with eq only)}] (v2 only)."),
             ("check.failed", "A claim in the step is false: the engine solved a different value. Change or remove the claim, or change the model."),
             ("check.fact", "A claim names no fact. Use a fact name the engine solved."),
-            ("parts.count", "\"parts\" holds 1 to 48 entries, and component expansion may make at most 96 parts (a microTurbojet is 11, a mannequin 13): use fewer component instances, or plain shapes for the units that are not cut open."),
+            ("parts.count", "\"parts\" holds 1 to 48 entries, and component expansion may make at most 96 parts (a microTurbojet is 11, a mannequin 12): use fewer component instances, or plain shapes for the units that are not cut open."),
             ("parts.resolved", "The model has too many parts after component and repeat expansion: use fewer component instances, or plain shapes for the units that are not cut open."),
             ("annotations.visible", "Too many annotations would show at once: give every step (in an explainer, every beat's view) an \"annotate\" list of the ids it shows, at most 5 labels and pointers plus its force arrows."),
             ("step.annotate.count", "A step's \"annotate\" list is longer than the limit: split it over two steps."),
