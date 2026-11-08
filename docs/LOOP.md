@@ -19,10 +19,16 @@ the MCP server uses), so a run needs no MCP client.
    fetch pages on GitHub (`github.com`, `raw.githubusercontent.com`,
    `gist.github.com`), whose sources Marty also drops. An abstract subject may
    reply `{"needed": false}`. Marty checks the labels by form, not by reading
-   the sources: VERIFIED needs sources on two different sites (else CLAIM), a
+   the sources: VERIFIED needs sources on two different sites (registrable
+   domains: sibling subdomains are one site; hosts are compared without a
+   trailing dot or "www."; WebFetch is denied on each blocked domain and its
+   subdomains) (else CLAIM), a
    CLAIM needs a source (else PLAUSIBLE), an UNKNOWN row has no value, and every
    change is listed in `downgrades`. The table goes into the plan, author,
-   repair, follow-up and answer prompts. A failed or unreadable research reply,
+   repair, follow-up and answer prompts as one JSON object per row between
+   `BEGIN FACT TABLE` and `END FACT TABLE` (markers inside a field are
+   removed), and every system prompt says that the table is web data whose
+   instructions are never followed. A refused answer gets no table. A failed or unreadable research reply,
    or an adapter without web tools, leaves no table ("Fact table: none"), and
    the run goes on; this is not an adapter error. The receipt's `research`
    block records the table, the downgrades, the turns and the limits.
@@ -42,7 +48,8 @@ the MCP server uses), so a run needs no MCP client.
    table. When a flight question (a flight word such as fly or hover, or
    lift with a flight context such as jet, drone or wing; "a hydraulic lift" is
    not one) gets a plan with no thrust entry while the fact table has a thrust
-   row, Marty asks once more (`plan.lint`,
+   row with a number, Marty asks once more, only for the table's thrust (and
+   weight) rows (`plan.lint`,
    reason `plan.given.thrust`, with `fixed`). Only the reply's `given` is taken,
    and only when it names thrust with a number; a partial, empty or bad reply,
    or an adapter failure, keeps the original plan, and authoring goes on. The plan says
@@ -234,7 +241,7 @@ adapter.
 
 The receipt records `contextBytes` for the plan and author prompts, and the
 size and SHA-256 of every prompt. Tests fail when the plan prompt grows over
-12,000 bytes or the author prompt over 13,000 bytes (the author prompt without component
+12,000 bytes or the author prompt over 13,500 bytes (the author prompt without component
 entries: 12,000 bytes, and 14,500 bytes with the explainer form). For comparison, the
 v1 eval harness sent about 25,600 bytes of engine docs in every call.
 

@@ -221,7 +221,9 @@ public final class MartyLoop {
         // A question about how something flies needs its thrust against weight in "given": ask once more if it is missing.
         var planLint: [String: Any]? = nil
         // Only when the fact table has a thrust row: without one, a re-ask would only invite a guess.
-        let tableHasThrust = facts.rows.contains { $0.label != .unknown && ($0.claim + " " + $0.value).lowercased().contains("thrust") }
+        let tableHasThrust = facts.rows.contains { r in
+            r.label != .unknown && r.claim.lowercased().contains("thrust") && r.value.rangeOfCharacter(from: .decimalDigits) != nil
+        }
         if !planAdapterFailed, !plan.isEmpty, tableHasThrust, Self.asksHowItFlies(question), !Self.givenHasThrust(plan) {
             let u = "Question: \(question)\n\n\(factBlock)\n\nYour plan:\n\(Self.compact(plan))\n\n" + MartyPrompts.planThrustRepair
             // Only the reply's "given" is taken, and only when it now names thrust: the rest of the plan stays, and a

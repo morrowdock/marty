@@ -108,7 +108,7 @@ public struct ClaudeCLIAdapter: ModelAdapter {
         var a = ["-p", "--model", model]
         if let r = research {
             a += ["--tools", "WebSearch,WebFetch", "--allowedTools", "WebSearch,WebFetch",
-                  "--disallowedTools", r.blockedDomains.map { "WebFetch(domain:\($0))" }.joined(separator: ","),
+                  "--disallowedTools", r.blockedDomains.flatMap { ["WebFetch(domain:\($0))", "WebFetch(domain:*.\($0))"] }.joined(separator: ","),
                   "--max-turns", String(max(1, min(r.maxTurns, 40)))]
         } else {
             a += ["--tools", ""]
