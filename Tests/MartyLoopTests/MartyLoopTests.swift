@@ -29,8 +29,8 @@ final class MartyLoopTests: XCTestCase {
         let plan = MartyPrompts.planSystem(catalog: catalog).utf8.count
         let author = MartyPrompts.authorSystem(parts: "", example: MartyExamples.formatExample).utf8.count
         print("prompt bytes: plan \(plan), author without parts \(author)")
-        XCTAssertLessThan(plan, 10000)
-        XCTAssertLessThan(author, 10500)
+        XCTAssertLessThan(plan, 12000)
+        XCTAssertLessThan(author, 12000)
     }
 
     /// The format example shows the explainer tools (section, ghost, a gravity force, an unchecked given number) and the
@@ -55,7 +55,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual((r["steps"] as? [String])?.count, 2)
         let plan = MartyPrompts.authorSystem(parts: "", example: MartyExamples.formatExample, explainer: MartyExamples.explainerExample).utf8.count
         print("prompt bytes: author with the explainer form, without parts \(plan)")
-        XCTAssertLessThan(plan, 13000)
+        XCTAssertLessThan(plan, 14500)
     }
 
     /// The plan chooses the explainer form: the author prompt gets the explainer section; the accepted explainer makes a
@@ -118,7 +118,7 @@ final class MartyLoopTests: XCTestCase {
         // The answer gets the changed values, before and after.
         XCTAssertTrue(mTable.prompts[3].user.contains("3000") && mTable.prompts[3].user.contains("3500"), mTable.prompts[3].user)
         // The answer gets the given figures of the accepted explainer, with their source.
-        XCTAssertTrue(mTable.prompts[3].user.contains("- Rated rpm 3500 — maker's data sheet (given)"), mTable.prompts[3].user)
+        XCTAssertTrue(mTable.prompts[3].user.contains("- Rated rpm 3500 — maker's data sheet, 2024, claimed (given)"), mTable.prompts[3].user)
         let summary = MartyLoop.changeSummary(from: ["board": ["params": ["angle": 10]]], to: ["board": ["params": ["angle": 30]]])
         XCTAssertTrue(summary.contains("10") && summary.contains("30") && summary.contains("board"), summary)
         // A gravity arrow is checked again by the engine: no schematic-direction line.
@@ -383,6 +383,167 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue((unused["reason"] as? String ?? "").hasPrefix("annotation.unused"), "\(unused["reason"] ?? "")")
     }
 
+    /// Marty's lint of an accepted document: more than 5 texts in a step (an arrow without text does not count), and a
+    /// share or comparison in a say or label with no figure, {fact} or hedge. The examples are clean.
+    func testDocumentLint() throws {
+        XCTAssertEqual(MartyLoop.documentLint(try JSONSerialization.jsonObject(with: Data(MartyExamples.formatExample.utf8))), [])
+        XCTAssertEqual(MartyLoop.documentLint(try JSONSerialization.jsonObject(with: Data(MartyExamples.explainerExample.utf8))), [])
+        func doc(labels: Int, arrows: Int, say: String) -> [String: Any] {
+            ["v": 2, "kind": "assembly", "title": "Lint", "units": "mm",
+             "parts": [["id": "box", "shape": ["box": ["size": [40, 40, 40]]]]],
+             "annotations": ["labels": (0..<labels).map { ["id": "l\($0)", "at": ["world": [0, 0, 30 + $0 * 5]], "text": "Label"] },
+                             "arrows": (0..<arrows).map { ["id": "a\($0)", "meaning": "force", "from": "box", "to": ["world": [0, 0, -50 - $0]]] }
+                                 + [["id": "aT", "meaning": "force", "from": "box", "to": ["world": [0, 9, -60]], "text": "Thrust"]]],
+             "steps": [["say": say, "annotate": (0..<labels).map { "l\($0)" } + (0..<arrows).map { "a\($0)" } + ["aT"]]]]
+        }
+        XCTAssertEqual(MartyLoop.documentLint(doc(labels: 4, arrows: 5, say: "The box.")), [], "5 texts; untexted arrows do not count")
+        let six = MartyLoop.documentLint(doc(labels: 5, arrows: 0, say: "The box."))
+        XCTAssertEqual(six.count, 1); XCTAssertTrue(six[0].hasPrefix("Step 1 shows 6 texts"), six[0])
+        let most = MartyLoop.documentLint(doc(labels: 1, arrows: 0, say: "The back engine carries most of the load."))
+        XCTAssertEqual(most.count, 1); XCTAssertTrue(most[0].contains("most of the load"), most[0])
+        XCTAssertEqual(MartyLoop.documentLint(doc(labels: 1, arrows: 0, say: "The wheel turns {pair.wheel.speed|frac}, more than none.")), [])
+        XCTAssertEqual(MartyLoop.documentLint(doc(labels: 1, arrows: 0, say: "In this schematic the back unit gives most of the lift.")), [])
+        // The loop asks for one repair; with none left, the engine-accepted document stands with its lint recorded.
+        let plan = #"{"components": [], "primitives": ["box"]}"#
+        func reply(_ d: [String: Any]) -> String { #"{"document": "# + MartyJSON.string(d) + "}" }
+        let bad = doc(labels: 5, arrows: 0, say: "The box."), good = doc(labels: 4, arrows: 0, say: "The box.")
+        let model = ScriptedAdapter(replies: [plan, reply(bad), reply(good)])
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: .init()).run(question: "q")
+        XCTAssertEqual(r["accepted"] as? Bool, true)
+        XCTAssertNil(r["lint"])
+        let first = try XCTUnwrap((r["attempts"] as? [[String: Any]])?.first)
+        XCTAssertEqual(first["reason"] as? String, "marty.lint"); XCTAssertEqual(first["engineOk"] as? Bool, true)
+        XCTAssertTrue(model.prompts[2].user.contains("Marty's checks found these problems"), model.prompts[2].user)
+        let fallback = ScriptedAdapter(replies: [plan, reply(bad), "not json", "not json", "not json"])
+        let out2 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out2) }
+        let r2 = try MartyLoop(model: fallback, out: out2, options: .init()).run(question: "q")
+        XCTAssertEqual(r2["accepted"] as? Bool, true, "the engine-accepted document stands")
+        XCTAssertEqual((r2["lint"] as? [String])?.count, 1)
+        XCTAssertEqual((r2["final"] as? [String: Any])?["title"] as? String, "Lint")
+        XCTAssertEqual(r2["lintAttempt"] as? Int, 0)
+        // One lint repair at most: a second lint-dirty accepted reply ends the loop; the one with fewer findings stands.
+        let worse = doc(labels: 6, arrows: 0, say: "The back engine carries most of the load.")
+        let repeated = ScriptedAdapter(replies: [plan, reply(bad), reply(worse), reply(good)])
+        let out3 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out3) }
+        let r3 = try MartyLoop(model: repeated, out: out3, options: .init()).run(question: "q")
+        XCTAssertEqual(repeated.prompts.count, 3, "plan, author, one lint repair")
+        XCTAssertEqual((r3["attempts"] as? [[String: Any]])?.map { $0["reason"] as? String }, ["marty.lint", "marty.lint"])
+        XCTAssertEqual((r3["lint"] as? [String])?.count, 1, "the better document (one finding) stands")
+        XCTAssertEqual(r3["lintAttempt"] as? Int, 0)
+        var once = MartyLoop.Options(); once.repairs = 1
+        let short = ScriptedAdapter(replies: [plan, reply(worse), reply(bad)])
+        let out4 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out4) }
+        let r4 = try MartyLoop(model: short, out: out4, options: once).run(question: "q")
+        XCTAssertEqual((r4["lint"] as? [String])?.count, 1, "the later, better document stands")
+        XCTAssertEqual(r4["lintAttempt"] as? Int, 1)
+        // A tie goes to the later document, and an engine refusal between keeps the fallback; the final document is
+        // the selected one.
+        var badB = doc(labels: 5, arrows: 0, say: "The box."); badB["title"] = "Lint B"
+        let tie = ScriptedAdapter(replies: [plan, reply(bad), #"{"document": {"v": 2}}"#, reply(badB)])
+        let out5 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out5) }
+        let r5 = try MartyLoop(model: tie, out: out5, options: .init()).run(question: "q")
+        XCTAssertEqual((r5["attempts"] as? [[String: Any]])?.map { $0["reason"] as? String }.first, "marty.lint")
+        XCTAssertNotEqual((r5["attempts"] as? [[String: Any]])?[1]["reason"] as? String, "marty.lint", "the engine refused attempt 2")
+        XCTAssertEqual(r5["lintAttempt"] as? Int, 2)
+        XCTAssertEqual((r5["final"] as? [String: Any])?["title"] as? String, "Lint B")
+        // Given figures: no merged range (a span of years is fine); a source needs a year unless "reported" or an
+        // "assumed example".
+        XCTAssertTrue(MartyLoop.hasMergedRange("144–155 kgf"))
+        XCTAssertTrue(MartyLoop.hasMergedRange("144 to 155 kgf"))
+        XCTAssertFalse(MartyLoop.hasMergedRange("classic suit (2020–2022)"))
+        XCTAssertFalse(MartyLoop.hasMergedRange("144 kgf"))
+        XCTAssertFalse(MartyLoop.hasMergedRange("Airbus A320-200 seats"))
+        XCTAssertFalse(MartyLoop.hasMergedRange("data sheet, 2024-05-01"))
+        XCTAssertFalse(MartyLoop.hasMergedRange("data sheet, 2024-05"))
+        XCTAssertFalse(MartyLoop.hasMergedRange("classic suit 2020–2022."))
+        XCTAssertFalse(MartyLoop.hasMergedRange("a 2-stroke engine"))
+        XCTAssertTrue(MartyLoop.hasMergedRange("144-155kgf"))
+        XCTAssertTrue(MartyLoop.hasMergedRange("1.5–2.5 kN."))
+        // Unchecked table notes are checked too.
+        let table: [String: Any] = ["kind": "explainer", "notes": ["t": ["unchecked": "maker"]], "solid": [String: Any](),
+            "board": ["items": [["id": "t", "k": "table", "header": true, "cells": [["Item", "Value"], ["Thrust", "144–155 kgf"], ["Turns", "{a.b}"]]]]],
+            "beats": [["say": "A table."]]]
+        let tableLint = MartyLoop.documentLint(table)
+        XCTAssertEqual(tableLint.count, 2, "\(tableLint)")
+        XCTAssertTrue(tableLint.contains { $0.contains("merges two figures") })
+        // givenFigures for an unchecked table: its tier, the beat suffix of a later set, and the 12-line cap.
+        let rows = (0..<14).map { ["R\($0)", $0] as [Any] }
+        let un: [String: Any] = ["notes": ["t": ["unchecked": "reported"]], "board": ["items": [["id": "t", "k": "table", "cells": [["A", 1]]]]],
+                                 "beats": [["ops": [["op": "set", "id": "t", "key": "cells", "value": rows]]]]]
+        let figs = MartyLoop.givenFigures(un)
+        XCTAssertEqual(figs.count, 12)
+        XCTAssertEqual(figs[0], "A 1 — reported (not checked)")
+        XCTAssertEqual(figs[1], "R0 0 — reported (not checked) (from beat 1)")
+        func given(_ text: String, _ source: String) -> [String: Any] {
+            var g = doc(labels: 1, arrows: 0, say: "The box.")
+            g["annotations"] = ["labels": [["id": "l0", "at": ["world": [0, 0, 30]], "text": text, "unchecked": source]]]
+            g["steps"] = [["say": "The box.", "annotate": ["l0"]]]
+            return g
+        }
+        XCTAssertEqual(MartyLoop.documentLint(given("Thrust 144 kgf", "maker, 2019, claimed")), [])
+        XCTAssertEqual(MartyLoop.documentLint(given("Thrust 144 kgf", "reported")), [])
+        XCTAssertEqual(MartyLoop.documentLint(given("Mass 100 kg", "assumed example")), [])
+        XCTAssertEqual(MartyLoop.documentLint(given("Thrust 144 kgf", "maker")).count, 1)
+        XCTAssertTrue(MartyLoop.documentLint(given("Thrust 144–155 kgf", "maker, 2019")).first?.contains("merges two figures") == true)
+        // A repeated id shows once.
+        var dup = doc(labels: 6, arrows: 0, say: "The box.")
+        dup["steps"] = [["say": "The box.", "annotate": ["l0", "l0", "l0", "l0", "l0", "l0", "l1", "l2", "l3", "l4", "l5"]]]
+        XCTAssertEqual(MartyLoop.documentLint(dup).first?.hasPrefix("Step 1 shows 6 texts"), true)
+        dup["steps"] = [["say": "The box.", "annotate": ["l0", "l0", "l0", "l0", "l0", "l0"]], ["say": "More.", "annotate": ["l1", "l2", "l3", "l4", "l5"]]]
+        XCTAssertEqual(MartyLoop.documentLint(dup), [])
+        var ex = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(MartyExamples.explainerExample.utf8)) as? [String: Any])
+        var solid = try XCTUnwrap(ex["solid"] as? [String: Any])
+        solid["annotations"] = ["labels": (0..<6).map { ["id": "l\($0)", "at": ["world": [0, 0, 30 + $0 * 5]], "text": "Label"] }]
+        ex["solid"] = solid
+        ex["beats"] = [["say": "All.", "view": ["annotate": ["l0", "l0", "l1", "l2", "l3", "l4"]]], ["say": "Six.", "view": ["annotate": (0..<6).map { "l\($0)" }]]]
+        XCTAssertEqual(MartyLoop.documentLint(ex).map { String($0.prefix(18)) }, ["Beat 2 shows 6 tex"])
+    }
+
+    /// The guide's engine pattern: a mannequin with five microTurbojets (one cut open) fits the part limit and is
+    /// accepted in strict mode, highlighting casings; nine are over the limit, and the repair prompt states the
+    /// engine's parts.resolved detail.
+    func testMicroTurbojetPatternAndPartsLimit() throws {
+        func doc(_ n: Int, studs: Int = 0) -> [String: Any] {
+            let mounts = ["pilot.leftHand", "pilot.rightHand", "pilot.leftHand", "pilot.rightHand", "pilot.back"]
+            var parts: [[String: Any]] = [["id": "pilot", "use": "mannequin", "with": ["leftShoulder": 30, "rightShoulder": 40]]]
+            for i in 0..<n {
+                parts.append(["id": "e\(i)", "use": "microTurbojet", "with": ["diameter": 110, "length": 280, "cutaway": i == 4 ? 1 : 0],
+                              "parent": mounts[i % 5], "at": [i % 2 == 0 ? 80 : -80, 70 + 20 * i, 0], "rot": [1, 0, 0, 180]])
+            }
+            for k in 0..<studs {   // each a row of 12 (repeat holds 2 to 12)
+                parts.append(["id": "stud\(k)", "name": "Stud (schematic)", "parent": "pilot.back", "at": [0, 10, 100 + 10 * k],
+                              "shape": ["box": ["size": [5, 5, 5]]], "repeat": ["count": 12, "axis": [0, 1, 0]]])
+            }
+            return ["v": 2, "kind": "assembly", "title": "Five small jet engines", "units": "mm", "parts": parts,
+                    "steps": [["say": "A schematic pilot wears small jet engines.", "highlight": (0..<min(n, 5)).map { "e\($0).casing" }],
+                              ["say": "One engine is cut open.", "highlight": ["e4.casing"], "focus": ["e\(min(n, 5) - 1)"], "spin": 1]]]
+        }
+        let engine = MartyEngine(outputRoot: nil)
+        let r = try engine.check(document: doc(5), ref: nil, components: [], strict: true)
+        XCTAssertEqual(r["ok"] as? Bool, true, "\(r["reason"] ?? "") \(r["part"] ?? "")")
+        // Components alone over 96 parts: parts.count (no detail at this pin); with repeat: parts.resolved with it.
+        XCTAssertEqual(try engine.check(document: doc(9), ref: nil, components: [], strict: true)["reason"] as? String, "parts.count")
+        let over = try engine.check(document: doc(5, studs: 3), ref: nil, components: [], strict: true)
+        XCTAssertEqual(over["reason"] as? String, "parts.resolved")
+        let line = try XCTUnwrap(MartyPrompts.limitLine(try XCTUnwrap(over["limit"] as? [String: Any], "\(over)")))
+        XCTAssertTrue(line.hasPrefix("The model has ") && line.contains("the limit is 96") && line.contains("(microTurbojet, 11 parts)"), line)
+        let plan = #"{"components": ["mannequin", "microTurbojet"], "primitives": []}"#
+        func reply(_ d: [String: Any]) -> String { #"{"document": "# + MartyJSON.string(d) + "}" }
+        let model = ScriptedAdapter(replies: [plan, reply(doc(5, studs: 3)), reply(doc(5))])
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let loop = try MartyLoop(model: model, out: out, options: .init()).run(question: "q")
+        XCTAssertEqual((loop["attempts"] as? [[String: Any]])?.first?["reason"] as? String, "parts.resolved")
+        XCTAssertNotNil((loop["attempts"] as? [[String: Any]])?.first?["limit"])
+        XCTAssertTrue(model.prompts[2].user.contains("the limit is 96"), model.prompts[2].user)
+    }
+
     func testReplyJSON() {
         XCTAssertEqual(ReplyJSON.object(#"{"a":1}"#)?["a"] as? Int, 1)
         XCTAssertEqual(ReplyJSON.object("Here:\n```json\n{\"a\": 2}\n```\nDone.")?["a"] as? Int, 2)
@@ -436,8 +597,8 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(receipt["format"] as? String, MartyLoop.receiptFormat)
         XCTAssertEqual((receipt["engine"] as? [String: Any])?["revision"] as? String, MartyPin.engineRevision)
         let ctx = try XCTUnwrap(receipt["contextBytes"] as? [String: Int])
-        XCTAssertLessThan(try XCTUnwrap(ctx["plan"]), 10000, "plan context grew: \(ctx)")
-        XCTAssertLessThan(try XCTUnwrap(ctx["author"]), 12000, "author context grew: \(ctx)")
+        XCTAssertLessThan(try XCTUnwrap(ctx["plan"]), 12000, "plan context grew: \(ctx)")
+        XCTAssertLessThan(try XCTUnwrap(ctx["author"]), 13000, "author context grew: \(ctx)")
     }
 
     func testLoopStopsAfterTheRepairLimit() throws {

@@ -81,6 +81,7 @@ public final class MartyLoop {
         var o: [String: Any] = ["ok": r["ok"] ?? false, "reason": r["reason"] ?? NSNull(), "part": r["part"] ?? NSNull(),
                                 "ref": r["ref"] ?? NSNull(), "error": r["error"] ?? NSNull(), "component": r["component"] ?? NSNull()]
         if let v = r["visibility"] { o["visibility"] = v }
+        if let l = r["limit"] { o["limit"] = l }
         return o
     }
 
@@ -220,6 +221,10 @@ public final class MartyLoop {
         var accepted: [String: Any]? = nil
         var acceptedComponents: [Any] = []
         var attempts: [[String: Any]] = []
+        // The best engine-accepted document that fails Marty's own lint (fewest findings; a later one wins a tie), with
+        // its components and attempt. One lint repair at most.
+        var fallback: (report: [String: Any], components: [Any], lint: [String], attempt: Int)? = nil
+        var lintRepairUsed = false
         // When the model could not be reached for the plan, stop: more calls would only fail or wait again.
         if planAdapterFailed { attempts.append(["ok": false, "reason": "adapter"]) }
         for attempt in stride(from: 0, through: planAdapterFailed ? -1 : options.repairs, by: 1) {
@@ -241,7 +246,23 @@ public final class MartyLoop {
             }
             note(i, Self.outcome(report))
             attempts.append(Self.outcome(report))
-            if (report["ok"] as? Bool) == true { accepted = report; acceptedComponents = components; break }
+            if (report["ok"] as? Bool) == true {
+                // Marty's lint on the accepted document (too many texts in a step, a comparison with no figure). It
+                // only asks for one more repair when one is left; the accepted document is kept as the fallback.
+                let lint = document.map(Self.documentLint) ?? []
+                if lint.isEmpty { accepted = report; acceptedComponents = components; break }
+                if fallback == nil || lint.count <= fallback!.lint.count { fallback = (report, components, lint, attempts.count - 1) }
+                attempts[attempts.count - 1]["reason"] = "marty.lint"
+                attempts[attempts.count - 1]["lint"] = lint
+                attempts[attempts.count - 1]["engineOk"] = true
+                attempts[attempts.count - 1]["ok"] = false
+                // No repair left, or the one lint repair was used: the best accepted document stands (after the loop).
+                if lintRepairUsed || attempt == options.repairs { break }
+                lintRepairUsed = true
+                user = MartyPrompts.repairUser(question: question, plan: planText, previous: text, reason: "marty.lint", part: nil,
+                                               hint: MartyPrompts.lintRepair + "\n" + lint.map { "- \($0)" }.joined(separator: "\n"))
+                continue
+            }
             let reason = report["reason"] as? String ?? "unknown"
             var part = report["part"] as? String
             if let c = report["component"] as? Int { part = "components[\(c)]" + (part.map { " / \($0)" } ?? "") }
@@ -250,7 +271,11 @@ public final class MartyLoop {
             let (facts, readBack) = repairContext(reason: reason, report: report, document: document, components: components)
             user = MartyPrompts.repairUser(question: question, plan: planText, previous: text, reason: reason, part: part,
                                            hint: MartyPrompts.hint(for: reason), facts: facts, readBack: readBack,
-                                           visibility: report["visibility"] as? [String: Any])
+                                           visibility: report["visibility"] as? [String: Any], limit: report["limit"] as? [String: Any])
+        }
+        if accepted == nil, let f = fallback {
+            accepted = f.report; acceptedComponents = f.components
+            receipt["lint"] = f.lint; receipt["lintAttempt"] = f.attempt
         }
         receipt["attempts"] = attempts
         receipt["accepted"] = accepted != nil
@@ -363,6 +388,7 @@ public final class MartyLoop {
                 + "\n\nYour previous reply:\n\(text)\n\nThe engine refused the patch with reason `\(reason)`"
                 + ((r["part"] as? String).map { " on part `\($0)`" } ?? "") + "." + (MartyPrompts.hint(for: reason).map { " \($0)" } ?? "")
                 + ((r["visibility"] as? [String: Any]).flatMap(MartyPrompts.visibilityLine).map { " \($0)" } ?? "")
+                + ((r["limit"] as? [String: Any]).flatMap(MartyPrompts.limitLine).map { " \($0)" } ?? "")
                 + (facts.map { "\n\nFacts the engine solved for the changed model (name: value):\n\($0)" } ?? "")
                 + "\n\nReply with a corrected JSON object only."
         }
@@ -468,6 +494,7 @@ extension MartyLoop {
             if reason == "followup.kind" { u += " The changed document must stay an explainer (kind explainer)." }
             if let h = MartyPrompts.hint(for: reason) { u += " \(h)" }
             if let v = (r["visibility"] as? [String: Any]).flatMap(MartyPrompts.visibilityLine) { u += " \(v)" }
+            if let l = (r["limit"] as? [String: Any]).flatMap(MartyPrompts.limitLine) { u += " \(l)" }
             if let facts { u += "\n\nFacts the engine solved (name: value):\n\(facts)" }
             if let readBack { u += "\n\nEngine read-back:\n\(readBack)" }
             u += "\n\nReply with a corrected JSON object only."
@@ -543,7 +570,7 @@ extension MartyLoop {
     }
 
     static let comparativeWords = #"(?i)\b(most|mostly|majority|all of|all the|all its|the bulk|nearly all|almost all|mainly|largely|more than|less than|twice|half of|the largest|the biggest|the lion's share)\b"#
-    static let hedgeWords = #"(?i)\b(about|roughly|around|approximately|estimated?|schematic|not checked|may|might|perhaps|likely)\b"#
+    static let hedgeWords = #"(?i)\b(about|roughly|around|approximately|estimated?|reported|schematic|not checked|may|might|perhaps|likely)\b"#
 
     /// The numbers in a text ("1,500" and "1.5" stay whole; a trailing period is not a decimal point), normalized:
     /// no thousands commas, no trailing decimal zeros ("1.50" and "1.5", "3000.0" and "3000" match).
@@ -592,8 +619,10 @@ extension MartyLoop {
     static func unsupportedComparatives(_ text: String, sources: [String]) -> [String] {
         let evidence = Set(sources.flatMap(numbers))
         return sentences(text).filter { s in
+            // A {fact} placeholder is an engine number.
             guard s.range(of: comparativeWords, options: .regularExpression) != nil,
-                  s.range(of: hedgeWords, options: .regularExpression) == nil else { return false }
+                  s.range(of: hedgeWords, options: .regularExpression) == nil,
+                  s.range(of: #"\{[^{}]+\}"#, options: .regularExpression) == nil else { return false }
             return !numbers(s).contains(where: evidence.contains)
         }
     }
@@ -627,8 +656,14 @@ extension MartyLoop {
                 if let u = a["unchecked"] as? String, let t = a["text"] as? String { out.append("\(t) — \(u) (not checked)") }
             }
         }
-        // Noted tables, replayed through the beats: the first version of each, then each "set" of its cells,
-        // marked with the beat it shows from.
+        for r in tableRows(d) { out.append(r.row + " — " + r.source + " (" + r.tier + ")" + r.from) }
+        return Array(out.prefix(12))
+    }
+
+    /// The rows of noted explainer tables, replayed through the beats: the first version of each table, then each
+    /// "set" of its cells (marked with the beat it shows from), after any header change. `tier` is "given" (a basis
+    /// note) or "not checked" (an unchecked note).
+    static func tableRows(_ d: [String: Any]) -> [(row: String, source: String, tier: String, from: String)] {
         let notes = d["notes"] as? [String: Any] ?? [:]
         var versions: [(id: String, beat: Int?, header: Bool, cells: [[Any]])] = []
         var header: [String: Bool] = [:]
@@ -651,16 +686,95 @@ extension MartyLoop {
                 }
             }
         }
+        var out: [(row: String, source: String, tier: String, from: String)] = []
         var first = Set<String>()
         for v in versions {
             guard let note = notes[v.id] as? [String: Any] else { continue }
-            let source = (note["basis"] as? String).map { "\($0) (given)" } ?? (note["unchecked"] as? String).map { "\($0) (not checked)" } ?? ""
+            let basis = note["basis"] as? String, unchecked = note["unchecked"] as? String
+            guard let source = basis ?? unchecked else { continue }
             let from = first.insert(v.id).inserted ? "" : " (from beat \(v.beat.map(String.init) ?? "?"))"
             for row in v.cells.dropFirst(v.header ? 1 : 0) {
-                out.append(row.map { "\($0)" }.joined(separator: " ") + " — " + source + from)
+                out.append((row.map { "\($0)" }.joined(separator: " "), source, basis != nil ? "given" : "not checked", from))
+            }
+        }
+        return out
+    }
+
+    static let maxTextsPerStep = 5
+
+    /// Marty's lint of an engine-accepted document (assembly or explainer): a step or beat that shows more than 5
+    /// texts (labels, dimensions and arrows with text), and a caption or label sentence that compares sizes or shares
+    /// with no hedge, no {fact} placeholder and no given figure.
+    static func documentLint(_ document: Any) -> [String] {
+        guard let d = document as? [String: Any] else { return [] }
+        let explainer = d["kind"] as? String == "explainer"
+        let solid = explainer ? d["solid"] as? [String: Any] ?? [:] : d
+        let ann = solid["annotations"] as? [String: Any] ?? [:]
+        var texts: [String: String] = [:]
+        for l in ann["labels"] as? [[String: Any]] ?? [] { if let id = l["id"] as? String { texts[id] = l["text"] as? String ?? "" } }
+        for a in ann["dimensions"] as? [[String: Any]] ?? [] { if let id = a["id"] as? String { texts[id] = a["text"] as? String ?? "" } }
+        for a in ann["arrows"] as? [[String: Any]] ?? [] { if let id = a["id"] as? String, let t = a["text"] as? String { texts[id] = t } }
+        let steps: [[String: Any]] = explainer ? d["beats"] as? [[String: Any]] ?? [] : d["steps"] as? [[String: Any]] ?? []
+        func list(_ step: [String: Any]) -> [String]? { (explainer ? (step["view"] as? [String: Any])?["annotate"] : step["annotate"]) as? [String] }
+        let stepped = steps.contains { list($0) != nil }
+        var out: [String] = []
+        let word = explainer ? "Beat" : "Step"
+        for (n, step) in steps.enumerated() {
+            // The engine shows each listed id once.
+            let shown = Set(stepped ? (list(step) ?? []) : Array(texts.keys))
+            let count = shown.filter { texts[$0] != nil }.count
+            if count > maxTextsPerStep {
+                out.append("\(word) \(n + 1) shows \(count) texts (labels, dimensions and arrows with text); at most \(maxTextsPerStep). An arrow without \"text\" does not count.")
+            }
+        }
+        // Given figures: no merged range (a span of years is fine), and a source with a year unless it is
+        // "reported" or an "assumed example".
+        var noted: [(String, String, String)] = []   // (where, shown text, source)
+        for key in ["labels", "arrows"] {
+            for a in ann[key] as? [[String: Any]] ?? [] {
+                if let u = a["unchecked"] as? String { noted.append(("Annotation \(a["id"] as? String ?? "?")", a["text"] as? String ?? "", u)) }
+            }
+        }
+        // Noted table rows (basis or unchecked note) with a typed number (a {fact} cell is the engine's).
+        for r in tableRows(d) {
+            let typed = r.row.replacingOccurrences(of: #"\{[^{}]*\}"#, with: "", options: .regularExpression)
+            if typed.rangeOfCharacter(from: .decimalDigits) != nil { noted.append(("Table row \"\(r.row)\"", r.row, r.source)) }
+        }
+        for (whereText, shown, source) in noted {
+            if hasMergedRange(shown) || hasMergedRange(source) {
+                out.append("\(whereText) merges two figures into one range: give each figure with its own source and year.")
+            }
+            if source.range(of: #"(?i)\b(reported|assumed example|estimate)\b"#, options: .regularExpression) == nil,
+               source.range(of: #"\b(1[89]|20)\d\d\b"#, options: .regularExpression) == nil {
+                out.append("\(whereText) names a source with no year (\"\(source)\"): add the year, or write \"reported\".")
+            }
+        }
+        let evidence = givenFigures(d)
+        let says = steps.enumerated().compactMap { n, s in (s["say"] as? String).map { ("\(word) \(n + 1)", $0) } }
+            + texts.sorted { $0.key < $1.key }.map { ("Annotation \($0.key)", $0.value) }
+        for (whereText, text) in says {
+            for sentence in unsupportedComparatives(text, sources: evidence) {
+                out.append("\(whereText) says \"\(sentence)\": a share or comparison needs a given figure or a {fact}, or a hedge (about, in this schematic).")
             }
         }
         return Array(out.prefix(12))
+    }
+
+    /// A number range such as "144-155" or "144 to 155" (a span of years such as "2020-2022" is not one).
+    static func hasMergedRange(_ text: String) -> Bool {
+        // Dates (2024-05-01, 2024-05) are not ranges; a number glued to letters or a dash (A320-200, Mk-4) is an
+        // identifier; a trailing period is not a decimal point.
+        let plain = text.replacingOccurrences(of: #"\b\d{4}-\d{2}(?:-\d{2})?\b"#, with: " ", options: .regularExpression)
+        guard let re = try? NSRegularExpression(pattern: #"(?<![\p{L}\d.,/-])(\d+(?:[.,]\d+)*)\s*(?:–|—|-|\bto\b)\s*(\d+(?:[.,]\d+)*)(?![\d/-])"#)
+        else { return false }
+        let ns = plain as NSString
+        for m in re.matches(in: plain, range: NSRange(location: 0, length: ns.length)) {
+            let a = ns.substring(with: m.range(at: 1)), b = ns.substring(with: m.range(at: 2))
+            let year = #"^(1[89]|20)\d\d$"#
+            if a.range(of: year, options: .regularExpression) != nil, b.range(of: year, options: .regularExpression) != nil { continue }
+            return true
+        }
+        return false
     }
 
     /// What a follow-up may change in an explainer, without its words: the solid (without label and arrow text), the
@@ -842,7 +956,7 @@ extension MartyLoop {
 /// Small accepted documents used as format examples in prompts. Tests check each one with the engine.
 /// The example is about no bench subject (no gears, cranks or blades), so it shows the format without giving away an answer.
 public enum MartyExamples {
-    public static let formatExample = #"{"v":2,"kind":"assembly","title":"A shaft held in two bearings","units":"mm","parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"labels":[{"id":"lShaft","at":{"part":"shaft.input","offset":[0,0,60]},"text":"Shaft"},{"id":"lRated","at":{"world":[0,-70,20]},"text":"Rated 3000 rpm","unchecked":"maker's figure"}],"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-20]},"to":{"part":"base.base","offset":[0,0,-60]},"text":"Weight"}]},"steps":[{"say":"Two bearings hold a shaft in line on a base.","camera":"hero","annotate":["lShaft","lRated","aW"]},{"say":"Input: the shaft makes {shaft.input.speed} turn for each input turn.","highlight":["shaft.input"],"spin":1,"check":[{"value":"shaft.input.speed","eq":1}],"annotate":["lShaft"]},{"say":"Cut open: the lower bearing rings the shaft.","section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"highlight":["shaft.lowerBearing"],"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]},{"say":"Seen through the base.","ghost":["base.base"],"annotate":["aW"]}]}"#
+    public static let formatExample = #"{"v":2,"kind":"assembly","title":"A shaft held in two bearings","units":"mm","parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"labels":[{"id":"lShaft","at":{"part":"shaft.input","offset":[0,0,60]},"text":"Shaft"},{"id":"lRated","at":{"world":[0,-70,20]},"text":"Rated 3000 rpm","unchecked":"assumed example"}],"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-20]},"to":{"part":"base.base","offset":[0,0,-60]},"text":"Weight"}]},"steps":[{"say":"Two bearings hold a shaft in line on a base.","camera":"hero","annotate":["lShaft","lRated","aW"]},{"say":"Input: the shaft makes {shaft.input.speed} turn for each input turn.","highlight":["shaft.input"],"spin":1,"check":[{"value":"shaft.input.speed","eq":1}],"annotate":["lShaft"]},{"say":"Cut open: the lower bearing rings the shaft.","section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"highlight":["shaft.lowerBearing"],"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]},{"say":"Seen through the base.","ghost":["base.base"],"annotate":["aW"]}]}"#
     /// A small explainer: the same shaft with a table of one given number (with its source) and one engine fact.
-    public static let explainerExample = #"{"v":1,"kind":"explainer","title":"A shaft held in two bearings","primary":"solid","notes":{"t":{"basis":"maker's data sheet"}},"board":{"v":1,"items":[{"id":"cap","k":"text","at":[6,7],"text":"Key figures"}]},"solid":{"v":2,"parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-20]},"to":{"part":"base.base","offset":[0,0,-60]},"text":"Weight"}]}},"beats":[{"say":"Two bearings hold a shaft on a base; the table gives its rated speed.","highlight":["t.r1","shaft.shaft"],"ops":[{"op":"add","item":{"id":"t","k":"table","at":[6,4],"header":true,"cells":[["Item","Value"],["Rated rpm",3000],["Turns/input","{shaft.input.speed}"]]}}],"view":{"annotate":["aW"]}},{"say":"Cut open: the lower bearing rings the shaft.","highlight":["shaft.lowerBearing"],"view":{"section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]}}]}"#
+    public static let explainerExample = #"{"v":1,"kind":"explainer","title":"A shaft held in two bearings","primary":"solid","notes":{"t":{"basis":"maker's data sheet, 2024, claimed"}},"board":{"v":1,"items":[{"id":"cap","k":"text","at":[6,7],"text":"Key figures"}]},"solid":{"v":2,"parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-20]},"to":{"part":"base.base","offset":[0,0,-60]},"text":"Weight"}]}},"beats":[{"say":"Two bearings hold a shaft on a base; the table gives its rated speed.","highlight":["t.r1","shaft.shaft"],"ops":[{"op":"add","item":{"id":"t","k":"table","at":[6,4],"header":true,"cells":[["Item","Value"],["Rated rpm",3000],["Turns/input","{shaft.input.speed}"]]}}],"view":{"annotate":["aW"]}},{"say":"Cut open: the lower bearing rings the shaft.","highlight":["shaft.lowerBearing"],"view":{"section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]}}]}"#
 }

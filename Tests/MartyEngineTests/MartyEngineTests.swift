@@ -292,7 +292,7 @@ final class MartyEngineTests: XCTestCase {
         let components = try XCTUnwrap((c["components"] as? [String: Any])?["components"] as? [Any])
         XCTAssertEqual(components.count, MGSolidLibrary.builtIn.ids.count)
         let bytes = MartyJSON.data(c).count
-        XCTAssertLessThan(bytes, 7000, "compact catalog grew to \(bytes) bytes (9 built-in components at the pin)")
+        XCTAssertLessThan(bytes, 9000, "compact catalog grew to \(bytes) bytes (10 built-in components with anchor descriptions at the pin)")
         XCTAssertEqual((c["engine"] as? [String: Any])?["revision"] as? String, MartyPin.engineRevision)
         XCTAssertEqual(MartyJSON.data(c), MartyJSON.data(try MartyEngine(outputRoot: nil).catalog(compact: true, components: [])))
 
