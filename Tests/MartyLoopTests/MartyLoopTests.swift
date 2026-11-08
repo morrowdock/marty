@@ -878,6 +878,154 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(MartyLoop.changeSummary(from: ex, to: try withBeat(["pose": ["base.base": ["rot": [0, 0, 1, 30]]]])).contains("beat views"))
     }
 
+    /// Pose-text agreement: the engine poses the step itself and gives the shown thrust arrows; a mirror pose has no
+    /// net side push, so a "sideways push" clause is refused (followup.direction) and the answer gets the push facts;
+    /// one arm raised gives a side push; toward/away from the middle follows the arrows; the mannequin's own frame is
+    /// used (a turned mannequin reads the same); aliases, visibility and explainers follow the engine.
+    func testPoseTextAgreement() throws {
+        func doc(_ steps: [[String: Any]], rot: [Any]? = nil) -> [String: Any] {
+            var pilot: [String: Any] = ["id": "pilot", "use": "mannequin", "with": ["leftShoulder": 10, "rightShoulder": 10]]
+            if let rot { pilot["rot"] = rot; pilot["at"] = [500, 300, 0] }
+            return ["v": 2, "kind": "assembly", "title": "Two arm units", "units": "mm", "parts": [pilot,
+                ["id": "jetR", "name": "Right arm unit (schematic)", "parent": "pilot.rightHand", "at": [0, 0, 60],
+                 "shape": ["shaft": ["radius": 40, "length": 200, "z0": -100]]],
+                ["id": "jetL", "name": "Left arm unit (schematic)", "parent": "pilot.leftHand", "at": [0, 0, 60],
+                 "shape": ["shaft": ["radius": 40, "length": 200, "z0": -100]]]],
+             "annotations": ["arrows": [
+                ["id": "tR", "meaning": "force", "from": ["part": "jetR", "offset": [0, 0, -400]], "to": ["part": "jetR", "offset": [0, 0, -150]]],
+                ["id": "tL", "meaning": "force", "from": ["part": "jetL", "offset": [0, 0, -400]], "to": ["part": "jetL", "offset": [0, 0, -150]]]]],
+             "steps": steps]
+        }
+        let first: [String: Any] = ["say": "A pilot with two arm units.", "annotate": ["tR", "tL"]]
+        let mirror: [String: Any] = ["say": "x", "pose": ["pilot": ["with": ["leftShoulder": 45, "rightShoulder": 45]]], "annotate": ["tR", "tL"]]
+        let one: [String: Any] = ["say": "x", "pose": ["pilot": ["with": ["rightShoulder": 60]]], "annotate": ["tR", "tL"]]
+        let engine = MartyEngine(outputRoot: nil)
+        let pm = try XCTUnwrap(PoseText.push(engine: engine, document: doc([first, mirror]), step: 1, components: []))
+        let po = try XCTUnwrap(PoseText.push(engine: engine, document: doc([first, one]), step: 1, components: []))
+        XCTAssertTrue(pm.sideCancels, "\(pm)"); XCTAssertFalse(po.noSidePush, "\(po)")
+        // The mannequin's frame: turned 180 degrees and moved, the same pose reads the same.
+        let turned = try XCTUnwrap(PoseText.push(engine: engine, document: doc([first, one], rot: [0, 0, 1, 180]), step: 1, components: []))
+        XCTAssertEqual(turned.side, po.side, accuracy: 1e-6); XCTAssertEqual(turned.outward, po.outward, accuracy: 1e-6)
+        // An anchor alias in a pose is the engine's to resolve.
+        let alias: [String: Any] = ["say": "x", "pose": ["pilot.rightShoulder": ["rot": [0, 1, 0, 60]]], "annotate": ["tR", "tL"]]
+        XCTAssertNotNil(PoseText.push(engine: engine, document: doc([first, alias]), step: 1, components: []))
+        // A step without annotate in a stepped document shows no arrow.
+        XCTAssertNil(PoseText.push(engine: engine, document: doc([first, ["say": "x", "pose": ["pilot": ["with": ["rightShoulder": 60]]]]]), step: 1, components: []))
+        // Words: thrust clauses only; negation and cancellation; context from the clause before.
+        XCTAssertEqual(PoseText.disagreements("Both arms rise. The side push moves the suit sideways.", push: pm).count, 1)
+        XCTAssertEqual(PoseText.disagreements("The upward thrusts balance the weight while the sideways part pushes the suit.", push: pm).count, 1)
+        XCTAssertEqual(PoseText.disagreements("Both arms rise; the side parts of the thrust cancel. There is no sideways push.", push: pm), [])
+        XCTAssertEqual(PoseText.disagreements("The pilot slides the arm out and leans forward. The back engine holds the weight.", push: pm), [])
+        let wrongWay = pm.outward > 0 ? "Its engines push partly sideways, toward the body's middle." : "Its engines push partly up, away from the body's middle."
+        XCTAssertEqual(PoseText.disagreements(wrongWay, push: pm).count, 1, "\(pm) \(wrongWay)")
+        // Review cases: coordinated directions keep their thrust context; "without" does not negate a side-push
+        // claim; describing cancelling components is no net claim.
+        let inwardWords = pm.outward < 0 ? "The thrust points up and out, away from the middle." : "The thrust points up and in, toward the middle."
+        XCTAssertEqual(PoseText.disagreements(inwardWords, push: pm).count, 1, "\(pm)")
+        XCTAssertEqual(PoseText.disagreements("The thrust pushes the suit sideways without rotating it.", push: pm).count, 1)
+        XCTAssertEqual(PoseText.disagreements("The thrusts point sideways and upward, but their side components cancel.", push: pm), [])
+        // Local negation, subject binding and affirmative cancellation.
+        let inward = PoseText.Push(side: 0, depth: 0, sideAbs: 1, outward: -1, arrows: 2, mannequin: true)
+        XCTAssertEqual(PoseText.disagreements("The thrust points inward, not outward.", push: inward), [])
+        XCTAssertEqual(PoseText.disagreements("The pilot moves his arms outward while the thrust points toward the middle.", push: inward), [])
+        XCTAssertEqual(PoseText.disagreements("The thrust points up and out, away from the middle.", push: inward).count, 1)
+        let back = PoseText.Push(side: 0, depth: 1, sideAbs: 0, outward: 0, arrows: 1, mannequin: true)
+        XCTAssertEqual(PoseText.disagreements("The thrust holds him up as he leans forward.", push: back), [])
+        XCTAssertEqual(PoseText.disagreements("The thrust pushes him forward.", push: back).count, 1)
+        XCTAssertEqual(PoseText.disagreements("The sideways parts do not cancel, so the thrust pushes the suit sideways.", push: pm).count, 1)
+        XCTAssertEqual(PoseText.disagreements("The sideways parts don't cancel, so the thrust pushes the suit sideways.", push: pm).count, 1)
+        XCTAssertEqual(PoseText.disagreements("The sideways parts don't balance out, so the sideways part pushes the suit.", push: pm).count, 1)
+        XCTAssertEqual(PoseText.disagreements("The sideways parts do not fully cancel, so the suit moves sideways.", push: pm).count, 1)
+        XCTAssertEqual(PoseText.disagreements("The sideways parts balance out, so there is no side push on the suit.", push: pm), [])
+        // Step selection: a caption change of a posed step, an annotate change, and a removed pose are checked.
+        let posedBase = doc([first, mirror])
+        var captioned = posedBase; var cs = posedBase["steps"] as! [[String: Any]]; cs[1]["say"] = "y"; captioned["steps"] = cs
+        XCTAssertEqual(PoseText.changedSteps(captioned, base: posedBase, says: ["a", "y"], baseSays: ["a", "x"]), [1])
+        var annot = posedBase; var ans = posedBase["steps"] as! [[String: Any]]; ans[1]["annotate"] = ["tR"]; annot["steps"] = ans
+        XCTAssertEqual(PoseText.changedSteps(annot, base: posedBase, says: ["a", "x"], baseSays: ["a", "x"]), [1])
+        var unposed = posedBase; var us = posedBase["steps"] as! [[String: Any]]; us[1]["pose"] = nil; unposed["steps"] = us
+        XCTAssertEqual(PoseText.changedSteps(unposed, base: posedBase, says: ["a", "x"], baseSays: ["a", "x"]), [1])
+        XCTAssertEqual(PoseText.changedSteps(posedBase, base: posedBase, says: ["a", "x"], baseSays: ["a", "x"]), [])
+        // A forward-only push is not "sideways parts cancel".
+        let fwd = PoseText.Push(side: 0, depth: -1, sideAbs: 0, outward: 0, arrows: 1, mannequin: true)
+        XCTAssertFalse(fwd.summary.contains("cancel"), fwd.summary); XCTAssertTrue(fwd.summary.contains("forward"))
+        // An explainer solid (no kind of its own) poses through its beats.
+        let solid = doc([]).filter { $0.key != "kind" && $0.key != "title" && $0.key != "steps" }
+        let ex: [String: Any] = ["v": 1, "kind": "explainer", "title": "t", "board": ["v": 1, "items": [["id": "cap", "k": "text", "at": [6, 7], "text": "x"]]],
+                                 "solid": solid, "beats": [["say": "a", "view": ["annotate": ["tR", "tL"]]],
+                                                           ["say": "b", "view": ["pose": ["pilot": ["with": ["leftShoulder": 45, "rightShoulder": 45]]], "annotate": ["tR", "tL"]]]]]
+        let exAsm = try XCTUnwrap(PoseText.assembly(explainer: ex))
+        XCTAssertTrue(try XCTUnwrap(PoseText.push(engine: engine, document: exAsm, step: 1, components: [])).sideCancels)
+        // End to end: a "step" reply and a raw steps patch with sideways words in a mirror pose are refused; a fixed
+        // step is accepted; the answer gets the facts and a wrong answer is rewritten; a later parts patch keeps no
+        // stale push.
+        let plan = #"{"components": ["mannequin"], "primitives": ["shaft"]}"#
+        let base = doc([first])
+        let good = #"{"document": "# + MartyJSON.string(base) + "}"
+        var badStep = mirror; badStep["say"] = "Both arms rise and the side push moves the suit sideways (schematic)."
+        var fixedStep = mirror; fixedStep["say"] = "Both arms rise; the side parts cancel (schematic)."
+        var options = MartyLoop.Options()
+        options.followUp = "What if the pilot raises both arms?"
+        let model = ScriptedAdapter(replies: [plan, good, #"{"step": "# + MartyJSON.string(badStep) + "}",
+                                              #"{"patch": {"steps": "# + MartyJSON.string([first, badStep]) + "}}",
+                                              #"{"step": "# + MartyJSON.string(fixedStep) + "}", "Both arms rise and the thrust pushes the suit sideways.",
+                                              "Both arms rise; the side parts cancel."])
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: options).run(question: "q")
+        let f = try XCTUnwrap(r["followUp"] as? [String: Any])
+        XCTAssertEqual((f["attempts"] as? [[String: Any]])?.prefix(2).map { $0["reason"] as? String }, ["followup.direction", "followup.direction"],
+                       "\(f["attempts"] ?? "")")
+        XCTAssertEqual(f["changed"] as? Bool, true)
+        XCTAssertTrue((f["push"] as? String ?? "").contains("cancel"))
+        XCTAssertTrue(model.prompts[3].user.contains("disagree with what its thrust arrows do"), model.prompts[3].user)
+        XCTAssertTrue(model.prompts[5].user.contains("Say directions as these do"), "the answer gets the push facts")
+        XCTAssertEqual(f["answer"] as? String, "Both arms rise; the side parts cancel.", "a wrong direction in the answer is rewritten")
+        XCTAssertTrue(model.prompts[2].system.contains("<= 240 characters"), "the follow-up prompt states the limit")
+        let stale = ScriptedAdapter(replies: [plan, good, #"{"step": "# + MartyJSON.string(badStep) + "}",
+                                              #"{"patch": {"parts": {"jetR": {"at": [0, 0, 70]}}}}"#, "The unit moves a little."])
+        let out2 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out2) }
+        let f2 = try XCTUnwrap(try MartyLoop(model: stale, out: out2, options: options).run(question: "q")["followUp"] as? [String: Any])
+        XCTAssertEqual(f2["changed"] as? Bool, true, "\(f2["attempts"] ?? "")")
+        XCTAssertNil(f2["push"], "no stale push from the refused attempt")
+    }
+
+    /// Explainer: every follow-up a no-op beat pose (restating the base) is words only after the engine checked it, so
+    /// the refused answer does not say "No change could be checked".
+    func testExplainerNoopPoseKeepsEngineAttribution() throws {
+        let plan = #"{"form": "explainer", "components": ["shaftWithBearing"], "primitives": []}"#
+        let doc = #"{"document": \#(MartyExamples.explainerExample)}"#
+        var ex = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(MartyExamples.explainerExample.utf8)) as? [String: Any])
+        var beats = try XCTUnwrap(ex["beats"] as? [[String: Any]])
+        beats.append(["say": "The shaft stays.", "view": ["pose": ["shaft": ["with": ["radius": 6, "length": 80]]], "annotate": [Any]()]])
+        ex["beats"] = beats
+        let noop = #"{"document": "# + MartyJSON.string(ex) + "}"
+        var options = MartyLoop.Options()
+        options.followUp = "What if the shaft stays put?"
+        let model = ScriptedAdapter(replies: [plan, doc, noop, noop, noop, noop, "This model cannot show that."], research: [Self.exampleTable])
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: options).run(question: "q")
+        let f = try XCTUnwrap(r["followUp"] as? [String: Any])
+        XCTAssertEqual((f["attempts"] as? [[String: Any]])?.first?["reason"] as? String, "followup.textOnly", "\(f["attempts"] ?? "")")
+        XCTAssertFalse(model.prompts.last?.user.contains("No change could be checked") ?? true, model.prompts.last?.user ?? "")
+    }
+
+    /// The two round-2e lint false positives: a hover balance with "all the", and a reason (not a source) on an
+    /// arrow without a typed number. A row id counts as a source.
+    func testLintFalsePositives() {
+        XCTAssertEqual(MartyLoop.unsupportedComparatives("In a hover the upward parts of all the thrusts balance the weight of pilot, suit and fuel.", sources: []), [])
+        func doc(_ text: String, _ unchecked: String) -> [String: Any] {
+            ["v": 2, "kind": "assembly", "title": "t", "units": "mm", "parts": [["id": "b", "shape": ["box": ["size": [9, 9, 9]]]]],
+             "annotations": ["arrows": [["id": "lThrust", "meaning": "force", "from": "b", "to": ["world": [0, 0, 50]], "text": text, "unchecked": unchecked]]],
+             "steps": [["say": "A box.", "annotate": ["lThrust"]]]]
+        }
+        XCTAssertEqual(MartyLoop.documentLint(doc("Thrust (schematic)", "schematic direction only")), [])
+        XCTAssertEqual(MartyLoop.documentLint(doc("Thrust 144 kgf", "F1 Example")), [])
+        XCTAssertEqual(MartyLoop.documentLint(doc("Thrust 144 kgf", "maker")).count, 1, "a typed figure still needs a year")
+    }
+
     func testReplyJSON() {
         XCTAssertEqual(ReplyJSON.object(#"{"a":1}"#)?["a"] as? Int, 1)
         XCTAssertEqual(ReplyJSON.object("Here:\n```json\n{\"a\": 2}\n```\nDone.")?["a"] as? Int, 2)

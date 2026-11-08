@@ -150,6 +150,40 @@ public final class MartyEngine {
         }
     }
 
+    // MARK: posed force arrows
+
+    /// A force arrow (not gravity) shown in one step, at that step's own pose (the engine's pose semantics: aliases,
+    /// inner parts, parents), in world millimetres, and optionally in the frame of `framePart` at that pose.
+    public struct PosedArrow {
+        public let id: String
+        public let from: [Double], to: [Double]
+        /// The same points in `framePart`'s frame at the step's pose (nil without a frame part).
+        public let fromLocal: [Double]?, toLocal: [Double]?
+    }
+
+    /// The force arrows (not gravity) that step `step` (0-based) of an assembly shows, posed, or nil when the document
+    /// does not compile. Visibility follows the engine (`visibleAnnotations(step:)`).
+    public func stepForceArrows(document: Any, components: [Any], step: Int, framePart: String?) throws -> [PosedArrow]? {
+        let lib: MGSolidLibrary
+        switch try library(components) { case .failure: return nil; case .success(let l): lib = l }
+        guard case .success(let json) = Decode.json(document, limit: MartyLimits.documentBytes, tooLarge: "document.bytes"),
+              case .success(let doc) = MGSolidParser.document(json: json, library: lib), doc.steps.indices.contains(step) else { return nil }
+        // The pose the step shows when its spin has played (as its still and story hold).
+        let pose = doc.assembly.pose(doc.poseParameters(step: step, spin: 1))
+        let visible = Set(doc.visibleAnnotations(step: step))
+        let frame = framePart.flatMap { pose.world[$0] }
+        func local(_ p: MGVec3) -> [Double]? {
+            guard let f = frame else { return nil }
+            let d = MGVec3(p.x - f.translation.x, p.y - f.translation.y, p.z - f.translation.z)
+            return [d.x * f.c0.x + d.y * f.c0.y + d.z * f.c0.z, d.x * f.c1.x + d.y * f.c1.y + d.z * f.c1.z, d.x * f.c2.x + d.y * f.c2.y + d.z * f.c2.z]
+        }
+        return doc.annotations.arrows.compactMap { a in
+            guard a.meaning == .force, a.cause != "gravity", visible.contains(a.id), let f = a.from, let t = a.to else { return nil }
+            let fw = f.world(pose), tw = t.world(pose)
+            return PosedArrow(id: a.id, from: [fw.x, fw.y, fw.z], to: [tw.x, tw.y, tw.z], fromLocal: local(fw), toLocal: local(tw))
+        }
+    }
+
     // MARK: component check
 
     public func componentCheck(definition: Any, with values: [String: Double], components: [Any]) throws -> [String: Any] {

@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-08. Prompts `marty-prompts/13`. Engine pin as in
+Status: early preview, 2026-11-08. Prompts `marty-prompts/14`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -139,10 +139,12 @@ the MCP server uses), so a run needs no MCP client.
    does not count), and a sentence in a say or an annotation text that compares
    sizes or shares (most, all of, more than) with no hedge, no `{fact}`
    placeholder and no given figure (each listed id counts once, as the engine
-   shows it), and a given figure (an unchecked label or arrow, or a noted table
-   row with a typed number, with a basis or an unchecked note) that merges two figures into one range (a span of
-   years is fine) or names a source with no year (unless "reported" or "assumed
-   example"). A lint problem asks for one repair at most (attempt reason
+   shows it; "all the" is no share word), and a given figure (an unchecked label
+   or arrow whose text shows a typed number, or a noted table row with a typed
+   number, with a basis or an unchecked note; an unchecked text on a label with
+   no number is a reason, not a source) that merges two figures into one range (a span of
+   years is fine) or names a source with no year (unless "reported", "assumed
+   example" or a fact table row id). A lint problem asks for one repair at most (attempt reason
    `marty.lint`, `engineOk` true), when one is left. The engine-accepted
    document with the fewest findings is kept (a later one wins a tie), and it
    stands, with `lint` and `lintAttempt` in the receipt, when no attempt is
@@ -205,7 +207,35 @@ the MCP server uses), so a run needs no MCP client.
    effective step views change (the report's `stepViews`: the parts each step
    really poses or hides, and the pose read-back), so a pose that restates the
    base moves nothing and is words only; `"replace"` must name an existing step.
-   The accepted step is in `followUp.step`, and the force arrows on parts whose
+   Pose-text agreement: for each changed posed step (from a `step` reply or a
+   raw steps patch; for an explainer, each changed beat, through the solid with
+   one step per beat), the engine poses the step itself
+   (`MartyEngine.stepForceArrows`: its own pose semantics, aliases and
+   visibility) and gives the anchors of the force arrows (not gravity) that the
+   step shows. With a mannequin they are read in its body frame at the pose
+   (faces -Y, left +X, x = 0 is the body's middle), else in the world frame.
+   The pose is sampled where the step's spin has played, as its still shows it.
+   Marty sums their unit directions: the net side push (the side parts cancel
+   when it is near 0 though they are not), whether the side parts point away
+   from or toward the middle, and forward or backward. Claims are matched over
+   the whole sentence: a net side motion of the body ("pushes the suit
+   sideways", "the suit slides sideways", "the side push moves it") with no net
+   side push, unless the sentence says (not denies: no negation in the 3 words
+   before "cancel", "balance out" and the like) that the side parts cancel;
+   a direction within 8 words after a thrust noun (thrust, force, jet,
+   exhaust, engine), not right after "not", pointing away from or toward the
+   middle (or outward, inward) against the arrows, or forward or backward
+   (not "leans forward") against the push; the body pushed forward or
+   backward against the push; "to the
+   pilot's left/right" against the side. A step that makes one is refused as
+   `followup.direction` with these facts in the repair. The checked steps are
+   those posed before or after and changed in pose, show, hide, annotate, spin,
+   explode or words (an explainer's original captions are compared). The push is
+   computed again for each attempt. The answer prompt gets the same facts
+   (`followUp.push`), and an answer sentence that disagrees gets the one
+   rewrite. The follow-up prompt states the say limits (240 characters for a
+   step, 200 for a beat), and the guide says a turn poses one arm (equal arms
+   cancel). The accepted step is in `followUp.step`, and the force arrows on parts whose
    effective placement changed in some step (posed before or after, so removing
    a pose counts) are listed in `forceArrowsMoved`. In an explainer, the model
    adds or edits one beat whose `view` has `pose` and `show`; the same effective

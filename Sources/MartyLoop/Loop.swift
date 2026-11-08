@@ -90,6 +90,7 @@ public final class MartyLoop {
         if let v = r["visibility"] { o["visibility"] = v }
         if let l = r["limit"] { o["limit"] = l }
         if let u = r["unsourced"] { o["unsourced"] = u }
+        if let d = r["direction"] { o["direction"] = d }
         return o
     }
 
@@ -404,8 +405,11 @@ public final class MartyLoop {
         var noChange = false
         var acceptedPatch: Any? = nil
         var acceptedStep: [String: Any]? = nil
+        var acceptedPush: PoseText.Push? = nil
+        var stepPush: PoseText.Push? = nil
         var engineChecked = false
         for attempt in 0...options.repairs {
+            stepPush = nil
             let (text, i) = ask("followup", attempt: attempt, system: system, user: user)
             guard let text else { note(i, ["ok": false, "reason": "adapter"]); attempts.append(["ok": false, "reason": "adapter"]); break }
             guard var reply = ReplyJSON.object(text), reply.keys.contains("patch") || reply["step"] is [String: Any] else {
@@ -465,8 +469,20 @@ public final class MartyLoop {
                                                    filledBy: base)
                 if let reason = FactCheck.reason(unsourced) { r = ["ok": false, "reason": reason, "unsourced": unsourced.map(\.line)] }
             }
+            // The words of each changed posed step (from a "step" reply or a raw steps patch) must agree with what its
+            // shown thrust arrows do at the pose; the engine poses the patched document itself.
+            if (r["ok"] as? Bool) == true,
+               let patched = (try? engine.patch(document: nil, ref: ref, patch: merged, components: components, returnDocument: true, strict: true))?["document"] as? [String: Any] {
+                let base = (try? JSONSerialization.jsonObject(with: Data(docText.utf8))) as? [String: Any]
+                let says = (patched["steps"] as? [[String: Any]] ?? []).map { $0["say"] as? String ?? "" }
+                let baseSays = (base?["steps"] as? [[String: Any]] ?? []).map { $0["say"] as? String ?? "" }
+                let (push, wrong) = PoseText.check(engine: engine, document: patched, base: base, says: says, baseSays: baseSays,
+                                                   components: components)
+                stepPush = push
+                if !wrong.isEmpty { r = ["ok": false, "reason": "followup.direction", "direction": wrong] }
+            }
             note(i, Self.outcome(r)); attempts.append(Self.outcome(r))
-            if (r["ok"] as? Bool) == true { after = r; acceptedPatch = merged; acceptedStep = stepReply; break }
+            if (r["ok"] as? Bool) == true { after = r; acceptedPatch = merged; acceptedStep = stepReply; acceptedPush = stepPush; break }
             let reason = r["reason"] as? String ?? "unknown"
             // Facts of the changed model: the same patch with steps cleared and a plain title, plain profile.
             var facts: String? = nil
@@ -482,6 +498,7 @@ public final class MartyLoop {
                 + ((r["visibility"] as? [String: Any]).flatMap(MartyPrompts.visibilityLine).map { " \($0)" } ?? "")
                 + ((r["limit"] as? [String: Any]).flatMap(MartyPrompts.limitLine).map { " \($0)" } ?? "")
                 + ((r["unsourced"] as? [String]).map { " " + MartyPrompts.factRepair + "\n" + $0.map { "- \($0)" }.joined(separator: "\n") } ?? "")
+                + ((r["direction"] as? [String]).map { " " + MartyPrompts.directionRepair + " " + ($0.first ?? "") + "\n" + $0.dropFirst().map { "- \($0)" }.joined(separator: "\n") } ?? "")
                 + (facts.map { "\n\nFacts the engine solved for the changed model (name: value):\n\($0)" } ?? "")
                 + "\n\nReply with a corrected JSON object only."
         }
@@ -515,6 +532,7 @@ public final class MartyLoop {
             result["forceArrowsMoved"] = moved
         }
         if let acceptedStep { result["step"] = acceptedStep }
+        if let acceptedPush { result["push"] = acceptedPush.summary }
         // Given figures go to a modelled answer only; the refused answer keeps to the report before.
         let given = modelled ? Self.givenFigures(try? JSONSerialization.jsonObject(with: Data(docText.utf8))) : []
         let evidence = given + (modelled ? facts.lines : []) + Self.factTexts(report) + Self.factTexts(after) + Self.numberLeaves(report["ratios"])
@@ -523,8 +541,9 @@ public final class MartyLoop {
                                  user: MartyPrompts.answerUser(followUp: followUp, before: before, after: after.map { Self.compact(Self.summary($0)) },
                                                                patch: acceptedPatch.map { Self.compact($0) }, ratiosChanged: ratiosChanged,
                                                                refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAPatch,
-                                                               movedForceArrows: moved, given: given, table: modelled ? factBlock : nil),
-                                 sources: evidence + (modelled ? [question, followUp] : []), result: &result)
+                                                               movedForceArrows: moved, given: given, table: modelled ? factBlock : nil,
+                                                               push: acceptedPush?.summary),
+                                 sources: evidence + (modelled ? [question, followUp] : []), push: acceptedPush, result: &result)
         result["ok"] = answer != nil
         result["answer"] = answer.map { $0 as Any } ?? NSNull()
         result["answerSource"] = "model text written from the engine reports; its numbers are not checked"
@@ -546,10 +565,13 @@ extension MartyLoop {
         var after: [String: Any]? = nil
         var acceptedChange: String? = nil
         var acceptedDoc: [String: Any]? = nil
+        var acceptedPush: PoseText.Push? = nil
+        var stepPush: PoseText.Push? = nil
         var engineChecked = false
         var moved: [String] = []
         var noChange = false
         for attempt in 0...options.repairs {
+            stepPush = nil
             let (text, i) = ask("followup", attempt: attempt, system: system, user: user)
             guard let text else { note(i, ["ok": false, "reason": "adapter"]); attempts.append(["ok": false, "reason": "adapter"]); break }
             guard let reply = ReplyJSON.object(text), reply.keys.contains("document") else {
@@ -580,10 +602,20 @@ extension MartyLoop {
                                                                                  extra: [followUp]))
                     if let reason = FactCheck.reason(unsourced) { r = ["ok": false, "reason": reason, "unsourced": unsourced.map(\.line)] }
                 }
+                // A new or edited beat with a pose: its words must agree with its shown thrust arrows at the pose (the
+                // explainer's solid with one step per beat, posed by the engine).
+                if (r["ok"] as? Bool) == true, let doc = PoseText.assembly(explainer: changed) {
+                    let says = (changed["beats"] as? [[String: Any]] ?? []).map { $0["say"] as? String ?? "" }
+                    let baseSays = (base["beats"] as? [[String: Any]] ?? []).map { $0["say"] as? String ?? "" }
+                    let (push, wrong) = PoseText.check(engine: engine, document: doc, base: PoseText.assembly(explainer: base),
+                                                       says: says, baseSays: baseSays, components: components)
+                    stepPush = push
+                    if !wrong.isEmpty { r = ["ok": false, "reason": "followup.direction", "direction": wrong] }
+                }
             }
             note(i, Self.outcome(r)); attempts.append(Self.outcome(r))
             if (r["ok"] as? Bool) == true {
-                after = r; acceptedDoc = changed; acceptedChange = Self.changeSummary(from: base, to: changed)
+                after = r; acceptedDoc = changed; acceptedChange = Self.changeSummary(from: base, to: changed); acceptedPush = stepPush
                 moved = Self.movedForceArrows(explainerFrom: base, to: changed, viewMoved: Self.viewMovedIds(before: report, after: r))
                 break
             }
@@ -600,6 +632,7 @@ extension MartyLoop {
             if let v = (r["visibility"] as? [String: Any]).flatMap(MartyPrompts.visibilityLine) { u += " \(v)" }
             if let l = (r["limit"] as? [String: Any]).flatMap(MartyPrompts.limitLine) { u += " \(l)" }
             if let lines = r["unsourced"] as? [String] { u += " " + MartyPrompts.factRepair + "\n" + lines.map { "- \($0)" }.joined(separator: "\n") }
+            if let d = r["direction"] as? [String] { u += " " + MartyPrompts.directionRepair + " " + (d.first ?? "") + "\n" + d.dropFirst().map { "- \($0)" }.joined(separator: "\n") }
             if let facts { u += "\n\nFacts the engine solved (name: value):\n\(facts)" }
             if let readBack { u += "\n\nEngine read-back:\n\(readBack)" }
             u += "\n\nReply with a corrected JSON object only."
@@ -615,6 +648,7 @@ extension MartyLoop {
             ratiosChanged = MartyJSON.data(after["ratios"] ?? [String: Any]()) != MartyJSON.data(report["ratios"] ?? [String: Any]())
             result["ratiosChanged"] = ratiosChanged
             result["forceArrowsMoved"] = moved
+            if let acceptedPush { result["push"] = acceptedPush.summary }
         }
         let lastReason = attempts.last?["reason"] as? String
         guard modelled || (lastReason != nil && lastReason != "adapter") else { result["ok"] = false; return result }
@@ -629,8 +663,9 @@ extension MartyLoop {
                                  user: MartyPrompts.answerUser(followUp: followUp, before: before, after: after.map { Self.compact(Self.summary($0)) },
                                                                patch: acceptedChange, ratiosChanged: ratiosChanged,
                                                                refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAChange,
-                                                               movedForceArrows: moved, given: given, table: modelled ? factBlock : nil),
-                                 sources: evidence + (modelled ? [question, followUp] : []), result: &result)
+                                                               movedForceArrows: moved, given: given, table: modelled ? factBlock : nil,
+                                                               push: acceptedPush?.summary),
+                                 sources: evidence + (modelled ? [question, followUp] : []), push: acceptedPush, result: &result)
         result["ok"] = answer != nil
         result["answer"] = answer.map { $0 as Any } ?? NSNull()
         result["answerSource"] = "model text written from the engine reports; its numbers are not checked"
@@ -640,13 +675,15 @@ extension MartyLoop {
     /// The follow-up answer. A sentence that compares sizes or shares ("most", "the majority", "all of the") with no
     /// hedge and no number from the sources (the document with its given figures, the engine reports, the change) gets
     /// one rewrite request; `answerLint` records it and whether the rewrite cleared it.
-    func writeAnswer(system: String, user: String, sources: [String], result: inout [String: Any]) -> String? {
+    func writeAnswer(system: String, user: String, sources: [String], push: PoseText.Push? = nil, result: inout [String: Any]) -> String? {
         let (first, i) = ask("answer", attempt: 0, system: system, user: user)
         note(i, ["ok": first != nil])
         guard var answer = first?.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
         func problems(_ text: String) -> (comparative: [String], unsourced: [String]) {
             let c = Self.unsupportedComparatives(text, sources: sources)
-            return (c, Self.unsourcedSentences(text, sources: sources).filter { !c.contains($0) })
+            // Direction words that disagree with the posed step count with the unsourced sentences.
+            let d = push.map { PoseText.disagreements(text, push: $0) } ?? []
+            return (c, (Self.unsourcedSentences(text, sources: sources) + d).filter { !c.contains($0) })
         }
         let (comparative, unsourced) = problems(answer)
         let flagged = comparative + unsourced
@@ -693,7 +730,8 @@ extension MartyLoop {
         return given.contains { $0.lowercased().contains("thrust") && $0.rangeOfCharacter(from: .decimalDigits) != nil }
     }
 
-    static let comparativeWords = #"(?i)\b(most|mostly|majority|all of|all the|all its|the bulk|nearly all|almost all|mainly|largely|more than|less than|twice|half of|the largest|the biggest|the lion's share)\b"#
+    // "all the" and "all its" are left out: "the upward parts of all the thrusts balance the weight" is no share claim.
+    static let comparativeWords = #"(?i)\b(most|mostly|majority|all of|the bulk|nearly all|almost all|mainly|largely|more than|less than|twice|half of|the largest|the biggest|the lion's share)\b"#
     static let hedgeWords = #"(?i)\b(about|roughly|around|approximately|estimated?|reported|schematic|not checked|may|might|perhaps|likely)\b"#
 
     /// The numbers in a text ("1,500" and "1.5" stay whole; a trailing period is not a decimal point), normalized:
@@ -851,12 +889,18 @@ extension MartyLoop {
                 out.append("\(word) \(n + 1) shows \(count) texts (labels, dimensions and arrows with text); at most \(maxTextsPerStep). An arrow without \"text\" does not count.")
             }
         }
-        // Given figures: no merged range (a span of years is fine), and a source with a year unless it is
-        // "reported" or an "assumed example".
+        // Given figures (an unchecked label or arrow whose text shows a typed number, or a noted table row with one):
+        // no merged range (a span of years is fine), and a source with a year unless it is "reported", an "assumed
+        // example" or a fact table row id ("F3 ..."). An unchecked text with no typed number is a reason, not a source.
         var noted: [(String, String, String)] = []   // (where, shown text, source)
+        func typedNumber(_ t: String) -> Bool {
+            t.replacingOccurrences(of: #"\{[^{}]*\}"#, with: "", options: .regularExpression).rangeOfCharacter(from: .decimalDigits) != nil
+        }
         for key in ["labels", "arrows"] {
             for a in ann[key] as? [[String: Any]] ?? [] {
-                if let u = a["unchecked"] as? String { noted.append(("Annotation \(a["id"] as? String ?? "?")", a["text"] as? String ?? "", u)) }
+                if let u = a["unchecked"] as? String, typedNumber(a["text"] as? String ?? "") {
+                    noted.append(("Annotation \(a["id"] as? String ?? "?")", a["text"] as? String ?? "", u))
+                }
             }
         }
         // Noted table rows (basis or unchecked note) with a typed number (a {fact} cell is the engine's).
@@ -868,7 +912,7 @@ extension MartyLoop {
             if hasMergedRange(shown) || hasMergedRange(source) {
                 out.append("\(whereText) merges two figures into one range: give each figure with its own source and year.")
             }
-            if source.range(of: #"(?i)\b(reported|assumed example|estimate)\b"#, options: .regularExpression) == nil,
+            if source.range(of: #"(?i)\b(reported|assumed example|estimate)\b|^F[0-9]{1,2}\b"#, options: .regularExpression) == nil,
                source.range(of: #"\b(1[89]|20)\d\d\b"#, options: .regularExpression) == nil {
                 out.append("\(whereText) names a source with no year (\"\(source)\"): add the year, or write \"reported\".")
             }
