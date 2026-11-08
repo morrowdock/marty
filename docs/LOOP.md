@@ -20,8 +20,9 @@ the MCP server uses), so a run needs no MCP client.
    `gist.github.com`), whose sources Marty also drops. An abstract subject may
    reply `{"needed": false}`. Marty checks the labels by form, not by reading
    the sources: VERIFIED needs sources on two different sites (registrable
-   domains: sibling subdomains are one site; hosts are compared without a
-   trailing dot or "www."; WebFetch is denied on each blocked domain and its
+   domains of the full host name: sibling subdomains are one site; hosts are
+   compared in lower case without a trailing dot; IP literals and single-label
+   hosts are dropped; WebFetch is denied on each blocked domain and its
    subdomains) (else CLAIM), a
    CLAIM needs a source (else PLAUSIBLE), an UNKNOWN row has no value, and every
    change is listed in `downgrades`. The table goes into the plan, author,

@@ -14,7 +14,7 @@ public struct FactTable {
         public var publisher: String
         public var date: String
         public var quote: String
-        /// The host, lower case, without a trailing dot or "www.".
+        /// The host, lower case, without a trailing dot ("www." kept: the site is derived from the full host).
         public var host: String
         /// The site, for the independence rule: the registrable domain of the host (see `FactTable.site`).
         public var site: String { FactTable.site(host) }
@@ -61,7 +61,11 @@ public struct FactTable {
                 guard let u = URL(string: url), let scheme = u.scheme?.lowercased(), scheme == "https" || scheme == "http",
                       let rawHost = u.host else { continue }
                 let host = canonicalHost(rawHost)
-                guard !host.isEmpty else { continue }
+                // A public web source has a dotted DNS name: IP literals and single-label hosts are dropped.
+                if host.isEmpty || !host.contains(".") || host.contains(":")
+                    || host.range(of: #"^[0-9.]+$"#, options: .regularExpression) != nil {
+                    downgrades.append("\(id): source without a public host name dropped (\(host))"); continue
+                }
                 if blocked.contains(where: { host == $0 || host.hasSuffix("." + $0) }) {
                     downgrades.append("\(id): source on a blocked site dropped (\(host))"); continue
                 }
@@ -87,11 +91,11 @@ public struct FactTable {
     /// Sites that count as independent: distinct registrable domains (order does not matter).
     static func distinctSites(_ sources: [Source]) -> Int { Set(sources.map(\.site)).count }
 
-    /// Lower case, no trailing dot(s), no "www." prefix.
+    /// Lower case, no trailing dot(s), no IPv6 brackets.
     static func canonicalHost(_ h: String) -> String {
         var host = h.lowercased()
         while host.hasSuffix(".") { host.removeLast() }
-        if host.hasPrefix("www.") { host.removeFirst(4) }
+        if host.hasPrefix("[") { host = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")) }
         return host
     }
 
@@ -125,7 +129,7 @@ public struct FactTable {
             var s = "\(r.id) [\(r.label.rawValue)] \(r.claim)"
             if !r.value.isEmpty { s += ": \(r.value)" + (r.unit.isEmpty ? "" : " \(r.unit)") }
             if !r.appliesTo.isEmpty { s += " (applies to: \(r.appliesTo))" }
-            let src = r.sources.map { [$0.publisher.isEmpty ? $0.host : $0.publisher, $0.date].filter { !$0.isEmpty }.joined(separator: " ") }
+            let src = r.sources.map { [$0.publisher.isEmpty ? $0.site : $0.publisher, $0.date].filter { !$0.isEmpty }.joined(separator: " ") }
             if !src.isEmpty { s += " — " + src.joined(separator: "; ") }
             return s
         }
@@ -138,7 +142,7 @@ public struct FactTable {
             return "Fact table: none (no research). State no figure, date, product version or share that the engine did not solve."
         }
         let json = rows.map { r -> String in
-            let src = r.sources.map { ["publisher": $0.publisher.isEmpty ? $0.host : $0.publisher, "date": $0.date] }
+            let src = r.sources.map { ["publisher": $0.publisher.isEmpty ? $0.site : $0.publisher, "date": $0.date] }
             return MartyJSON.string(["id": r.id, "label": r.label.rawValue, "claim": r.claim, "value": r.value, "unit": r.unit,
                                      "appliesTo": r.appliesTo, "sources": src] as [String: Any])
         }
