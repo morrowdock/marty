@@ -44,6 +44,47 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertNotNil(r["sectionTriangles"])
     }
 
+    /// The explainer example: strict, no warnings; its typed number is Given (noted), its table shows an engine fact.
+    func testExplainerExampleIsAccepted() throws {
+        let r = try MartyEngine(outputRoot: nil).check(document: MartyExamples.explainerExample, ref: nil, components: [], strict: true)
+        XCTAssertEqual(r["ok"] as? Bool, true, "\(r["reason"] ?? "") \(r["location"] ?? "")")
+        XCTAssertEqual(r["kind"] as? String, "explainer")
+        XCTAssertTrue(((r["legend"] as? [String: Any])?["text"] as? String ?? "").contains("Given"), "\(r["legend"] ?? "")")
+        XCTAssertEqual((r["warnings"] as? [Any])?.count, 0, "\(r["warnings"] ?? "")")
+        XCTAssertNotNil(r["facts"], "Marty copies the 3D facts for the loop")
+        XCTAssertEqual((r["steps"] as? [String])?.count, 2)
+        let plan = MartyPrompts.authorSystem(parts: "", example: MartyExamples.formatExample, explainer: MartyExamples.explainerExample).utf8.count
+        print("prompt bytes: author with the explainer form, without parts \(plan)")
+        XCTAssertLessThan(plan, 12000)
+    }
+
+    /// The plan chooses the explainer form: the author prompt gets the explainer section; the accepted explainer makes a
+    /// lesson of kind explainer; the follow-up is answered without a patch (explainers have no patch format).
+    func testExplainerFormEndToEnd() throws {
+        let plan = #"{"form": "explainer", "components": ["shaftWithBearing"], "primitives": []}"#
+        let doc = #"{"document": \#(MartyExamples.explainerExample)}"#
+        let model = ScriptedAdapter(replies: [plan, doc, "This explainer cannot show that change."])
+        var options = MartyLoop.Options()
+        options.followUp = "What if the shaft were longer?"
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: options).run(question: "q")
+        XCTAssertEqual(r["accepted"] as? Bool, true, "\(r["attempts"] ?? "")")
+        XCTAssertTrue(model.prompts[1].system.contains("Explainer form"))
+        let f = try XCTUnwrap(r["followUp"] as? [String: Any])
+        XCTAssertEqual(f["modelled"] as? Bool, false)
+        XCTAssertEqual(f["answer"] as? String, "This explainer cannot show that change.")
+        XCTAssertEqual(model.prompts.count, 3, "plan, author, answer: no patch call")
+        let lesson = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: out.appendingPathComponent("lesson.json"))) as? [String: Any])
+        XCTAssertEqual(lesson["kind"] as? String, "explainer")
+        // The solid form keeps the small author prompt.
+        let solid = ScriptedAdapter(replies: [#"{"components": []}"#, #"{"document": \#(Self.spurReduction)}"#])
+        let out2 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out2) }
+        _ = try MartyLoop(model: solid, out: out2, options: .init()).run(question: "q")
+        XCTAssertFalse(solid.prompts[1].system.contains("Explainer form"))
+    }
+
     func testReplyJSON() {
         XCTAssertEqual(ReplyJSON.object(#"{"a":1}"#)?["a"] as? Int, 1)
         XCTAssertEqual(ReplyJSON.object("Here:\n```json\n{\"a\": 2}\n```\nDone.")?["a"] as? Int, 2)

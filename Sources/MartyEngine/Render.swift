@@ -24,6 +24,9 @@ extension MartyEngine {
         case .failure(let r): return ["ok": false, "reason": r.reason, "part": NSNull()]
         case .success(let j): json = j
         }
+        if Self.isExplainer(json) {
+            throw ToolError("render.explainer", "marty-mcp renders assemblies only; render an explainer with marty-solid render")
+        }
         let (report, compiled) = checkJSON(json, lib)
         guard let doc = compiled, (report["ok"] as? Bool) == true else { return report }
         let docRef = report["ref"] as! String

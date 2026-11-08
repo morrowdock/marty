@@ -23,7 +23,7 @@ enum Schema {
     static let objectOrString: [[String: Any]] = [["type": "object"], ["type": "string"]]
     static let document: [String: Any] = [
         "anyOf": objectOrString,
-        "description": "A solid assembly document (MartyGraphics format v1) as a JSON object, or a string that holds it. At most 64 KiB.",
+        "description": "A solid assembly document (MartyGraphics v1 or v2) or an explainer document (kind explainer), as a JSON object or a string that holds it. At most 64 KiB.",
     ]
     static let ref: [String: Any] = [
         "type": "string",
@@ -51,7 +51,7 @@ enum Tools {
              properties: ["id": ["type": "string", "maxLength": MartyLimits.idLength], "components": Schema.components],
              required: ["id"], readOnly: true),
         Tool(name: "check", title: "Check a document",
-             description: "Check a solid assembly document with the engine. Returns ok, or the exact refusal reason (one stable token) and part. An accepted document gives parts, triangles, steps (v2 captions filled from facts), solved gear ratios, mesh and gear checks, and a ref for later calls. An accepted report, and one refused by a post-compile check (open mesh, gear overlap, strict), also has the engine's honesty data: warnings, facts (value, unit, text, truth tier, source), the tier legend, stepTiers, stepFacts, partTiers, motionTiers, notChecked, sectionTriangles and readBack (each part's world position, motion and frame in plain words: compare it with what you meant). Repair from the reason, then check again.",
+             description: "Check a solid assembly or an explainer document (2D board and/or 3D solid on one beat timeline) with the engine. An explainer gets the engine's explainer report (beats, views, one legend). Returns ok, or the exact refusal reason (one stable token) and part. An accepted document gives parts, triangles, steps (v2 captions filled from facts), solved gear ratios, mesh and gear checks, and a ref for later calls. An accepted report, and one refused by a post-compile check (open mesh, gear overlap, strict), also has the engine's honesty data: warnings, facts (value, unit, text, truth tier, source), the tier legend, stepTiers, stepFacts, partTiers, motionTiers, notChecked, sectionTriangles and readBack (each part's world position, motion and frame in plain words: compare it with what you meant). Repair from the reason, then check again.",
              properties: ["document": Schema.document, "ref": Schema.ref, "components": Schema.components, "strict": Schema.strict],
              required: [], readOnly: true),
         Tool(name: "component_check", title: "Check a component definition",
