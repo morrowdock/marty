@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-08. Prompts `marty-prompts/8`. Engine pin as in
+Status: early preview, 2026-11-08. Prompts `marty-prompts/9`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -18,9 +18,10 @@ the MCP server uses), so a run needs no MCP client.
    top speed, range, capacity) goes in `given` with its source. When the
    question asks how a vehicle, aircraft or flying device flies, lifts or
    hovers, `given` must hold its total thrust (kgf or N) and the weight it
-   lifts. The model gives only numbers it knows, each with its source name; if
-   it is not sure, it writes "about" and the source "estimate", never a company
-   or person. When a flight question (a flight word such as fly or hover, or
+   lifts. The model gives only numbers it knows. It names a source only when it
+   is sure that source gave that exact number; otherwise it writes "reported"
+   and names no source, and a number it is not sure of is "about ...
+   (reported)" or left out. When a flight question (a flight word such as fly or hover, or
    lift with a flight context such as jet, drone or wing; "a hydraulic lift" is
    not one) gets a plan with no thrust entry, Marty asks once more (`plan.lint`,
    reason `plan.given.thrust`, with `fixed`). Only the reply's `given` is taken,
@@ -46,11 +47,14 @@ the MCP server uses), so a run needs no MCP client.
    where it really is (a back unit touches the torso: `pilot.back` is the middle
    of the back surface), inside views as a `section` cut of the one part in
    place (ghost only the parts in front of it) with `focus` on that step, at
-   most 5 labels and pointers per step plus its force arrows (an `annotate`
-   list on every step), one thrust arrow per thrust unit shown with both ends
-   on that unit, force arrows that start outside the body, a steering pose with
-   the arms unequal and "schematic" in the arrow text, and each given figure
-   shown with its source ("about" when the plan has it). Each label or arrow is
+   most 5 texts per step (labels, dimensions and arrows with text; an
+   `annotate` list on every step), one thrust arrow per thrust unit shown with
+   both ends on that unit and no text (one label names them), force arrows
+   that start outside the body, a steering pose with the arms unequal and
+   "schematic" in the text, each given figure shown with its source as the plan
+   has it ("reported" when it names none), and no share or comparison without a
+   given figure, a `{fact}` or a hedge. The engine has no per-step pose at the
+   pin, so a pose holds for every step. Each label or arrow is
    defined once, and every defined id is in some step's `annotate` list (strict
    refuses an unlisted one, `annotation.unused`). In an explainer the table is
    added by a beat command in the first beat that needs it, and a later beat may
@@ -62,7 +66,14 @@ the MCP server uses), so a run needs no MCP client.
    accepted example. It answers with `{"document": ..., "components": [...]}`.
 3. **Check.** The engine checks the document in its strict profile (also
    refuses idle joints and turn axes that miss their part). An accepted
-   document gets a `ref`.
+   document gets a `ref`. Then Marty lints it: a step or beat that shows more
+   than 5 texts (labels, dimensions and arrows with text; an arrow without text
+   does not count), and a sentence in a say or an annotation text that compares
+   sizes or shares (most, all of, more than) with no hedge, no `{fact}`
+   placeholder and no given figure. A lint problem asks for one repair (attempt
+   reason `marty.lint`, `engineOk` true) when one is left; the engine-accepted
+   document is kept, and it stands, with `lint` in the receipt, when no later
+   attempt is clean.
 4. **Repair.** A refused document goes back to the model with the exact reason,
    the part, and, for common reasons, a one-line fact that restates the engine
    rule (for example the centre-distance formula). A caption or claim refusal

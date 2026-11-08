@@ -383,6 +383,48 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue((unused["reason"] as? String ?? "").hasPrefix("annotation.unused"), "\(unused["reason"] ?? "")")
     }
 
+    /// Marty's lint of an accepted document: more than 5 texts in a step (an arrow without text does not count), and a
+    /// share or comparison in a say or label with no figure, {fact} or hedge. The examples are clean.
+    func testDocumentLint() throws {
+        XCTAssertEqual(MartyLoop.documentLint(try JSONSerialization.jsonObject(with: Data(MartyExamples.formatExample.utf8))), [])
+        XCTAssertEqual(MartyLoop.documentLint(try JSONSerialization.jsonObject(with: Data(MartyExamples.explainerExample.utf8))), [])
+        func doc(labels: Int, arrows: Int, say: String) -> [String: Any] {
+            ["v": 2, "kind": "assembly", "title": "Lint", "units": "mm",
+             "parts": [["id": "box", "shape": ["box": ["size": [40, 40, 40]]]]],
+             "annotations": ["labels": (0..<labels).map { ["id": "l\($0)", "at": ["world": [0, 0, 30 + $0 * 5]], "text": "Label"] },
+                             "arrows": (0..<arrows).map { ["id": "a\($0)", "meaning": "force", "from": "box", "to": ["world": [0, 0, -50 - $0]]] }
+                                 + [["id": "aT", "meaning": "force", "from": "box", "to": ["world": [0, 9, -60]], "text": "Thrust"]]],
+             "steps": [["say": say, "annotate": (0..<labels).map { "l\($0)" } + (0..<arrows).map { "a\($0)" } + ["aT"]]]]
+        }
+        XCTAssertEqual(MartyLoop.documentLint(doc(labels: 4, arrows: 5, say: "The box.")), [], "5 texts; untexted arrows do not count")
+        let six = MartyLoop.documentLint(doc(labels: 5, arrows: 0, say: "The box."))
+        XCTAssertEqual(six.count, 1); XCTAssertTrue(six[0].hasPrefix("Step 1 shows 6 texts"), six[0])
+        let most = MartyLoop.documentLint(doc(labels: 1, arrows: 0, say: "The back engine carries most of the load."))
+        XCTAssertEqual(most.count, 1); XCTAssertTrue(most[0].contains("most of the load"), most[0])
+        XCTAssertEqual(MartyLoop.documentLint(doc(labels: 1, arrows: 0, say: "The wheel turns {pair.wheel.speed|frac}, more than none.")), [])
+        XCTAssertEqual(MartyLoop.documentLint(doc(labels: 1, arrows: 0, say: "In this schematic the back unit gives most of the lift.")), [])
+        // The loop asks for one repair; with none left, the engine-accepted document stands with its lint recorded.
+        let plan = #"{"components": [], "primitives": ["box"]}"#
+        func reply(_ d: [String: Any]) -> String { #"{"document": "# + MartyJSON.string(d) + "}" }
+        let bad = doc(labels: 5, arrows: 0, say: "The box."), good = doc(labels: 4, arrows: 0, say: "The box.")
+        let model = ScriptedAdapter(replies: [plan, reply(bad), reply(good)])
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: .init()).run(question: "q")
+        XCTAssertEqual(r["accepted"] as? Bool, true)
+        XCTAssertNil(r["lint"])
+        let first = try XCTUnwrap((r["attempts"] as? [[String: Any]])?.first)
+        XCTAssertEqual(first["reason"] as? String, "marty.lint"); XCTAssertEqual(first["engineOk"] as? Bool, true)
+        XCTAssertTrue(model.prompts[2].user.contains("Marty's checks found these problems"), model.prompts[2].user)
+        let fallback = ScriptedAdapter(replies: [plan, reply(bad), "not json", "not json", "not json"])
+        let out2 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out2) }
+        let r2 = try MartyLoop(model: fallback, out: out2, options: .init()).run(question: "q")
+        XCTAssertEqual(r2["accepted"] as? Bool, true, "the engine-accepted document stands")
+        XCTAssertEqual((r2["lint"] as? [String])?.count, 1)
+        XCTAssertEqual((r2["final"] as? [String: Any])?["title"] as? String, "Lint")
+    }
+
     func testReplyJSON() {
         XCTAssertEqual(ReplyJSON.object(#"{"a":1}"#)?["a"] as? Int, 1)
         XCTAssertEqual(ReplyJSON.object("Here:\n```json\n{\"a\": 2}\n```\nDone.")?["a"] as? Int, 2)

@@ -220,6 +220,8 @@ public final class MartyLoop {
         var accepted: [String: Any]? = nil
         var acceptedComponents: [Any] = []
         var attempts: [[String: Any]] = []
+        // An engine-accepted document that fails Marty's own lint: kept as the fallback while a repair is tried.
+        var fallback: (report: [String: Any], components: [Any], lint: [String])? = nil
         // When the model could not be reached for the plan, stop: more calls would only fail or wait again.
         if planAdapterFailed { attempts.append(["ok": false, "reason": "adapter"]) }
         for attempt in stride(from: 0, through: planAdapterFailed ? -1 : options.repairs, by: 1) {
@@ -241,7 +243,24 @@ public final class MartyLoop {
             }
             note(i, Self.outcome(report))
             attempts.append(Self.outcome(report))
-            if (report["ok"] as? Bool) == true { accepted = report; acceptedComponents = components; break }
+            if (report["ok"] as? Bool) == true {
+                // Marty's lint on the accepted document (too many texts in a step, a comparison with no figure). It
+                // only asks for one more repair when one is left; the accepted document is kept as the fallback.
+                let lint = document.map(Self.documentLint) ?? []
+                if lint.isEmpty || attempt == options.repairs {
+                    accepted = report; acceptedComponents = components
+                    if !lint.isEmpty { receipt["lint"] = lint }
+                    break
+                }
+                if fallback == nil { fallback = (report, components, lint) }
+                attempts[attempts.count - 1]["reason"] = "marty.lint"
+                attempts[attempts.count - 1]["lint"] = lint
+                attempts[attempts.count - 1]["engineOk"] = true
+                attempts[attempts.count - 1]["ok"] = false
+                user = MartyPrompts.repairUser(question: question, plan: planText, previous: text, reason: "marty.lint", part: nil,
+                                               hint: MartyPrompts.lintRepair + "\n" + lint.map { "- \($0)" }.joined(separator: "\n"))
+                continue
+            }
             let reason = report["reason"] as? String ?? "unknown"
             var part = report["part"] as? String
             if let c = report["component"] as? Int { part = "components[\(c)]" + (part.map { " / \($0)" } ?? "") }
@@ -252,6 +271,7 @@ public final class MartyLoop {
                                            hint: MartyPrompts.hint(for: reason), facts: facts, readBack: readBack,
                                            visibility: report["visibility"] as? [String: Any])
         }
+        if accepted == nil, let f = fallback { accepted = f.report; acceptedComponents = f.components; receipt["lint"] = f.lint }
         receipt["attempts"] = attempts
         receipt["accepted"] = accepted != nil
 
@@ -543,7 +563,7 @@ extension MartyLoop {
     }
 
     static let comparativeWords = #"(?i)\b(most|mostly|majority|all of|all the|all its|the bulk|nearly all|almost all|mainly|largely|more than|less than|twice|half of|the largest|the biggest|the lion's share)\b"#
-    static let hedgeWords = #"(?i)\b(about|roughly|around|approximately|estimated?|schematic|not checked|may|might|perhaps|likely)\b"#
+    static let hedgeWords = #"(?i)\b(about|roughly|around|approximately|estimated?|reported|schematic|not checked|may|might|perhaps|likely)\b"#
 
     /// The numbers in a text ("1,500" and "1.5" stay whole; a trailing period is not a decimal point), normalized:
     /// no thousands commas, no trailing decimal zeros ("1.50" and "1.5", "3000.0" and "3000" match).
@@ -592,8 +612,10 @@ extension MartyLoop {
     static func unsupportedComparatives(_ text: String, sources: [String]) -> [String] {
         let evidence = Set(sources.flatMap(numbers))
         return sentences(text).filter { s in
+            // A {fact} placeholder is an engine number.
             guard s.range(of: comparativeWords, options: .regularExpression) != nil,
-                  s.range(of: hedgeWords, options: .regularExpression) == nil else { return false }
+                  s.range(of: hedgeWords, options: .regularExpression) == nil,
+                  s.range(of: #"\{[^{}]+\}"#, options: .regularExpression) == nil else { return false }
             return !numbers(s).contains(where: evidence.contains)
         }
     }
@@ -658,6 +680,43 @@ extension MartyLoop {
             let from = first.insert(v.id).inserted ? "" : " (from beat \(v.beat.map(String.init) ?? "?"))"
             for row in v.cells.dropFirst(v.header ? 1 : 0) {
                 out.append(row.map { "\($0)" }.joined(separator: " ") + " — " + source + from)
+            }
+        }
+        return Array(out.prefix(12))
+    }
+
+    static let maxTextsPerStep = 5
+
+    /// Marty's lint of an engine-accepted document (assembly or explainer): a step or beat that shows more than 5
+    /// texts (labels, dimensions and arrows with text), and a caption or label sentence that compares sizes or shares
+    /// with no hedge, no {fact} placeholder and no given figure.
+    static func documentLint(_ document: Any) -> [String] {
+        guard let d = document as? [String: Any] else { return [] }
+        let explainer = d["kind"] as? String == "explainer"
+        let solid = explainer ? d["solid"] as? [String: Any] ?? [:] : d
+        let ann = solid["annotations"] as? [String: Any] ?? [:]
+        var texts: [String: String] = [:]
+        for l in ann["labels"] as? [[String: Any]] ?? [] { if let id = l["id"] as? String { texts[id] = l["text"] as? String ?? "" } }
+        for a in ann["dimensions"] as? [[String: Any]] ?? [] { if let id = a["id"] as? String { texts[id] = a["text"] as? String ?? "" } }
+        for a in ann["arrows"] as? [[String: Any]] ?? [] { if let id = a["id"] as? String, let t = a["text"] as? String { texts[id] = t } }
+        let steps: [[String: Any]] = explainer ? d["beats"] as? [[String: Any]] ?? [] : d["steps"] as? [[String: Any]] ?? []
+        func list(_ step: [String: Any]) -> [String]? { (explainer ? (step["view"] as? [String: Any])?["annotate"] : step["annotate"]) as? [String] }
+        let stepped = steps.contains { list($0) != nil }
+        var out: [String] = []
+        let word = explainer ? "Beat" : "Step"
+        for (n, step) in steps.enumerated() {
+            let shown = stepped ? (list(step) ?? []) : Array(texts.keys)
+            let count = shown.filter { texts[$0] != nil }.count
+            if count > maxTextsPerStep {
+                out.append("\(word) \(n + 1) shows \(count) texts (labels, dimensions and arrows with text); at most \(maxTextsPerStep). An arrow without \"text\" does not count.")
+            }
+        }
+        let evidence = givenFigures(d)
+        let says = steps.enumerated().compactMap { n, s in (s["say"] as? String).map { ("\(word) \(n + 1)", $0) } }
+            + texts.sorted { $0.key < $1.key }.map { ("Annotation \($0.key)", $0.value) }
+        for (whereText, text) in says {
+            for sentence in unsupportedComparatives(text, sources: evidence) {
+                out.append("\(whereText) says \"\(sentence)\": a share or comparison needs a given figure or a {fact}, or a hedge (about, in this schematic).")
             }
         }
         return Array(out.prefix(12))

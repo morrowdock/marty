@@ -5,7 +5,7 @@ import Foundation
 /// author step sees a short format guide plus `explain` entries for the parts the plan chose. The receipt records the
 /// size and SHA-256 of every prompt, so a change in context is always measured.
 public enum MartyPrompts {
-    public static let version = "marty-prompts/8"
+    public static let version = "marty-prompts/9"
 
     static let role = """
         You are Marty, a teacher who explains how things work with checked 3D models. A deterministic engine \
@@ -32,8 +32,8 @@ public enum MartyPrompts {
         what the model does not show. When the subject has a well-known headline figure (thrust against weight, power, \
         top speed, range, capacity), name it in "given" with its source. When the question asks how a vehicle, aircraft \
         or flying device flies, lifts or hovers, "given" MUST hold its total thrust (kgf or N) and the weight it lifts. \
-        Give only numbers you know, each with the name of its source (a maker's data sheet, a record, a test); if you \
-        are not sure, write "about" and the source "estimate", never a company or person.
+        Give only numbers you know. Name a source only when you are sure it gave that exact number; otherwise write \
+        "reported" and name no source. A number you are not sure of is "about ... (reported)", or left out.
 
         Reply with ONE JSON object only, no prose and no code fences:
         {"inScope": true, "subject": "<5-10 words>", "form": "solid", \
@@ -124,12 +124,14 @@ public enum MartyPrompts {
           touches the torso: "parent": "pilot.back" (the middle of the back surface; +Y points backward), "at": [0,
           <its radius or half depth>, 0]. Show an inside with a "section" cut of that one part in place (ghost only the
           parts in front of it, never the part itself), with "focus": [its ids] on that step so the cutaway fills the frame.
-        - Give every step an "annotate" list: at most 5 labels and pointers in one step, plus its force arrows. Draw one
-          thrust arrow for each thrust unit shown (5 units, 5 arrows), both ends on that unit so it turns with it.
+        - Give every step an "annotate" list: at most 5 texts in one step (labels, dimensions and arrows with "text"; an
+          arrow without "text" does not count). Draw one thrust arrow for each thrust unit shown (5 units, 5 arrows),
+          both ends on that unit so it turns with it; give them no text and name them with one label.
           Start a force arrow outside the body it acts on (beside or below it), never inside it. Steering: pose the
           arms unequally in the mannequin's "with" so they visibly tilt, and put "schematic" in the arrow text.
-        - Show each given figure from the plan as an unchecked label (or a noted table row) with its source, and
-          "about" when the plan has it.
+        - Show each given figure from the plan as an unchecked label (or a noted table row) with its source as the plan
+          has it ("reported" when it names none). A share or comparison (most, all of, more than) in a say or label
+          needs a given figure or a {fact}, or a hedge (about, in this schematic).
         - If the engine cannot show part of the subject, build the best schematic and say so in the title or a step
           (for example "schematic: chain not modelled"). Never present an unchecked fake as real.
         """
@@ -299,8 +301,14 @@ public enum MartyPrompts {
     /// One more plan request when a question about flight has no thrust figure in "given".
     public static let planThrustRepair = """
         Your plan's "given" has no thrust figure, but the question asks how it flies or lifts. Add its total thrust (kgf \
-        or N) and the weight it lifts, each with the name of its source; if you are not sure, write "about" and the \
-        source "estimate", never a company or person. Reply with the whole corrected plan, ONE JSON object only.
+        or N) and the weight it lifts. Name a source only when you are sure it gave that exact number; otherwise write \
+        "reported" and name no source ("about ... (reported)" when unsure of the number). Reply with the whole \
+        corrected plan, ONE JSON object only.
+        """
+
+    /// The repair note when the engine accepted a document but Marty's lint found problems.
+    public static let lintRepair = """
+        The engine accepted it, but Marty's checks found these problems. Fix them and keep the rest:
         """
 
     /// One rewrite request when an answer compares sizes or shares without a figure.
