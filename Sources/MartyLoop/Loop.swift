@@ -187,11 +187,14 @@ public final class MartyLoop {
         var planLint: [String: Any]? = nil
         if !planAdapterFailed, !plan.isEmpty, Self.asksHowItFlies(question), !Self.givenHasThrust(plan) {
             let u = "Question: \(question)\n\nYour plan:\n\(Self.compact(plan))\n\n" + MartyPrompts.planThrustRepair
+            // Only the reply's "given" is taken, and only when it now names thrust: the rest of the plan stays, and a
+            // partial, empty or bad reply (or an adapter failure) keeps the original plan.
             let (text, i) = ask("plan", attempt: 2, system: planSystem, user: u)
-            let fixed = text.flatMap(ReplyJSON.object)
-            note(i, ["ok": fixed != nil, "reason": "plan.given.thrust"])
-            if let fixed { plan = fixed }
-            planLint = ["reason": "plan.given.thrust", "fixed": Self.givenHasThrust(plan)]
+            let given = text.flatMap(ReplyJSON.object)?["given"]
+            let fixed = given.map { Self.givenHasThrust(["given": $0]) } ?? false
+            if fixed, let given { plan["given"] = given }
+            note(i, ["ok": fixed, "reason": text == nil ? "adapter" : "plan.given.thrust"])
+            planLint = ["reason": "plan.given.thrust", "fixed": fixed]
         }
         let wanted = ((plan["components"] as? [String] ?? []) + (plan["primitives"] as? [String] ?? []))
         var seen = Set<String>()
@@ -387,13 +390,16 @@ public final class MartyLoop {
                                           all: !Set(p.keys).isDisjoint(with: ["params", "constraints", "joints"]))
             result["forceArrowsMoved"] = moved
         }
+        // Given figures go to a modelled answer only; the refused answer keeps to the report before.
+        let given = modelled ? Self.givenFigures(try? JSONSerialization.jsonObject(with: Data(docText.utf8))) : []
+        let evidence = given + Self.factTexts(report) + Self.factTexts(after) + Self.numberLeaves(report["ratios"])
+            + Self.numberLeaves(after?["ratios"]) + Self.numberLeaves(acceptedPatch)
         let answer = writeAnswer(system: modelled ? MartyPrompts.answerSystem() : MartyPrompts.answerRefusedSystem(),
                                  user: MartyPrompts.answerUser(followUp: followUp, before: before, after: after.map { Self.compact(Self.summary($0)) },
                                                                patch: acceptedPatch.map { Self.compact($0) }, ratiosChanged: ratiosChanged,
                                                                refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAPatch,
-                                                               movedForceArrows: moved),
-                                 sources: [docText, before] + [after.map { Self.compact($0) }, acceptedPatch.map { Self.compact($0) }].compactMap { $0 },
-                                 result: &result)
+                                                               movedForceArrows: moved, given: given),
+                                 sources: evidence, result: &result)
         result["ok"] = answer != nil
         result["answer"] = answer.map { $0 as Any } ?? NSNull()
         result["answerSource"] = "model text written from the engine reports; its numbers are not checked"
@@ -414,6 +420,7 @@ extension MartyLoop {
         var attempts: [[String: Any]] = []
         var after: [String: Any]? = nil
         var acceptedChange: String? = nil
+        var acceptedDoc: [String: Any]? = nil
         var moved: [String] = []
         var noChange = false
         for attempt in 0...options.repairs {
@@ -442,7 +449,7 @@ extension MartyLoop {
             }
             note(i, Self.outcome(r)); attempts.append(Self.outcome(r))
             if (r["ok"] as? Bool) == true {
-                after = r; acceptedChange = Self.changeSummary(from: base, to: changed)
+                after = r; acceptedDoc = changed; acceptedChange = Self.changeSummary(from: base, to: changed)
                 moved = Self.movedForceArrows(explainerFrom: base, to: changed)
                 break
             }
@@ -477,13 +484,16 @@ extension MartyLoop {
         let marty: Set<String> = ["json", "followup.textOnly", "followup.kind", "adapter"]
         let engineSawAChange = attempts.contains { !marty.contains($0["reason"] as? String ?? "") }
         let shownReason = engineSawAChange ? (attempts.last { !marty.contains($0["reason"] as? String ?? "") }?["reason"] as? String ?? lastReason) : lastReason
+        let given = modelled ? Self.givenFigures(acceptedDoc ?? base) : []
+        let changeObject = acceptedChange.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) }
+        let evidence = given + Self.factTexts(report) + Self.factTexts(after) + Self.numberLeaves(report["ratios"])
+            + Self.numberLeaves(after?["ratios"]) + Self.numberLeaves(changeObject)
         let answer = writeAnswer(system: modelled ? MartyPrompts.answerSystem() : MartyPrompts.answerRefusedSystem(),
                                  user: MartyPrompts.answerUser(followUp: followUp, before: before, after: after.map { Self.compact(Self.summary($0)) },
                                                                patch: acceptedChange, ratiosChanged: ratiosChanged,
                                                                refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAChange,
-                                                               movedForceArrows: moved),
-                                 sources: [docText, before] + [after.map { Self.compact($0) }, acceptedChange].compactMap { $0 },
-                                 result: &result)
+                                                               movedForceArrows: moved, given: given),
+                                 sources: evidence, result: &result)
         result["ok"] = answer != nil
         result["answer"] = answer.map { $0 as Any } ?? NSNull()
         result["answerSource"] = "model text written from the engine reports; its numbers are not checked"
@@ -511,8 +521,15 @@ extension MartyLoop {
         return answer
     }
 
-    static let flightWords = #"(?i)\b(fly|flies|flying|flight|fl[oy]wn|lift|lifts|lifting|hover|hovers|hovering|airborne|take ?off|takes off)\b"#
-    static func asksHowItFlies(_ question: String) -> Bool { question.range(of: flightWords, options: .regularExpression) != nil }
+    static let flightWords = #"(?i)\b(fly|flies|flying|flight|flown|hover|hovers|hovering|airborne|take ?off|takes off|soar|soars)\b"#
+    static let liftWords = #"(?i)\b(lift|lifts|lifting|lift-off|liftoff)\b"#
+    static let flightContext = #"(?i)\b(jet|jets|jetpack|suit|aircraft|airplane|aeroplane|plane|drone|helicopter|quadcopter|rocket|wing|wings|rotor|propeller|balloon|airship|glider|bird|thrust|vtol|hovercraft)\b"#
+    /// A question about how something flies: a flight word, or a lift word with a flight context ("a hydraulic lift"
+    /// is not one).
+    static func asksHowItFlies(_ question: String) -> Bool {
+        func has(_ re: String) -> Bool { question.range(of: re, options: .regularExpression) != nil }
+        return has(flightWords) || (has(liftWords) && has(flightContext))
+    }
 
     /// A "given" entry that names thrust and has a number.
     static func givenHasThrust(_ plan: [String: Any]) -> Bool {
@@ -520,24 +537,78 @@ extension MartyLoop {
         return given.contains { $0.lowercased().contains("thrust") && $0.rangeOfCharacter(from: .decimalDigits) != nil }
     }
 
-    static let comparativeWords = #"(?i)\b(most|mostly|majority|all of the|the bulk|nearly all|almost all|mainly|largely|the lion's share)\b"#
+    static let comparativeWords = #"(?i)\b(most|mostly|majority|all of|all the|all its|the bulk|nearly all|almost all|mainly|largely|more than|less than|twice|half of|the largest|the biggest|the lion's share)\b"#
     static let hedgeWords = #"(?i)\b(about|roughly|around|approximately|estimated?|schematic|not checked|may|might|perhaps|likely)\b"#
 
-    /// The sentences of `text` with a comparative word, no hedge and no number that also appears in the sources.
+    /// The numbers in a text ("1,500" and "1.5" stay whole; a trailing period is not a decimal point).
+    static func numbers(_ s: String) -> [String] {
+        guard let re = try? NSRegularExpression(pattern: #"\d+(?:[.,]\d+)*"#) else { return [] }
+        return re.matches(in: s, range: NSRange(s.startIndex..., in: s))
+            .compactMap { Range($0.range, in: s).map { String(s[$0]).replacingOccurrences(of: ",", with: "") } }
+    }
+
+    /// Sentences: split after ".", "!" or "?" followed by a space or the end, and at line breaks (so "1.5" stays whole).
+    static func sentences(_ text: String) -> [String] {
+        let marked = text.replacingOccurrences(of: #"(?<=[.!?])(\s+|$)|\n+"#, with: "\u{1}", options: .regularExpression)
+        return marked.split(separator: "\u{1}").map { $0.trimmingCharacters(in: .whitespaces) }
+            .map { $0.hasSuffix(".") || $0.hasSuffix("!") || $0.hasSuffix("?") ? String($0.dropLast()) : $0 }
+            .filter { !$0.isEmpty }
+    }
+
+    /// The sentences of `text` with a comparative word, no hedge and no number that also appears in the evidence
+    /// (given figures, engine fact texts and values, sizes set in the change; never raw JSON).
     static func unsupportedComparatives(_ text: String, sources: [String]) -> [String] {
-        let source = sources.joined(separator: "\n")
-        func numbers(_ s: String) -> [String] {
-            guard let re = try? NSRegularExpression(pattern: #"\d+(?:[.,]\d+)*"#) else { return [] }
-            return re.matches(in: s, range: NSRange(s.startIndex..., in: s)).compactMap { Range($0.range, in: s).map { String(s[$0]) } }
-        }
-        let sourceNumbers = Set(numbers(source).map { $0.replacingOccurrences(of: ",", with: "") })
-        let sentences = text.split(omittingEmptySubsequences: true) { ".!?\n".contains($0) }
-            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        return sentences.filter { s in
+        let evidence = Set(sources.flatMap(numbers))
+        return sentences(text).filter { s in
             guard s.range(of: comparativeWords, options: .regularExpression) != nil,
                   s.range(of: hedgeWords, options: .regularExpression) == nil else { return false }
-            return !numbers(s).contains { sourceNumbers.contains($0.replacingOccurrences(of: ",", with: "")) }
+            return !numbers(s).contains(where: evidence.contains)
         }
+    }
+
+    /// The numbers a JSON value holds as numbers (not digits inside keys or ids), as text.
+    static func numberLeaves(_ v: Any?) -> [String] {
+        switch v {
+        case let n as NSNumber where CFGetTypeID(n) != CFBooleanGetTypeID():
+            let d = n.doubleValue
+            return [d == d.rounded() && abs(d) < 1e15 ? String(Int64(d)) : String(d)]
+        case let a as [Any]: return a.flatMap { numberLeaves($0) }
+        case let o as [String: Any]: return o.values.flatMap { numberLeaves($0) }
+        default: return []
+        }
+    }
+
+    /// Engine fact texts of a report ("12 teeth", "1/3"): evidence for the answer lint.
+    static func factTexts(_ r: [String: Any]?) -> [String] {
+        ((r?["facts"] as? [String: Any]) ?? [:]).values.compactMap { ($0 as? [String: Any])?["text"] as? String }
+    }
+
+    /// The given figures of a document, for the answer prompt and the lint: unchecked labels and arrows ("text —
+    /// source") and the rows of noted explainer tables ("cells — basis or unchecked"). At most 12.
+    static func givenFigures(_ document: Any?) -> [String] {
+        guard let d = document as? [String: Any] else { return [] }
+        var out: [String] = []
+        let ann = (d["annotations"] ?? (d["solid"] as? [String: Any])?["annotations"]) as? [String: Any] ?? [:]
+        for key in ["labels", "arrows"] {
+            for a in ann[key] as? [[String: Any]] ?? [] {
+                if let u = a["unchecked"] as? String, let t = a["text"] as? String { out.append("\(t) — \(u) (not checked)") }
+            }
+        }
+        let notes = d["notes"] as? [String: Any] ?? [:]
+        var tables = ((d["board"] as? [String: Any])?["items"] as? [[String: Any]]) ?? []
+        for beat in d["beats"] as? [[String: Any]] ?? [] {
+            for case let o as [String: Any] in beat["ops"] as? [Any] ?? [] where o["op"] as? String == "add" {
+                if let item = o["item"] as? [String: Any] { tables.append(item) }
+            }
+        }
+        for t in tables where t["k"] as? String == "table" {
+            guard let id = t["id"] as? String, let note = notes[id] as? [String: Any] else { continue }
+            let source = (note["basis"] as? String).map { "\($0) (given)" } ?? (note["unchecked"] as? String).map { "\($0) (not checked)" } ?? ""
+            for row in (t["cells"] as? [[Any]] ?? []).dropFirst(t["header"] as? Bool == true ? 1 : 0) {
+                out.append(row.map { "\($0)" }.joined(separator: " ") + " — " + source)
+            }
+        }
+        return Array(out.prefix(12))
     }
 
     /// What a follow-up may change in an explainer, without its words: the solid (without label and arrow text), the

@@ -20,8 +20,12 @@ the MCP server uses), so a run needs no MCP client.
    hovers, `given` must hold its total thrust (kgf or N) and the weight it
    lifts. The model gives only numbers it knows, each with its source name; if
    it is not sure, it writes "about" and the source "estimate", never a company
-   or person. When a flight question gets a plan with no thrust entry, Marty
-   asks once more (`plan.lint`, reason `plan.given.thrust`, with `fixed`). The plan says
+   or person. When a flight question (a flight word such as fly or hover, or
+   lift with a flight context such as jet, drone or wing; "a hydraulic lift" is
+   not one) gets a plan with no thrust entry, Marty asks once more (`plan.lint`,
+   reason `plan.given.thrust`, with `fixed`). Only the reply's `given` is taken,
+   and only when it names thrust with a number; a partial, empty or bad reply,
+   or an adapter failure, keeps the original plan, and authoring goes on. The plan says
    whether the subject is in scope, the `form` (`solid`, or `explainer`: the 3D
    model with a 2D table of published numbers beside it), `whole`, `inside`,
    `given` (numbers it knows
@@ -119,12 +123,17 @@ the MCP server uses), so a run needs no MCP client.
    `camera` ops, ops on text items, sets of a `text` or `label` key, and the
    `label` and `text` of an item are words). The answer prompt gets the accepted change with values before and
    after: the solid parts, the other solid keys, the board keys and items and the beat
-   ops that changed. The answer prompt also says that a claim about sizes,
-   shares or comparisons must come from a given figure or an engine number, or
-   be hedged. A sentence with "most", "the majority", "all of the" or a similar
-   word, with no hedge (about, in this schematic) and no number that also
-   appears in the document or the engine reports, gets one rewrite request;
-   `answerLint` records the sentences and whether the rewrite cleared them. In
+   ops that changed. A modelled answer also gets the document's given figures
+   (unchecked labels and arrows, and rows of noted explainer tables, with their
+   source; at most 12); a refused answer does not. The answer prompt says that a
+   claim about sizes, shares or comparisons must come from a given figure or an
+   engine number, or be hedged. A sentence with "most", "the majority", "all
+   of", "more than" or a similar word, with no hedge (about, in this schematic)
+   and no number that is also in the evidence (the given figures shown, the
+   engine fact texts and ratios, numbers set in the change; never raw JSON),
+   gets one rewrite request; `answerLint` records the sentences and whether the
+   rewrite cleared them. A rewrite that fails in the adapter keeps the first
+   answer (`fixed` false). In
    an explainer, a force arrow whose direction the model
    sets may be marked `unchecked: "schematic direction"`; an arrow whose
    definition changed is listed in `forceArrowsMoved`.

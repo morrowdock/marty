@@ -298,8 +298,8 @@ public enum MartyPrompts {
         Prefer a fact over your own arithmetic; if you must compute, use only simple, exact arithmetic on those numbers. \
         If the message lists force arrows that the change moved, say that the force direction shown there is \
         schematic; say nothing of that kind otherwise (the engine checks a gravity arrow). A claim about sizes, shares \
-        or comparisons (most, the majority, all of, more than) must come from a given figure in the document or an \
-        engine number; otherwise hedge it (about, in this schematic) or leave it out. Reply with the answer text only.
+        or comparisons (most, the majority, all of, more than) must come from a given figure listed below (say its \
+        source) or an engine number; otherwise hedge it (about, in this schematic) or leave it out. Reply with the answer text only.
         """
     }
 
@@ -316,8 +316,12 @@ public enum MartyPrompts {
     }
 
     public static func answerUser(followUp: String, before: String, after: String?, patch: String? = nil, ratiosChanged: Bool = false,
-                                  refused: String? = nil, engineSawAPatch: Bool = true, movedForceArrows: [String] = []) -> String {
+                                  refused: String? = nil, engineSawAPatch: Bool = true, movedForceArrows: [String] = [], given: [String] = []) -> String {
         var s = "Learner asks: \(followUp)\n\nEngine report before:\n\(before)\n\n"
+        if refused == nil, !given.isEmpty {
+            s += "Given figures in the document (not solved by the engine; state the source):\n"
+                + given.map { "- \($0)" }.joined(separator: "\n") + "\n\n"
+        }
         if let refused {
             return s + (engineSawAPatch
                 ? "The engine refused every change that was tried (last reason: \(refused)), so this model cannot show the what-if.\n"
