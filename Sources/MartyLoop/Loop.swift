@@ -409,6 +409,7 @@ public final class MartyLoop {
         var stepPush: PoseText.Push? = nil
         var engineChecked = false
         for attempt in 0...options.repairs {
+            stepPush = nil
             let (text, i) = ask("followup", attempt: attempt, system: system, user: user)
             guard let text else { note(i, ["ok": false, "reason": "adapter"]); attempts.append(["ok": false, "reason": "adapter"]); break }
             guard var reply = ReplyJSON.object(text), reply.keys.contains("patch") || reply["step"] is [String: Any] else {
@@ -468,12 +469,15 @@ public final class MartyLoop {
                                                    filledBy: base)
                 if let reason = FactCheck.reason(unsourced) { r = ["ok": false, "reason": reason, "unsourced": unsourced.map(\.line)] }
             }
-            // A posed step's words must agree with what its shown thrust arrows do at the pose (from the engine).
-            if (r["ok"] as? Bool) == true, let step = stepReply, let base = (try? JSONSerialization.jsonObject(with: Data(docText.utf8))) as? [String: Any],
-               let push = PoseText.push(engine: engine, document: base, step: step, components: components) {
+            // The words of each changed posed step (from a "step" reply or a raw steps patch) must agree with what its
+            // shown thrust arrows do at the pose; the engine poses the patched document itself.
+            if (r["ok"] as? Bool) == true,
+               let patched = (try? engine.patch(document: nil, ref: ref, patch: merged, components: components, returnDocument: true, strict: true))?["document"] as? [String: Any] {
+                let base = (try? JSONSerialization.jsonObject(with: Data(docText.utf8))) as? [String: Any]
+                let says = (patched["steps"] as? [[String: Any]] ?? []).map { $0["say"] as? String ?? "" }
+                let (push, wrong) = PoseText.check(engine: engine, document: patched, base: base, says: says, components: components)
                 stepPush = push
-                let wrong = PoseText.disagreements(step["say"] as? String ?? "", push: push)
-                if !wrong.isEmpty { r = ["ok": false, "reason": "followup.direction", "direction": [push.summary] + wrong] }
+                if !wrong.isEmpty { r = ["ok": false, "reason": "followup.direction", "direction": wrong] }
             }
             note(i, Self.outcome(r)); attempts.append(Self.outcome(r))
             if (r["ok"] as? Bool) == true { after = r; acceptedPatch = merged; acceptedStep = stepReply; acceptedPush = stepPush; break }
@@ -492,7 +496,7 @@ public final class MartyLoop {
                 + ((r["visibility"] as? [String: Any]).flatMap(MartyPrompts.visibilityLine).map { " \($0)" } ?? "")
                 + ((r["limit"] as? [String: Any]).flatMap(MartyPrompts.limitLine).map { " \($0)" } ?? "")
                 + ((r["unsourced"] as? [String]).map { " " + MartyPrompts.factRepair + "\n" + $0.map { "- \($0)" }.joined(separator: "\n") } ?? "")
-                + ((r["direction"] as? [String]).map { " " + MartyPrompts.directionRepair + " " + $0[0] + "\n" + $0.dropFirst().map { "- \($0)" }.joined(separator: "\n") } ?? "")
+                + ((r["direction"] as? [String]).map { " " + MartyPrompts.directionRepair + " " + ($0.first ?? "") + "\n" + $0.dropFirst().map { "- \($0)" }.joined(separator: "\n") } ?? "")
                 + (facts.map { "\n\nFacts the engine solved for the changed model (name: value):\n\($0)" } ?? "")
                 + "\n\nReply with a corrected JSON object only."
         }
@@ -565,6 +569,7 @@ extension MartyLoop {
         var moved: [String] = []
         var noChange = false
         for attempt in 0...options.repairs {
+            stepPush = nil
             let (text, i) = ask("followup", attempt: attempt, system: system, user: user)
             guard let text else { note(i, ["ok": false, "reason": "adapter"]); attempts.append(["ok": false, "reason": "adapter"]); break }
             guard let reply = ReplyJSON.object(text), reply.keys.contains("document") else {
@@ -595,17 +600,14 @@ extension MartyLoop {
                                                                                  extra: [followUp]))
                     if let reason = FactCheck.reason(unsourced) { r = ["ok": false, "reason": reason, "unsourced": unsourced.map(\.line)] }
                 }
-                // A new or edited beat with a pose: its words must agree with its shown thrust arrows at the pose.
-                if (r["ok"] as? Bool) == true, let solid = changed["solid"] as? [String: Any] {
-                    let oldBeats = base["beats"] as? [[String: Any]] ?? []
-                    for (n, beat) in (changed["beats"] as? [[String: Any]] ?? []).enumerated()
-                    where (beat["view"] as? [String: Any])?["pose"] != nil
-                        && (n >= oldBeats.count || MartyJSON.data(oldBeats[n]) != MartyJSON.data(beat)) {
-                        guard let push = PoseText.push(engine: engine, document: solid, step: beat, components: components) else { continue }
-                        stepPush = push
-                        let wrong = PoseText.disagreements(beat["say"] as? String ?? "", push: push)
-                        if !wrong.isEmpty { r = ["ok": false, "reason": "followup.direction", "direction": [push.summary] + wrong]; break }
-                    }
+                // A new or edited beat with a pose: its words must agree with its shown thrust arrows at the pose (the
+                // explainer's solid with one step per beat, posed by the engine).
+                if (r["ok"] as? Bool) == true, let doc = PoseText.assembly(explainer: changed) {
+                    let says = (changed["beats"] as? [[String: Any]] ?? []).map { $0["say"] as? String ?? "" }
+                    let (push, wrong) = PoseText.check(engine: engine, document: doc, base: PoseText.assembly(explainer: base),
+                                                       says: says, components: components)
+                    stepPush = push
+                    if !wrong.isEmpty { r = ["ok": false, "reason": "followup.direction", "direction": wrong] }
                 }
             }
             note(i, Self.outcome(r)); attempts.append(Self.outcome(r))
@@ -627,7 +629,7 @@ extension MartyLoop {
             if let v = (r["visibility"] as? [String: Any]).flatMap(MartyPrompts.visibilityLine) { u += " \(v)" }
             if let l = (r["limit"] as? [String: Any]).flatMap(MartyPrompts.limitLine) { u += " \(l)" }
             if let lines = r["unsourced"] as? [String] { u += " " + MartyPrompts.factRepair + "\n" + lines.map { "- \($0)" }.joined(separator: "\n") }
-            if let d = r["direction"] as? [String] { u += " " + MartyPrompts.directionRepair + " " + d[0] + "\n" + d.dropFirst().map { "- \($0)" }.joined(separator: "\n") }
+            if let d = r["direction"] as? [String] { u += " " + MartyPrompts.directionRepair + " " + (d.first ?? "") + "\n" + d.dropFirst().map { "- \($0)" }.joined(separator: "\n") }
             if let facts { u += "\n\nFacts the engine solved (name: value):\n\(facts)" }
             if let readBack { u += "\n\nEngine read-back:\n\(readBack)" }
             u += "\n\nReply with a corrected JSON object only."

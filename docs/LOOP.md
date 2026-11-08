@@ -207,17 +207,22 @@ the MCP server uses), so a run needs no MCP client.
    effective step views change (the report's `stepViews`: the parts each step
    really poses or hides, and the pose read-back), so a pose that restates the
    base moves nothing and is words only; `"replace"` must name an existing step.
-   Pose-text agreement: Marty applies the posed step's (or beat's) pose to a
-   copy of the document, lets the engine compile it, and reads the world anchors
-   of the force arrows (not gravity) that the step shows. It sums their unit
-   directions: the net side push (near 0 when the side parts cancel, as in a
-   mirror pose), whether the side parts point away from or toward the middle
-   (x = 0), and, with a mannequin (faces -Y, left +X), forward or backward. A
-   step whose words disagree ("sideways" or "slides" with no net side push and
-   no word such as "cancel"; "away from the middle" when the arrows point toward
-   it, and the reverse; "forward" or "backward" against the push; "to the
-   pilot's left/right" against the side) is refused as `followup.direction`
-   with these facts in the repair. The answer prompt gets the same facts
+   Pose-text agreement: for each changed posed step (from a `step` reply or a
+   raw steps patch; for an explainer, each changed beat, through the solid with
+   one step per beat), the engine poses the step itself
+   (`MartyEngine.stepForceArrows`: its own pose semantics, aliases and
+   visibility) and gives the anchors of the force arrows (not gravity) that the
+   step shows. With a mannequin they are read in its body frame at the pose
+   (faces -Y, left +X, x = 0 is the body's middle), else in the world frame.
+   Marty sums their unit directions: the net side push (the side parts cancel
+   when it is near 0 though they are not), whether the side parts point away
+   from or toward the middle, and forward or backward. A clause that speaks of
+   thrust or push (itself or the clause before it) and is not negated ("no",
+   "cancel") and that disagrees ("sideways" with no net side push; "away from
+   the middle" when the arrows point toward it, and the reverse; "forward" or
+   "backward" against the push; "to the pilot's left/right" against the side)
+   is refused as `followup.direction` with these facts in the repair. The push
+   is computed again for each attempt. The answer prompt gets the same facts
    (`followUp.push`), and an answer sentence that disagrees gets the one
    rewrite. The follow-up prompt states the say limits (240 characters for a
    step, 200 for a beat), and the guide says a turn poses one arm (equal arms
