@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-06. Prompts `marty-prompts/5`. Engine pin as in
+Status: early preview, 2026-11-06. Prompts `marty-prompts/6`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -14,6 +14,8 @@ the MCP server uses), so a run needs no MCP client.
    in its place and number, people or loads as schematic figures, and the
    forces as arrows), then the inside of the one part that makes it work, cut
    open, then what the model does not show. It answers with a JSON plan:
+   A well-known headline figure of the subject (thrust against weight, power,
+   top speed, range, capacity) goes in `given` with its source. The plan says
    whether the subject is in scope, the `form` (`solid`, or `explainer`: the 3D
    model with a 2D table of published numbers beside it), `whole`, `inside`,
    `given` (numbers it knows
@@ -28,7 +30,13 @@ the MCP server uses), so a run needs no MCP client.
    `ghost`, part `opacity` and `emissive`, and `annotations` (labels; force
    arrows, where a gravity force is checked to point down; flow and pointer
    arrows; measured dimensions). A given number goes only in a label or arrow
-   marked `unchecked`, so it shows as Not checked. When the plan chose the
+   marked `unchecked`, so it shows as Not checked. The guide also asks: people
+   as the `mannequin` component with worn parts hung on its anchors, small
+   turbines and turbochargers with `centrifugalCompressor`, every part attached
+   where it really is, inside views cut or ghosted in place with `focus` on that
+   step, at most 5 labels or arrows per step (an `annotate` list on every step),
+   force arrows that start outside the body, and each given figure shown with
+   its source. When the plan chose the
    explainer form, the author prompt also gets the explainer section and a small
    accepted explainer (a table with a noted given number, which shows as Given,
    beside the 3D model); other prompts stay smaller. It gets a short format guide, the `explain` entries of the
@@ -78,9 +86,12 @@ the MCP server uses), so a run needs no MCP client.
    no arithmetic. When no patch even reached the engine (only `json` or
    `followup.textOnly` problems), the prompt says "no change could be checked"
    instead of "the engine refused". Prompt set `marty-prompts/2`. An empty follow-up (the out-of-scope bench questions have
-   none) means no follow-up turn. An explainer has no engine patch format, so
-   its follow-up is answered from the report with no model change
-   (`modelled: false`).
+   none) means no follow-up turn. A what-if may move a part (a mannequin arm
+   angle, a part's `rot`); a force arrow whose new direction the model sets is
+   marked `unchecked: "schematic direction"`. An explainer has no engine patch
+   format, so its follow-up sends the whole changed explainer, which the engine
+   checks in strict mode (at most 3 repairs); a change of words only (the same
+   board and solid) is refused as `followup.textOnly`.
 
 Model text is only parsed as JSON and given to the engine. It is never run.
 

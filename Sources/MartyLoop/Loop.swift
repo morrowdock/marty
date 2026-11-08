@@ -295,15 +295,10 @@ public final class MartyLoop {
     func followUp(question: String, followUp: String, ref: String, report: [String: Any], components: [Any]) throws -> [String: Any] {
         guard let docText = engine.canonicalDocument(ref: ref) else { return ["ok": false, "reason": "ref.unknown"] }
         let before = Self.compact(Self.summary(report))
-        // An explainer has no engine patch format: answer honestly from the report, with no model change.
+        // An explainer has no engine patch format: the model sends the whole changed explainer, which the engine checks.
         if (report["kind"] as? String) == "explainer" {
-            let (answer, i) = ask("answer", attempt: 0, system: MartyPrompts.answerRefusedSystem(),
-                                  user: MartyPrompts.answerUser(followUp: followUp, before: before, after: nil,
-                                                                refused: "followup.explainer", engineSawAPatch: false))
-            note(i, ["ok": answer != nil])
-            return ["question": followUp, "attempts": [Any](), "changed": false, "modelled": false, "ok": answer != nil,
-                    "answer": answer.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) as Any } ?? NSNull(),
-                    "answerSource": "model text written from the engine reports; its numbers are not checked"]
+            return try explainerFollowUp(question: question, followUp: followUp, docText: docText, before: before, report: report,
+                                         components: components)
         }
         let system = MartyPrompts.followUpSystem()
         var user = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp)
@@ -385,6 +380,73 @@ public final class MartyLoop {
 }
 
 extension MartyLoop {
+    /// A follow-up on an explainer: the whole changed explainer, checked by the engine (strict), at most `repairs` repairs;
+    /// a change of words only (the same board and solid) is refused as followup.textOnly. Then an answer from the reports.
+    func explainerFollowUp(question: String, followUp: String, docText: String, before: String, report: [String: Any],
+                           components: [Any]) throws -> [String: Any] {
+        let base = (try? JSONSerialization.jsonObject(with: Data(docText.utf8))) as? [String: Any] ?? [:]
+        func views(_ d: [String: Any]) -> Data { MartyJSON.data(["board": d["board"] ?? NSNull(), "solid": d["solid"] ?? NSNull()]) }
+        let system = MartyPrompts.followUpExplainerSystem()
+        var user = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp)
+        var result: [String: Any] = ["question": followUp]
+        var attempts: [[String: Any]] = []
+        var after: [String: Any]? = nil
+        var noChange = false
+        for attempt in 0...options.repairs {
+            let (text, i) = ask("followup", attempt: attempt, system: system, user: user)
+            guard let text else { note(i, ["ok": false, "reason": "adapter"]); attempts.append(["ok": false, "reason": "adapter"]); break }
+            guard let reply = ReplyJSON.object(text), reply.keys.contains("document") else {
+                note(i, ["ok": false, "reason": "json"]); attempts.append(["ok": false, "reason": "json"])
+                user += "\n\nYour reply was not one JSON object with a \"document\" key. Reply again."
+                continue
+            }
+            guard let changed = reply["document"] as? [String: Any] else { noChange = true; note(i, ["ok": true, "document": NSNull()]); break }
+            var r: [String: Any]
+            if views(changed) == views(base) {
+                r = ["ok": false, "reason": "followup.textOnly"]
+            } else {
+                do { r = try engine.check(document: changed, ref: nil, components: components, strict: true) }
+                catch let e as ToolError { r = ["ok": false, "reason": e.reason] }
+            }
+            note(i, Self.outcome(r)); attempts.append(Self.outcome(r))
+            if (r["ok"] as? Bool) == true { after = r; break }
+            let reason = r["reason"] as? String ?? "unknown"
+            let (facts, readBack) = repairContext(reason: reason, report: r, document: changed, components: components)
+            user = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp)
+                + "\n\nYour previous reply:\n\(text)\n\nThe engine refused it with reason `\(reason)`"
+                + ((r["part"] as? String).map { " on part `\($0)`" } ?? "") + "."
+                + (reason == "followup.textOnly" ? " Only the words changed: change the model (its solid or board)." : "")
+                + (MartyPrompts.hint(for: reason).map { " \($0)" } ?? "")
+                + (facts.map { "\n\nFacts the engine solved (name: value):\n\($0)" } ?? "")
+                + (readBack.map { "\n\nEngine read-back:\n\($0)" } ?? "")
+                + "\n\nReply with a corrected JSON object only."
+        }
+        result["attempts"] = attempts
+        result["changed"] = after != nil
+        let modelled = after != nil || noChange
+        result["modelled"] = modelled
+        var ratiosChanged = false
+        if let after {
+            result["after"] = Self.summary(after).merging(["ref": after["ref"] ?? NSNull()]) { a, _ in a }
+            ratiosChanged = MartyJSON.data(after["ratios"] ?? [String: Any]()) != MartyJSON.data(report["ratios"] ?? [String: Any]())
+            result["ratiosChanged"] = ratiosChanged
+        }
+        let lastReason = attempts.last?["reason"] as? String
+        guard modelled || (lastReason != nil && lastReason != "adapter") else { result["ok"] = false; return result }
+        let marty: Set<String> = ["json", "followup.textOnly", "adapter"]
+        let engineSawAChange = attempts.contains { !marty.contains($0["reason"] as? String ?? "") }
+        let shownReason = engineSawAChange ? (attempts.last { !marty.contains($0["reason"] as? String ?? "") }?["reason"] as? String ?? lastReason) : lastReason
+        let (answer, i) = ask("answer", attempt: 0, system: modelled ? MartyPrompts.answerSystem() : MartyPrompts.answerRefusedSystem(),
+                              user: MartyPrompts.answerUser(followUp: followUp, before: before, after: after.map { Self.compact(Self.summary($0)) },
+                                                            patch: nil, ratiosChanged: ratiosChanged,
+                                                            refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAChange))
+        note(i, ["ok": answer != nil])
+        result["ok"] = answer != nil
+        result["answer"] = answer.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) as Any } ?? NSNull()
+        result["answerSource"] = "model text written from the engine reports; its numbers are not checked"
+        return result
+    }
+
     /// The engine replaces a part field as a whole, so `{"stage": {"with": {"planets": 4}}}` would reset every other
     /// parameter of `stage` to its default. A model means "change planets"; merge its `with` into the base document's
     /// `with` (a null value removes a parameter) so only what was asked changes.
@@ -411,7 +473,7 @@ extension MartyLoop {
 /// Small accepted documents used as format examples in prompts. Tests check each one with the engine.
 /// The example is about no bench subject (no gears, cranks or blades), so it shows the format without giving away an answer.
 public enum MartyExamples {
-    public static let formatExample = #"{"v":2,"kind":"assembly","title":"A shaft held in two bearings","units":"mm","parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"labels":[{"id":"lShaft","at":{"part":"shaft.input","offset":[0,0,60]},"text":"Shaft"},{"id":"lRated","at":{"world":[0,-70,20]},"text":"Rated 3000 rpm","unchecked":"maker's figure"}],"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":"base.base","to":{"part":"base.base","offset":[0,0,-40]},"text":"Weight"}]},"steps":[{"say":"Two bearings hold a shaft in line on a base.","camera":"hero"},{"say":"Input: the shaft makes {shaft.input.speed} turn for each input turn.","highlight":["shaft.input"],"spin":1,"check":[{"value":"shaft.input.speed","eq":1}]},{"say":"Cut open: the lower bearing rings the shaft.","section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"highlight":["shaft.lowerBearing"]},{"say":"Seen through the base.","ghost":["base.base"]}]}"#
+    public static let formatExample = #"{"v":2,"kind":"assembly","title":"A shaft held in two bearings","units":"mm","parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"labels":[{"id":"lShaft","at":{"part":"shaft.input","offset":[0,0,60]},"text":"Shaft"},{"id":"lRated","at":{"world":[0,-70,20]},"text":"Rated 3000 rpm","unchecked":"maker's figure"}],"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-20]},"to":{"part":"base.base","offset":[0,0,-60]},"text":"Weight"}]},"steps":[{"say":"Two bearings hold a shaft in line on a base.","camera":"hero","annotate":["lShaft","lRated","aW"]},{"say":"Input: the shaft makes {shaft.input.speed} turn for each input turn.","highlight":["shaft.input"],"spin":1,"check":[{"value":"shaft.input.speed","eq":1}],"annotate":["lShaft"]},{"say":"Cut open: the lower bearing rings the shaft.","section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"highlight":["shaft.lowerBearing"],"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]},{"say":"Seen through the base.","ghost":["base.base"],"annotate":["aW"]}]}"#
     /// A small explainer: the same shaft with a table of one given number (with its source) and one engine fact.
-    public static let explainerExample = #"{"v":1,"kind":"explainer","title":"A shaft held in two bearings","notes":{"t":{"basis":"maker's data sheet"}},"board":{"v":1,"items":[{"id":"t","k":"table","at":[6,4],"header":true,"cells":[["Item","Value"],["Rated rpm",3000],["Turns/input","{shaft.input.speed}"]]}]},"solid":{"v":2,"parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":"base.base","to":{"part":"base.base","offset":[0,0,-40]},"text":"Weight"}]}},"beats":[{"say":"Two bearings hold a shaft on a base; the table gives its rated speed.","highlight":["t.r1","shaft.shaft"]},{"say":"Cut open: the lower bearing rings the shaft.","highlight":["shaft.lowerBearing"],"view":{"section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]}}}]}"#
+    public static let explainerExample = #"{"v":1,"kind":"explainer","title":"A shaft held in two bearings","primary":"solid","notes":{"t":{"basis":"maker's data sheet"}},"board":{"v":1,"items":[{"id":"cap","k":"text","at":[6,7],"text":"Key figures"}]},"solid":{"v":2,"parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-20]},"to":{"part":"base.base","offset":[0,0,-60]},"text":"Weight"}]}},"beats":[{"say":"Two bearings hold a shaft on a base; the table gives its rated speed.","highlight":["t.r1","shaft.shaft"],"ops":[{"op":"add","item":{"id":"t","k":"table","at":[6,4],"header":true,"cells":[["Item","Value"],["Rated rpm",3000],["Turns/input","{shaft.input.speed}"]]}}],"view":{"annotate":["aW"]}},{"say":"Cut open: the lower bearing rings the shaft.","highlight":["shaft.lowerBearing"],"ops":[{"op":"remove","id":"t"}],"view":{"section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]}}]}"#
 }

@@ -15,7 +15,7 @@ let package = Package(
         .executable(name: "marty", targets: ["marty"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/morrowdock/martygraphics.git", revision: "d0e59443916065faaec9a22fd1226dc923fbc3ea"),
+        .package(url: "https://github.com/morrowdock/martygraphics.git", revision: "9cc429e10e391b3a75384d59c3b22125e83a931f"),
     ],
     targets: [
         .target(name: "MartyEngine", dependencies: [.product(name: "MartyGraphics", package: "martygraphics")]),

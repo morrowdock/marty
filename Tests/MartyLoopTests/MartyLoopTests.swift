@@ -30,7 +30,7 @@ final class MartyLoopTests: XCTestCase {
         let author = MartyPrompts.authorSystem(parts: "", example: MartyExamples.formatExample).utf8.count
         print("prompt bytes: plan \(plan), author without parts \(author)")
         XCTAssertLessThan(plan, 8000)
-        XCTAssertLessThan(author, 9500)
+        XCTAssertLessThan(author, 10500)
     }
 
     /// The format example shows the explainer tools (section, ghost, a gravity force, an unchecked given number) and the
@@ -55,7 +55,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual((r["steps"] as? [String])?.count, 2)
         let plan = MartyPrompts.authorSystem(parts: "", example: MartyExamples.formatExample, explainer: MartyExamples.explainerExample).utf8.count
         print("prompt bytes: author with the explainer form, without parts \(plan)")
-        XCTAssertLessThan(plan, 12000)
+        XCTAssertLessThan(plan, 13000)
     }
 
     /// The plan chooses the explainer form: the author prompt gets the explainer section; the accepted explainer makes a
@@ -63,7 +63,7 @@ final class MartyLoopTests: XCTestCase {
     func testExplainerFormEndToEnd() throws {
         let plan = #"{"form": "explainer", "components": ["shaftWithBearing"], "primitives": []}"#
         let doc = #"{"document": \#(MartyExamples.explainerExample)}"#
-        let model = ScriptedAdapter(replies: [plan, doc, "This explainer cannot show that change."])
+        let model = ScriptedAdapter(replies: [plan, doc, #"{"document": null}"#, "Nothing needs to change."])
         var options = MartyLoop.Options()
         options.followUp = "What if the shaft were longer?"
         let out = tempOut()
@@ -74,9 +74,10 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(model.prompts[1].system.contains("Explainer form"))
         XCTAssertTrue(model.prompts[1].system.contains("noted explainer table"), "the role allows noted table data")
         let f = try XCTUnwrap(r["followUp"] as? [String: Any])
-        XCTAssertEqual(f["modelled"] as? Bool, false)
-        XCTAssertEqual(f["answer"] as? String, "This explainer cannot show that change.")
-        XCTAssertEqual(model.prompts.count, 3, "plan, author, answer: no patch call")
+        XCTAssertEqual(f["modelled"] as? Bool, true, "no change needed")
+        XCTAssertEqual(f["answer"] as? String, "Nothing needs to change.")
+        XCTAssertEqual(model.prompts.count, 4, "plan, author, follow-up, answer")
+        XCTAssertTrue(model.prompts[2].system.contains("WHOLE changed explainer"))
         let lesson = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: out.appendingPathComponent("lesson.json"))) as? [String: Any])
         XCTAssertEqual(lesson["kind"] as? String, "explainer")
         // The solid form keeps the small author prompt.
@@ -85,6 +86,51 @@ final class MartyLoopTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: out2) }
         _ = try MartyLoop(model: solid, out: out2, options: .init()).run(question: "q")
         XCTAssertFalse(solid.prompts[1].system.contains("Explainer form"))
+    }
+
+    /// An explainer follow-up sends the whole changed explainer: a model change is accepted; a change of words only is
+    /// refused (followup.textOnly) and the model may then reply {"document": null}.
+    func testExplainerFollowUpByDocument() throws {
+        let plan = #"{"form": "explainer", "components": ["shaftWithBearing"], "primitives": []}"#
+        let doc = #"{"document": \#(MartyExamples.explainerExample)}"#
+        let changed = MartyExamples.explainerExample.replacingOccurrences(of: #""radius":6"#, with: #""radius":8"#)
+        let words = MartyExamples.explainerExample.replacingOccurrences(of: "Cut open: the lower", with: "Cut open now: the lower")
+        XCTAssertNotEqual(changed, MartyExamples.explainerExample)
+        XCTAssertNotEqual(words, MartyExamples.explainerExample)
+        func run(_ followReplies: [String]) throws -> (ScriptedAdapter, [String: Any]) {
+            let model = ScriptedAdapter(replies: [plan, doc] + followReplies)
+            var options = MartyLoop.Options()
+            options.followUp = "What if the shaft were thicker?"
+            let out = tempOut()
+            defer { try? FileManager.default.removeItem(at: out) }
+            let r = try MartyLoop(model: model, out: out, options: options).run(question: "q")
+            return (model, try XCTUnwrap(r["followUp"] as? [String: Any]))
+        }
+        let (_, ok) = try run([#"{"document": \#(changed)}"#, "A thicker shaft."])
+        XCTAssertEqual(ok["changed"] as? Bool, true, "\(ok["attempts"] ?? "")")
+        XCTAssertEqual(ok["modelled"] as? Bool, true)
+        let (m, text) = try run([#"{"document": \#(words)}"#, #"{"document": null}"#, "No change."])
+        XCTAssertEqual((text["attempts"] as? [[String: Any]])?.first?["reason"] as? String, "followup.textOnly")
+        XCTAssertTrue(m.prompts[3].user.contains("Only the words changed"))
+    }
+
+    /// The guide's people and compressor patterns are true engine rules: worn parts hang on mannequin anchors, a force
+    /// arrow starts outside the body, and the compressor default fits.
+    func testGuidePeopleAndCompressorPatterns() throws {
+        let doc: [String: Any] = ["v": 2, "kind": "assembly", "title": "A worn unit", "units": "mm", "parts": [
+            ["id": "pilot", "use": "mannequin", "with": ["leftShoulder": 30, "rightShoulder": 30]],
+            ["id": "jet", "name": "Arm unit (schematic)", "parent": "pilot.rightHand", "at": [-85, -62, 0],
+             "shape": ["shaft": ["radius": 50, "length": 300, "z0": -80]]],
+            ["id": "pack", "name": "Back unit (schematic)", "parent": "pilot.back", "at": [0, 90, 0],
+             "shape": ["shaft": ["radius": 60, "length": 300, "z0": -150]]],
+            ["id": "comp", "use": "centrifugalCompressor", "with": ["diameter": 80], "at": [600, 0, 900]]],
+            "annotations": ["arrows": [["id": "aW", "meaning": "force", "cause": "gravity",
+                                         "from": ["part": "pilot.body", "offset": [0, -260, -400]],
+                                         "to": ["part": "pilot.body", "offset": [0, -260, -700]], "text": "Weight"]]],
+            "steps": [["say": "A schematic pilot wears two units.", "annotate": ["aW"]],
+                      ["say": "The compressor wheel turns.", "highlight": ["comp.input"], "focus": ["comp.input"], "annotate": []]]]
+        let r = try MartyEngine(outputRoot: nil).check(document: doc, ref: nil, components: [], strict: true)
+        XCTAssertEqual(r["ok"] as? Bool, true, "\(r["reason"] ?? "") \(r["part"] ?? "")")
     }
 
     func testReplyJSON() {
