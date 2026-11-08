@@ -1,14 +1,14 @@
 # Design note: the Marty MCP tool set
 
 Status: implemented in `marty-mcp` 0.2.0. Engine pin: MartyGraphics `main` at
-`70bfc47ad9bbdd3db396037fe450374a5dd497ab` (PR #20 lessons, PR #21 open vocabulary 1: facts,
+`3624a03494047a7b0c495ac0663f0d40ea021e04` (PR #20 lessons, PR #21 open vocabulary 1: facts,
 placeholders, truth tiers, frame lints, strict profile, PR #30: the report and render plan as
 library API, PR #31: annotations: labels, arrows, measured dimensions, and PR #32: explainer
 documents, and PR #34: per-step framing with `focus`, and the `mannequin` and
 `centrifugalCompressor` components, PR #35: the presented-only explainer legend, and PR #36:
 the adaptive board pane, mannequin anchor descriptions and the annotation visibility
 detail, PR #37: unblocked focus, story move cuts, `microTurbojet` and the `parts.resolved`
-detail). Marty's `render` does not write the CLI's `loop.mp4` or `story.mp4`; use
+detail, PR #39: step `pose`, `hide`/`show`, instance ids in step lists). Marty's `render` does not write the CLI's `loop.mp4` or `story.mp4`; use
 `marty-solid render` for them. `render` draws the
 annotation overlay on the hero and step stills, as `marty-solid render` does.
 

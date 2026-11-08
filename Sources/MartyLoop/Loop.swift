@@ -403,18 +403,36 @@ public final class MartyLoop {
         var attempts: [[String: Any]] = []
         var noChange = false
         var acceptedPatch: Any? = nil
+        var acceptedStep: [String: Any]? = nil
+        var engineChecked = false
         for attempt in 0...options.repairs {
             let (text, i) = ask("followup", attempt: attempt, system: system, user: user)
             guard let text else { note(i, ["ok": false, "reason": "adapter"]); attempts.append(["ok": false, "reason": "adapter"]); break }
-            guard let reply = ReplyJSON.object(text), reply.keys.contains("patch") else {
+            guard var reply = ReplyJSON.object(text), reply.keys.contains("patch") || reply["step"] is [String: Any] else {
                 note(i, ["ok": false, "reason": "json"]); attempts.append(["ok": false, "reason": "json"])
-                user += "\n\nYour reply was not one JSON object with a \"patch\" key. Reply again."
+                user += "\n\nYour reply was not one JSON object with a \"patch\" or a \"step\" key. Reply again."
                 continue
+            }
+            // A pose what-if: one new step (or a replaced one, "replace": <step number>) that poses, shows or hides parts
+            // for that step only, sent to the engine as a steps patch; the base model stays as it is.
+            var stepReply: [String: Any]? = nil
+            if let step = reply["step"] as? [String: Any] {
+                guard let steps = Self.stepsWith(step, replace: reply["replace"], base: docText) else {
+                    note(i, ["ok": false, "reason": "json"]); attempts.append(["ok": false, "reason": "json"])
+                    user += "\n\n\"replace\" must be the number of an existing step (1 to the number of steps), or left out to add a step. Reply again."
+                    continue
+                }
+                stepReply = step
+                reply["patch"] = ["steps": steps]
             }
             guard let patch = reply["patch"], !(patch is NSNull) else { noChange = true; note(i, ["ok": true, "patch": NSNull()]); break }
             // A what-if must change the model, not only its words: a patch of only title and steps would narrate a
-            // change the engine never solved. Refuse it like an engine refusal, so the model can repair or reply null.
-            if let keys = (patch as? [String: Any]).map({ Set($0.keys) }), !keys.isEmpty, keys.isSubset(of: ["title", "steps"]) {
+            // change the engine never solved (unless a step now poses, shows or hides parts). Refuse it like an engine
+            // refusal, so the model can repair or reply null.
+            // A steps patch goes to the engine; whether it changed what the steps show is decided from the engine's
+            // effective step views below.
+            let viewsOnly = (patch as? [String: Any]).map { !$0.isEmpty && Set($0.keys).isSubset(of: ["title", "steps"]) } ?? false
+            if viewsOnly, (patch as? [String: Any])?["steps"] == nil {
                 let o: [String: Any] = ["ok": false, "reason": "followup.textOnly"]
                 note(i, o); attempts.append(o)
                 user = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp, table: factBlock)
@@ -425,8 +443,19 @@ public final class MartyLoop {
             }
             var r: [String: Any]
             let merged = Self.mergingWith(patch, base: docText)
+            engineChecked = true
             do { r = try engine.patch(document: nil, ref: ref, patch: merged, components: components, returnDocument: false, strict: true) }
             catch let e as ToolError { r = ["ok": false, "reason": e.reason] }
+            // A title or steps patch that leaves every step's effective pose and visibility as before changes only words.
+            if (r["ok"] as? Bool) == true, viewsOnly, Self.effectiveViews(r) == Self.effectiveViews(report) {
+                let o: [String: Any] = ["ok": false, "reason": "followup.textOnly"]
+                note(i, o); attempts.append(o)
+                user = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp, table: factBlock)
+                    + "\n\nYour previous reply:\n\(text)\n\nThat change leaves the model and every step's pose and visibility as before "
+                    + "(it changes only text), so the new text would not be true. Change parts, drives or constraints, or add a step "
+                    + "whose \"pose\" really moves a part, or reply {\"patch\": null}."
+                continue
+            }
             // The patch's own text (title, steps, part names) is checked for unsourced facts like a document.
             if (r["ok"] as? Bool) == true {
                 let base = (try? JSONSerialization.jsonObject(with: Data(docText.utf8))) as? [String: Any]
@@ -437,7 +466,7 @@ public final class MartyLoop {
                 if let reason = FactCheck.reason(unsourced) { r = ["ok": false, "reason": reason, "unsourced": unsourced.map(\.line)] }
             }
             note(i, Self.outcome(r)); attempts.append(Self.outcome(r))
-            if (r["ok"] as? Bool) == true { after = r; acceptedPatch = merged; break }
+            if (r["ok"] as? Bool) == true { after = r; acceptedPatch = merged; acceptedStep = stepReply; break }
             let reason = r["reason"] as? String ?? "unknown"
             // Facts of the changed model: the same patch with steps cleared and a plain title, plain profile.
             var facts: String? = nil
@@ -472,7 +501,8 @@ public final class MartyLoop {
         guard modelled || (lastReason != nil && lastReason != "adapter") else { result["ok"] = false; return result }
         // Did the engine see any patch? json and followup.textOnly never reach it.
         let marty: Set<String> = ["json", "followup.textOnly", "adapter"]
-        let engineSawAPatch = attempts.contains { !marty.contains($0["reason"] as? String ?? "") }
+        // The engine saw a change when it was called at least once (a words-only steps patch is decided after it).
+        let engineSawAPatch = engineChecked || attempts.contains { !marty.contains($0["reason"] as? String ?? "") }
         // Show the engine's own last reason when there is one (a later bad reply is Marty's json, not the engine's).
         let shownReason = engineSawAPatch ? (attempts.last { !marty.contains($0["reason"] as? String ?? "") }?["reason"] as? String ?? lastReason) : lastReason
         // Force arrows (not gravity) that the accepted patch may have moved: their shown direction is schematic.
@@ -480,10 +510,11 @@ public final class MartyLoop {
         if let p = acceptedPatch as? [String: Any],
            let doc = (try? JSONSerialization.jsonObject(with: Data(docText.utf8))) as? [String: Any] {
             moved = Self.movedForceArrows(annotations: doc["annotations"], parts: doc["parts"] as? [[String: Any]] ?? [],
-                                          moved: Set((p["parts"] as? [String: Any] ?? [:]).keys),
+                                          moved: Set((p["parts"] as? [String: Any] ?? [:]).keys).union(Self.viewMovedIds(before: report, after: after ?? [:])),
                                           all: !Set(p.keys).isDisjoint(with: ["params", "constraints", "joints"]))
             result["forceArrowsMoved"] = moved
         }
+        if let acceptedStep { result["step"] = acceptedStep }
         // Given figures go to a modelled answer only; the refused answer keeps to the report before.
         let given = modelled ? Self.givenFigures(try? JSONSerialization.jsonObject(with: Data(docText.utf8))) : []
         let evidence = given + (modelled ? facts.lines : []) + Self.factTexts(report) + Self.factTexts(after) + Self.numberLeaves(report["ratios"])
@@ -515,6 +546,7 @@ extension MartyLoop {
         var after: [String: Any]? = nil
         var acceptedChange: String? = nil
         var acceptedDoc: [String: Any]? = nil
+        var engineChecked = false
         var moved: [String] = []
         var noChange = false
         for attempt in 0...options.repairs {
@@ -535,11 +567,14 @@ extension MartyLoop {
             var r: [String: Any]
             if changed["kind"] as? String != "explainer" {
                 r = ["ok": false, "reason": "followup.kind"]
-            } else if views(changed) == views(base) {
-                r = ["ok": false, "reason": "followup.textOnly"]
             } else {
+                engineChecked = true
                 do { r = try engine.check(document: changed, ref: nil, components: components, strict: true) }
                 catch let e as ToolError { r = ["ok": false, "reason": e.reason] }
+                // The same model content and the same effective beat views (poses and visibility): words only.
+                if (r["ok"] as? Bool) == true, views(changed) == views(base), Self.effectiveViews(r) == Self.effectiveViews(report) {
+                    r = ["ok": false, "reason": "followup.textOnly"]
+                }
                 if (r["ok"] as? Bool) == true {
                     let unsourced = FactCheck.findings(changed, evidence: .build(table: facts, question: question, report: r, model: changed,
                                                                                  extra: [followUp]))
@@ -549,7 +584,7 @@ extension MartyLoop {
             note(i, Self.outcome(r)); attempts.append(Self.outcome(r))
             if (r["ok"] as? Bool) == true {
                 after = r; acceptedDoc = changed; acceptedChange = Self.changeSummary(from: base, to: changed)
-                moved = Self.movedForceArrows(explainerFrom: base, to: changed)
+                moved = Self.movedForceArrows(explainerFrom: base, to: changed, viewMoved: Self.viewMovedIds(before: report, after: r))
                 break
             }
             let reason = r["reason"] as? String ?? "unknown"
@@ -559,7 +594,7 @@ extension MartyLoop {
             u += "\n\nYour previous reply:\n\(text)\n\nThe engine refused it with reason `\(reason)`"
             if let part = r["part"] as? String { u += " on part `\(part)`" }
             u += "."
-            if reason == "followup.textOnly" { u += " Only the words changed: change the model (its solid, its board items or a beat's ops)." }
+            if reason == "followup.textOnly" { u += " Only the words changed: change the model (its solid, its board items, a beat's ops, or a beat view whose pose really moves a part)." }
             if reason == "followup.kind" { u += " The changed document must stay an explainer (kind explainer)." }
             if let h = MartyPrompts.hint(for: reason) { u += " \(h)" }
             if let v = (r["visibility"] as? [String: Any]).flatMap(MartyPrompts.visibilityLine) { u += " \(v)" }
@@ -584,7 +619,7 @@ extension MartyLoop {
         let lastReason = attempts.last?["reason"] as? String
         guard modelled || (lastReason != nil && lastReason != "adapter") else { result["ok"] = false; return result }
         let marty: Set<String> = ["json", "followup.textOnly", "followup.kind", "adapter"]
-        let engineSawAChange = attempts.contains { !marty.contains($0["reason"] as? String ?? "") }
+        let engineSawAChange = engineChecked || attempts.contains { !marty.contains($0["reason"] as? String ?? "") }
         let shownReason = engineSawAChange ? (attempts.last { !marty.contains($0["reason"] as? String ?? "") }?["reason"] as? String ?? lastReason) : lastReason
         let given = modelled ? Self.givenFigures(acceptedDoc ?? base) : []
         let changeObject = acceptedChange.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) }
@@ -866,6 +901,64 @@ extension MartyLoop {
         return false
     }
 
+    /// The base document's steps with `step` appended (no `replace`), or put in place of step `replace` (1-based);
+    /// nil when `replace` is not the number of an existing step.
+    static func stepsWith(_ step: [String: Any], replace: Any?, base docText: String) -> [Any]? {
+        var steps = ((try? JSONSerialization.jsonObject(with: Data(docText.utf8))) as? [String: Any])?["steps"] as? [Any] ?? []
+        guard let replace, !(replace is NSNull) else { steps.append(step); return steps }
+        // A JSON true is an NSNumber that would cast to 1: only a real integer names a step.
+        guard let num = replace as? NSNumber, CFGetTypeID(num) != CFBooleanGetTypeID(), num.doubleValue == num.doubleValue.rounded()
+        else { return nil }
+        let n = num.intValue
+        guard n >= 1, n <= steps.count else { return nil }
+        steps[n - 1] = step
+        return steps
+    }
+
+    /// The authored pose, show and hide of each step (or explainer beat view), for the change summary.
+    static func stepViews(_ steps: Any?, beats: Bool = false) -> Data {
+        let list = (steps as? [[String: Any]] ?? []).map { s -> [String: Any] in
+            let v = beats ? (s["view"] as? [String: Any] ?? [:]) : s
+            return ["pose": v["pose"] ?? NSNull(), "show": v["show"] ?? NSNull(), "hide": v["hide"] ?? NSNull()]
+        }.filter { $0.values.contains { !($0 is NSNull) } }
+        return MartyJSON.data(list)
+    }
+
+    /// The engine's effective step views (assembly steps or explainer beats): for each step that poses or hides
+    /// parts, its number, the parts posed, the parts hidden and the pose read-back. A pose that moves nothing is not
+    /// in it; an added step that poses nothing changes nothing.
+    static func effectiveViews(_ report: [String: Any]) -> Data {
+        let list = (report["stepViews"] as? [[String: Any]] ?? []).compactMap { v -> [String: Any]? in
+            let posed = (v["posed"] as? [String] ?? []).sorted(), hidden = (v["hidden"] as? [String] ?? []).sorted()
+            guard !posed.isEmpty || !hidden.isEmpty else { return nil }
+            return ["step": v["step"] ?? NSNull(), "posed": posed, "hidden": hidden, "poseReadBack": v["poseReadBack"] ?? []]
+        }
+        return MartyJSON.data(list)
+    }
+
+    /// The parts whose effective placement differs in some step between two reports (posed before or after, and the
+    /// parts the pose read-back says move with them), so removing a pose counts as a move too.
+    static func viewMovedIds(before: [String: Any], after: [String: Any]) -> Set<String> {
+        func byStep(_ r: [String: Any]) -> [Int: [String: Any]] {
+            var out: [Int: [String: Any]] = [:]
+            for v in r["stepViews"] as? [[String: Any]] ?? [] { if let n = v["step"] as? Int { out[n] = v } }
+            return out
+        }
+        func ids(_ v: [String: Any]?) -> Set<String> {
+            guard let v else { return [] }
+            let back = (v["poseReadBack"] as? [String] ?? []).compactMap { $0.components(separatedBy: ":").first }
+            return Set(v["posed"] as? [String] ?? []).union(back)
+        }
+        let a = byStep(before), b = byStep(after)
+        var out = Set<String>()
+        for n in Set(a.keys).union(b.keys) {
+            let x = ids(a[n]), y = ids(b[n])
+            let same = MartyJSON.data(a[n]?["poseReadBack"] ?? []) == MartyJSON.data(b[n]?["poseReadBack"] ?? [])
+            if !same { out.formUnion(x.union(y)) }
+        }
+        return out
+    }
+
     /// What a follow-up may change in an explainer, without its words: the solid (without label and arrow text), the
     /// board items other than text items, and the beats' model ops in order (an absent or empty ops list adds nothing;
     /// title and camera ops and ops on text items or on a "text" or "label" key are words). A change of words only
@@ -971,6 +1064,11 @@ extension MartyLoop {
         if !items.isEmpty { summary["board items"] = items }
         let opsA = modelOps(base), opsB = modelOps(new)
         if MartyJSON.data(opsA) != MartyJSON.data(opsB) { summary["beat ops"] = ["before": opsA, "after": opsB] }
+        let viewsA = stepViews(base["beats"], beats: true), viewsB = stepViews(new["beats"], beats: true)
+        if viewsA != viewsB {
+            summary["beat views (pose, show, hide)"] = ["before": (try? JSONSerialization.jsonObject(with: viewsA)) ?? [],
+                                                        "after": (try? JSONSerialization.jsonObject(with: viewsB)) ?? []]
+        }
         return MartyJSON.string(summary)
     }
 
@@ -1003,7 +1101,7 @@ extension MartyLoop {
 
     /// The force arrows that an accepted explainer change may have moved: the solid parts it added or changed, every
     /// arrow when other model keys of the solid changed, and the arrows whose definition changed.
-    static func movedForceArrows(explainerFrom base: [String: Any], to new: [String: Any]) -> [String] {
+    static func movedForceArrows(explainerFrom base: [String: Any], to new: [String: Any], viewMoved: Set<String> = []) -> [String] {
         let a = base["solid"] as? [String: Any] ?? [:], b = new["solid"] as? [String: Any] ?? [:]
         func byId(_ list: Any?) -> [String: Data] {
             var out: [String: Data] = [:]
@@ -1012,6 +1110,7 @@ extension MartyLoop {
         }
         let pa = byId(a["parts"]), pb = byId(b["parts"])
         let movedParts = Set(pb.keys.filter { pa[$0] != pb[$0] }).union(pa.keys.filter { pb[$0] == nil })
+            .union(viewMoved)
         let aa = byId((a["annotations"] as? [String: Any])?["arrows"]), ab = byId((b["annotations"] as? [String: Any])?["arrows"])
         let words: Set<String> = ["parts", "annotations", "title", "steps"]
         let all = Set(a.keys).union(b.keys).subtracting(words).contains { MartyJSON.data(a[$0] ?? NSNull()) != MartyJSON.data(b[$0] ?? NSNull()) }

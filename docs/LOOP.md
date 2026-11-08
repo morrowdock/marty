@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-08. Prompts `marty-prompts/12`. Engine pin as in
+Status: early preview, 2026-11-08. Prompts `marty-prompts/13`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -93,15 +93,14 @@ the MCP server uses), so a run needs no MCP client.
    exact (a hover balances the upward parts of the thrusts against the weight,
    and the side forces and turning moments; fuel burns with the oxygen in the
    compressed air; thrust is the reaction to the gas accelerated out of the
-   nozzle); and the part that really moves is named. The engine has no per-step
-   pose at the pin, so a pose holds for every step. Small jet engines use the
-   `microTurbojet` component (11 parts; five and a mannequin fit the 96-part
-   limit; `cutaway` opens one), named as a schematic example. The guide also
-   names the engine limits of the pin: `highlight` counts every part of a
-   component toward 16 ids (so it highlights `<id>.casing`), a spin arrow is
-   drawn at the whole model's size, explode on a component needs `explode` on
-   its inner parts, and a pose and what is shown hold for every step. The prompts hold no
-   subject-specific facts. Each label or arrow is
+   nozzle); and the part that really moves is named. A step may `pose` parts
+   (instance `with`, part `rot`; not parts of a gear solve) and `hide`/`show`
+   parts for that step only, and an instance id counts as one entry in step
+   lists; the guide teaches a steering step with the arms posed. Small jet
+   engines use the `microTurbojet` component (11 parts; five and a mannequin fit
+   the 96-part limit; `cutaway` opens one), named as a schematic example. Labels
+   hold up to 60 characters on 2 lines. The prompts hold no subject-specific
+   facts. Each label or arrow is
    defined once, and every defined id is in some step's `annotate` list (strict
    refuses an unlisted one, `annotation.unused`). In an explainer the table is
    added by a beat command in the first beat that needs it, and a later beat may
@@ -198,8 +197,21 @@ the MCP server uses), so a run needs no MCP client.
    no arithmetic. When no patch even reached the engine (only `json` or
    `followup.textOnly` problems), the prompt says "no change could be checked"
    instead of "the engine refused". An empty follow-up (the out-of-scope bench questions have
-   none) means no follow-up turn. A what-if may move a part (a mannequin arm
-   angle, a part's `rot`). A patch cannot change annotations: an arrow end on a
+   none) means no follow-up turn. A steering or pose what-if does not patch the
+   base: the model replies `{"step": {...}}` (one new step with `pose`, and
+   `show` for parts seen only there; `"replace": <n>` edits step n instead) and
+   Marty sends it as a steps patch, so the base pose stays for every other step.
+   A title or steps patch counts as a model change only when the engine's
+   effective step views change (the report's `stepViews`: the parts each step
+   really poses or hides, and the pose read-back), so a pose that restates the
+   base moves nothing and is words only; `"replace"` must name an existing step.
+   The accepted step is in `followUp.step`, and the force arrows on parts whose
+   effective placement changed in some step (posed before or after, so removing
+   a pose counts) are listed in `forceArrowsMoved`. In an explainer, the model
+   adds or edits one beat whose `view` has `pose` and `show`; the same effective
+   views (Marty copies `stepViews` from the explainer's solid view) decide
+   whether it changed the model, and the authored beat views are part of the
+   accepted change. A patch cannot change annotations: an arrow end on a
    part moves and turns with that part (and with the parts it hangs on), and an
    end at a world point stays where it is. The engine checks a gravity arrow
    again in the changed model. Marty lists the other force arrows that the

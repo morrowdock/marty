@@ -5,7 +5,7 @@ import Foundation
 /// author step sees a short format guide plus `explain` entries for the parts the plan chose. The receipt records the
 /// size and SHA-256 of every prompt, so a change in context is always measured.
 public enum MartyPrompts {
-    public static let version = "marty-prompts/12"
+    public static let version = "marty-prompts/13"
 
     static let role = """
         You are Marty, a teacher who explains how things work with checked 3D models. A deterministic engine \
@@ -103,8 +103,8 @@ public enum MartyPrompts {
           "intensity": 1} (a hot core glows).
         - "annotations" (top level): {"labels": [{"id", "at", "text"}], "arrows": [{"id", "meaning", ...}],
           "dimensions": [{"id", "a", "b"}]}. An anchor is "<part>", {"part": "<part>", "offset": [x,y,z]},
-          {"part": "<part>", "point": "centre"} or {"world": [x,y,z]}. Ids must differ from part ids. Text: at most 40
-          characters filled, numbers only as {fact} placeholders. Define each one once here; each step's "annotate":
+          {"part": "<part>", "point": "centre"} or {"world": [x,y,z]}. Ids must differ from part ids. Text: at most 60
+          characters filled (2 lines), numbers only as {fact} placeholders. Define each one once here; each step's "annotate":
           [ids] shows only those (at most 12), and every defined id must be in some step's list (strict refuses an
           unlisted one: annotation.unused).
           Weight: {"id": "aW", "meaning": "force", "cause": "gravity", "from": "<part>", "to": {"part": "<part>",
@@ -122,20 +122,19 @@ public enum MartyPrompts {
           +Z from intake to nozzle, so the jet leaves along +Z and thrust points along -Z; "cutaway": 1 opens a window
           in one instance for the inside); name it as a schematic example. A turbocharger compressor alone is
           {"use": "centrifugalCompressor", "with": {"diameter": 80}} (axis +Z, air in at -Z, out sideways).
-        - Engine limits today: at most 96 parts after expansion (a microTurbojet is 11); "highlight" counts every part
-          of a component toward its 16 ids, so highlight "<id>.casing", not the whole instance; a spin arrow is drawn
-          at the whole model's size; explode on a component needs "explode" on its inner parts ("set"); a pose and
-          what is shown hold for every step.
+        - Per step: "pose": {"<instance>": {"with": {...}}, "<part>": {"rot": [ax, ay, az, deg]}} moves parts for that
+          step only (not parts of a gear solve); "hide": [ids] and "show": [ids] (a part some step shows appears only
+          in those steps, for example exhaust plumes). An instance id counts as one entry in focus, highlight, ghost,
+          hide, show and section.parts. At most 96 parts after expansion (a microTurbojet is 11).
         - A wing or body that has no library part is a few boxes and shafts named "(schematic)".
         - Every part is attached where it really is (with "parent"): no loose parts beside the model. A back unit
-          touches the torso: "parent": "pilot.back" (the middle of the back surface; +Y points backward), "at": [0,
-          <its radius or half depth>, 0]. Show an inside with a "section" cut of that one part in place (ghost only the
+          hangs on "pilot.back" (on the torso surface) with "at": [0, <its half depth>, 0]. Show an inside with a "section" cut of that one part in place (ghost only the
           parts in front of it, never the part itself), with "focus": [its ids] on that step so the cutaway fills the frame.
         - Give every step an "annotate" list: at most 5 texts in one step (labels, dimensions and arrows with "text"; an
           arrow without "text" does not count). Draw one thrust arrow for each thrust unit shown (5 units, 5 arrows),
           both ends on that unit so it turns with it; give them no text and name them with one label.
-          Start a force arrow outside the body it acts on (beside or below it), never inside it. Steering: pose the
-          arms unequally in the mannequin's "with" so they visibly tilt, and put "schematic" in the arrow text.
+          Start a force arrow outside the body it acts on (beside or below it), never inside it. Steering: one step
+          with the arms posed ("pose": {"pilot": {"with": {...}}}), and "schematic" in the arrow text.
         - Facts beyond the engine: a figure, date, product name or version, or load share only from the fact table, in
           an unchecked label or a noted table row whose "unchecked" text or note starts with its row id ("F3 <publisher>
           <year>"), in the row's wording (VERIFIED plainly, CLAIM "claimed", PLAUSIBLE "likely" or "example", UNKNOWN
@@ -161,11 +160,11 @@ public enum MartyPrompts {
         - Keep the table small (at most 4 rows; 12 characters a cell; numbers with absolute value below 1000000) and add
           it in the first beat that needs it: {"op": "add", "item": {"id": "t", "k": "table", "at": [6, 4], "header":
           true, "cells": [["Item", "Value"], ["<name>", <number>]]}} in that beat's "ops"; a later beat may remove it
-          ({"op": "remove", "id": "t"}): the legend keeps what was shown. A beat whose board has only text gives the 3D
-          model the whole frame.
+          ({"op": "remove", "id": "t"}): the legend keeps what was shown.
         - beats (1 to 16) replace steps: {"say": "<= 200 chars", "highlight": [ids, also "t.r1" for row 1; the header
           is row 0], "view":
-          {"camera", "spin", "explode", "orbit", "section", "ghost", "focus", "annotate"}, "ops": [table commands],
+          {"camera", "spin", "explode", "orbit", "section", "ghost", "focus", "annotate", "pose", "hide", "show"},
+          "ops": [table commands],
           "check": [claims], "unchecked": "<why>"}.
         - A table may type numbers only with a note on it ({"basis": "<source>"} shows as Given, {"unchecked": "<why>"}
           as Not checked); a cell may
@@ -325,12 +324,15 @@ public enum MartyPrompts {
         other "with" values), \
         "constraints" and "steps" (replace the whole list), "title". In a v2 document every number in a step's say must be \
         a {fact} placeholder, and every claim must still hold for the changed model: change or remove a claim that the \
-        what-if makes false. A steering or what-if question may move a part (a mannequin arm angle in its "with", or a \
-        part's "rot"). A patch cannot change annotations: an arrow end on a part moves and turns with that part (and with \
-        the parts it hangs on), and an end at a world point stays where it is. The engine checks a gravity arrow again.
+        what-if makes false. A steering or pose what-if (move the arms, tilt a unit) does NOT patch the base: add one \
+        step that poses parts for that step only, {"step": {"say": "...", "pose": {"<instance>": {"with": {...}}, \
+        "<part>": {"rot": [ax, ay, az, degrees]}}, "show": [ids shown only in this step], "annotate": [ids]}} (add \
+        "replace": <step number> to edit that step instead). A pose may not move a part of a gear solve. An arrow end on \
+        a part moves and turns with that part (and the parts it hangs on); an end at a world point stays. The engine \
+        checks a gravity arrow again.
 
         Reply with ONE JSON object only, no prose and no code fences:
-        {"patch": { ... }} or, when no model change is needed, {"patch": null}.
+        {"patch": { ... }}, {"step": { ... }} or, when no model change is needed, {"patch": null}.
         """
     }
 
@@ -340,9 +342,10 @@ public enum MartyPrompts {
         \(role)
 
         Follow-up: the learner asks a what-if question about the checked explainer. Change the explainer so the engine \
-        checks the new case: send the WHOLE changed explainer document. A steering or what-if question may move a part \
-        (a mannequin arm angle in its "with", or a part's "rot"). An arrow end on a part moves with that part; an end \
-        at a world point stays, so give a force arrow that must turn with a part both ends on that part. A force arrow \
+        checks the new case: send the WHOLE changed explainer document. A steering or pose what-if keeps the solid as it \
+        is and adds (or edits) ONE beat whose "view" has "pose": {"<instance>": {"with": {...}}, "<part>": {"rot": \
+        [...]}} and "show": [ids shown only in that beat]. An arrow end on a part moves with that part; an end at a \
+        world point stays. A force arrow \
         (not gravity) whose direction you set gets "unchecked": "schematic direction". Every number in a say is still a {fact} placeholder, and every claim must \
         hold for the changed model. A change of words only is refused.
 
