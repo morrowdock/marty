@@ -788,6 +788,51 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(model.prompts[3].user.contains("must come from the fact table"), model.prompts[3].user)
     }
 
+    /// A steering what-if adds one posed step (arms moved for that step only) instead of patching the base; the engine
+    /// accepts it, the moved thrust arrow is listed, and a steps patch with no pose is still words only. In an
+    /// explainer, a beat whose view poses parts is a model change.
+    func testPoseStepFollowUp() throws {
+        let doc: [String: Any] = ["v": 2, "kind": "assembly", "title": "A worn unit", "units": "mm", "parts": [
+            ["id": "pilot", "use": "mannequin", "with": ["leftShoulder": 30, "rightShoulder": 30]],
+            ["id": "jet", "name": "Arm unit (schematic)", "parent": "pilot.rightHand", "at": [-85, -62, 0],
+             "shape": ["shaft": ["radius": 50, "length": 300, "z0": -80]]]],
+            "annotations": ["arrows": [["id": "aJet", "meaning": "force", "from": ["part": "jet", "offset": [0, 0, -120]],
+                                        "to": ["part": "jet", "offset": [0, 0, -400]], "text": "Thrust (schematic)"]]],
+            "steps": [["say": "A schematic pilot wears one unit.", "annotate": ["aJet"]]]]
+        let plan = #"{"components": ["mannequin"], "primitives": ["shaft"]}"#
+        let good = #"{"document": "# + MartyJSON.string(doc) + "}"
+        let step = #"{"step": {"say": "The arm moves out to steer (schematic).", "pose": {"pilot": {"with": {"rightShoulder": 70}}}, "annotate": ["aJet"]}}"#
+        var options = MartyLoop.Options()
+        options.followUp = "What if the pilot moves the right arm out?"
+        let model = ScriptedAdapter(replies: [plan, good, step, "The arm moves out; the thrust direction shown is schematic."])
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: options).run(question: "q")
+        XCTAssertEqual(r["accepted"] as? Bool, true, "\(r["attempts"] ?? "")")
+        let f = try XCTUnwrap(r["followUp"] as? [String: Any])
+        XCTAssertEqual(f["changed"] as? Bool, true, "\(f["attempts"] ?? "")")
+        XCTAssertNotNil(f["step"])
+        XCTAssertEqual(f["forceArrowsMoved"] as? [String], ["aJet"])
+        XCTAssertTrue(model.prompts[2].system.contains(#"{"step": {"say""#), "the follow-up prompt teaches the posed step")
+        XCTAssertEqual(MartyLoop.stepsWith(["say": "x"], replace: 1, base: MartyJSON.string(doc)).count, 1)
+        XCTAssertEqual(MartyLoop.stepsWith(["say": "x"], replace: nil, base: MartyJSON.string(doc)).count, 2)
+        // A new step with no pose, show or hide is words only.
+        let plainStep = #"{"step": {"say": "The arm moves out.", "annotate": ["aJet"]}}"#
+        let words = ScriptedAdapter(replies: [plan, good, plainStep, #"{"patch": null}"#, "No change."])
+        let out2 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out2) }
+        let r2 = try MartyLoop(model: words, out: out2, options: options).run(question: "q")
+        XCTAssertEqual(((r2["followUp"] as? [String: Any])?["attempts"] as? [[String: Any]])?.first?["reason"] as? String, "followup.textOnly")
+        // Explainer: a beat view pose is a model change.
+        let ex = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(MartyExamples.explainerExample.utf8)) as? [String: Any])
+        var posed = ex
+        var beats = try XCTUnwrap(posed["beats"] as? [[String: Any]])
+        beats.append(["say": "The shaft is turned.", "view": ["pose": ["shaft": ["with": ["radius": 6, "length": 80]]], "annotate": [Any]()]])
+        posed["beats"] = beats
+        XCTAssertNotEqual(MartyLoop.modelContent(posed), MartyLoop.modelContent(ex))
+        XCTAssertTrue(MartyLoop.changeSummary(from: ex, to: posed).contains("beat views"))
+    }
+
     func testReplyJSON() {
         XCTAssertEqual(ReplyJSON.object(#"{"a":1}"#)?["a"] as? Int, 1)
         XCTAssertEqual(ReplyJSON.object("Here:\n```json\n{\"a\": 2}\n```\nDone.")?["a"] as? Int, 2)

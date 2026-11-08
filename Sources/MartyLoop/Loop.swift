@@ -403,18 +403,28 @@ public final class MartyLoop {
         var attempts: [[String: Any]] = []
         var noChange = false
         var acceptedPatch: Any? = nil
+        var acceptedStep: [String: Any]? = nil
         for attempt in 0...options.repairs {
             let (text, i) = ask("followup", attempt: attempt, system: system, user: user)
             guard let text else { note(i, ["ok": false, "reason": "adapter"]); attempts.append(["ok": false, "reason": "adapter"]); break }
-            guard let reply = ReplyJSON.object(text), reply.keys.contains("patch") else {
+            guard var reply = ReplyJSON.object(text), reply.keys.contains("patch") || reply["step"] is [String: Any] else {
                 note(i, ["ok": false, "reason": "json"]); attempts.append(["ok": false, "reason": "json"])
-                user += "\n\nYour reply was not one JSON object with a \"patch\" key. Reply again."
+                user += "\n\nYour reply was not one JSON object with a \"patch\" or a \"step\" key. Reply again."
                 continue
+            }
+            // A pose what-if: one new step (or a replaced one, "replace": <step number>) that poses, shows or hides parts
+            // for that step only, sent to the engine as a steps patch; the base model stays as it is.
+            var stepReply: [String: Any]? = nil
+            if let step = reply["step"] as? [String: Any] {
+                stepReply = step
+                reply["patch"] = ["steps": Self.stepsWith(step, replace: reply["replace"] as? Int, base: docText)]
             }
             guard let patch = reply["patch"], !(patch is NSNull) else { noChange = true; note(i, ["ok": true, "patch": NSNull()]); break }
             // A what-if must change the model, not only its words: a patch of only title and steps would narrate a
-            // change the engine never solved. Refuse it like an engine refusal, so the model can repair or reply null.
-            if let keys = (patch as? [String: Any]).map({ Set($0.keys) }), !keys.isEmpty, keys.isSubset(of: ["title", "steps"]) {
+            // change the engine never solved (unless a step now poses, shows or hides parts). Refuse it like an engine
+            // refusal, so the model can repair or reply null.
+            if let p = patch as? [String: Any], !p.isEmpty, Set(p.keys).isSubset(of: ["title", "steps"]),
+               !Self.stepViewsChanged(base: docText, steps: p["steps"]) {
                 let o: [String: Any] = ["ok": false, "reason": "followup.textOnly"]
                 note(i, o); attempts.append(o)
                 user = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp, table: factBlock)
@@ -437,7 +447,7 @@ public final class MartyLoop {
                 if let reason = FactCheck.reason(unsourced) { r = ["ok": false, "reason": reason, "unsourced": unsourced.map(\.line)] }
             }
             note(i, Self.outcome(r)); attempts.append(Self.outcome(r))
-            if (r["ok"] as? Bool) == true { after = r; acceptedPatch = merged; break }
+            if (r["ok"] as? Bool) == true { after = r; acceptedPatch = merged; acceptedStep = stepReply; break }
             let reason = r["reason"] as? String ?? "unknown"
             // Facts of the changed model: the same patch with steps cleared and a plain title, plain profile.
             var facts: String? = nil
@@ -480,10 +490,11 @@ public final class MartyLoop {
         if let p = acceptedPatch as? [String: Any],
            let doc = (try? JSONSerialization.jsonObject(with: Data(docText.utf8))) as? [String: Any] {
             moved = Self.movedForceArrows(annotations: doc["annotations"], parts: doc["parts"] as? [[String: Any]] ?? [],
-                                          moved: Set((p["parts"] as? [String: Any] ?? [:]).keys),
+                                          moved: Set((p["parts"] as? [String: Any] ?? [:]).keys).union(Self.posedIds(p["steps"], base: doc["steps"])),
                                           all: !Set(p.keys).isDisjoint(with: ["params", "constraints", "joints"]))
             result["forceArrowsMoved"] = moved
         }
+        if let acceptedStep { result["step"] = acceptedStep }
         // Given figures go to a modelled answer only; the refused answer keeps to the report before.
         let given = modelled ? Self.givenFigures(try? JSONSerialization.jsonObject(with: Data(docText.utf8))) : []
         let evidence = given + (modelled ? facts.lines : []) + Self.factTexts(report) + Self.factTexts(after) + Self.numberLeaves(report["ratios"])
@@ -866,12 +877,50 @@ extension MartyLoop {
         return false
     }
 
+    /// The base document's steps with `step` appended, or put in place of step `replace` (1-based).
+    static func stepsWith(_ step: [String: Any], replace: Int?, base docText: String) -> [Any] {
+        var steps = ((try? JSONSerialization.jsonObject(with: Data(docText.utf8))) as? [String: Any])?["steps"] as? [Any] ?? []
+        if let n = replace, n >= 1, n <= steps.count { steps[n - 1] = step } else { steps.append(step) }
+        return steps
+    }
+
+    /// The pose, show and hide of each step (or explainer beat view), in order, for comparing what the steps show.
+    static func stepViews(_ steps: Any?, beats: Bool = false) -> Data {
+        let list = (steps as? [[String: Any]] ?? []).map { s -> [String: Any] in
+            let v = beats ? (s["view"] as? [String: Any] ?? [:]) : s
+            return ["pose": v["pose"] ?? NSNull(), "show": v["show"] ?? NSNull(), "hide": v["hide"] ?? NSNull()]
+        }.filter { $0.values.contains { !($0 is NSNull) } }
+        return MartyJSON.data(list)
+    }
+
+    /// Whether a steps patch poses, shows or hides parts differently from the base steps.
+    static func stepViewsChanged(base docText: String, steps: Any?) -> Bool {
+        guard let steps else { return false }
+        let base = ((try? JSONSerialization.jsonObject(with: Data(docText.utf8))) as? [String: Any])?["steps"]
+        return stepViews(steps) != stepViews(base)
+    }
+
+    /// The ids that the new steps (or beat views) pose and that the base did not pose the same way.
+    static func posedIds(_ steps: Any?, base: Any?) -> Set<String> {
+        func pose(_ s: [String: Any]) -> [String: Any] {
+            (s["pose"] as? [String: Any]) ?? ((s["view"] as? [String: Any])?["pose"] as? [String: Any]) ?? [:]
+        }
+        let old = Set((base as? [[String: Any]] ?? []).map { MartyJSON.string(pose($0)) })
+        var out = Set<String>()
+        for s in steps as? [[String: Any]] ?? [] {
+            let v = pose(s)
+            if !v.isEmpty, !old.contains(MartyJSON.string(v)) { out.formUnion(v.keys) }
+        }
+        return out
+    }
+
     /// What a follow-up may change in an explainer, without its words: the solid (without label and arrow text), the
     /// board items other than text items, and the beats' model ops in order (an absent or empty ops list adds nothing;
     /// title and camera ops and ops on text items or on a "text" or "label" key are words). A change of words only
     /// (captions, titles, notes, text items, an added caption-only beat) gives the same bytes.
     static func modelContent(_ d: [String: Any]) -> Data {
-        MartyJSON.data(["solid": modelSolid(d), "board": modelBoardOther(d), "items": modelBoardItems(d), "ops": modelOps(d)])
+        MartyJSON.data(["solid": modelSolid(d), "board": modelBoardOther(d), "items": modelBoardItems(d), "ops": modelOps(d),
+                        "views": (try? JSONSerialization.jsonObject(with: stepViews(d["beats"], beats: true))) ?? NSNull()])
     }
 
     /// The board's keys other than its items and title (template, params, hide, over and the rest are model content).
@@ -971,6 +1020,11 @@ extension MartyLoop {
         if !items.isEmpty { summary["board items"] = items }
         let opsA = modelOps(base), opsB = modelOps(new)
         if MartyJSON.data(opsA) != MartyJSON.data(opsB) { summary["beat ops"] = ["before": opsA, "after": opsB] }
+        let viewsA = stepViews(base["beats"], beats: true), viewsB = stepViews(new["beats"], beats: true)
+        if viewsA != viewsB {
+            summary["beat views (pose, show, hide)"] = ["before": (try? JSONSerialization.jsonObject(with: viewsA)) ?? [],
+                                                        "after": (try? JSONSerialization.jsonObject(with: viewsB)) ?? []]
+        }
         return MartyJSON.string(summary)
     }
 
@@ -1012,6 +1066,7 @@ extension MartyLoop {
         }
         let pa = byId(a["parts"]), pb = byId(b["parts"])
         let movedParts = Set(pb.keys.filter { pa[$0] != pb[$0] }).union(pa.keys.filter { pb[$0] == nil })
+            .union(posedIds(new["beats"], base: base["beats"]))
         let aa = byId((a["annotations"] as? [String: Any])?["arrows"]), ab = byId((b["annotations"] as? [String: Any])?["arrows"])
         let words: Set<String> = ["parts", "annotations", "title", "steps"]
         let all = Set(a.keys).union(b.keys).subtracting(words).contains { MartyJSON.data(a[$0] ?? NSNull()) != MartyJSON.data(b[$0] ?? NSNull()) }
