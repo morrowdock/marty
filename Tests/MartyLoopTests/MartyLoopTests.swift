@@ -441,6 +441,17 @@ final class MartyLoopTests: XCTestCase {
         let r4 = try MartyLoop(model: short, out: out4, options: once).run(question: "q")
         XCTAssertEqual((r4["lint"] as? [String])?.count, 1, "the later, better document stands")
         XCTAssertEqual(r4["lintAttempt"] as? Int, 1)
+        // A tie goes to the later document, and an engine refusal between keeps the fallback; the final document is
+        // the selected one.
+        var badB = doc(labels: 5, arrows: 0, say: "The box."); badB["title"] = "Lint B"
+        let tie = ScriptedAdapter(replies: [plan, reply(bad), #"{"document": {"v": 2}}"#, reply(badB)])
+        let out5 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out5) }
+        let r5 = try MartyLoop(model: tie, out: out5, options: .init()).run(question: "q")
+        XCTAssertEqual((r5["attempts"] as? [[String: Any]])?.map { $0["reason"] as? String }.first, "marty.lint")
+        XCTAssertNotEqual((r5["attempts"] as? [[String: Any]])?[1]["reason"] as? String, "marty.lint", "the engine refused attempt 2")
+        XCTAssertEqual(r5["lintAttempt"] as? Int, 2)
+        XCTAssertEqual((r5["final"] as? [String: Any])?["title"] as? String, "Lint B")
         // A repeated id shows once.
         var dup = doc(labels: 6, arrows: 0, say: "The box.")
         dup["steps"] = [["say": "The box.", "annotate": ["l0", "l0", "l0", "l0", "l0", "l0", "l1", "l2", "l3", "l4", "l5"]]]
