@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-08. Prompts `marty-prompts/7`. Engine pin as in
+Status: early preview, 2026-11-08. Prompts `marty-prompts/8`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -50,9 +50,11 @@ the MCP server uses), so a run needs no MCP client.
    list on every step), one thrust arrow per thrust unit shown with both ends
    on that unit, force arrows that start outside the body, a steering pose with
    the arms unequal and "schematic" in the arrow text, and each given figure
-   shown with its source ("about" when the plan has it). In an explainer the
-   table is added by a beat command in beat 1 or 2 and stays (the engine's
-   legend counts only 2D items still on the board). When the plan chose the
+   shown with its source ("about" when the plan has it). Each label or arrow is
+   defined once, and every defined id is in some step's `annotate` list (strict
+   refuses an unlisted one, `annotation.unused`). In an explainer the table is
+   added by a beat command in the first beat that needs it, and a later beat may
+   remove it (the engine's legend keeps what the learner was shown). When the plan chose the
    explainer form, the author prompt also gets the explainer section and a small
    accepted explainer (a table with a noted given number, which shows as Given,
    beside the 3D model); other prompts stay smaller. It gets a short format guide, the `explain` entries of the
@@ -70,12 +72,18 @@ the MCP server uses), so a run needs no MCP client.
    refusal also gets the engine's read-back (for `expect`, from the same
    document without its `expect` entries, also those in component `set` entries,
    and without its steps and with a plain title; component definitions are v1
-   and cannot hold `expect`). Only what the engine returned is
+   and cannot hold `expect`). A visibility refusal (`annotations.visible`,
+   `step.annotate.count`, `view.annotate.count`) also gets the engine's
+   visibility detail in words: which annotation, how many show, the limit, the
+   cause and the step or beat; the attempt in the receipt keeps the detail
+   (also in follow-up repairs). Only what the engine returned is
    attached; at most 80 facts and 48 read-back lines. At most 3 repairs. A
    follow-up patch refused for a caption or a claim gets the facts of the
    changed model (the same patch with steps cleared).
 5. **Render** (with `--render`). Stills for every step, a snapshot and a
-   manifest, through the engine renderer. A render that fails (for example
+   manifest, through the engine renderer. It does not write `story.mp4`: use
+   `marty-solid render` for the story video (its writer is not library API at
+   the pin). A render that fails (for example
    with no Metal device) is recorded in the receipt; the checked lesson still
    stands.
 6. **Teach.** The checked steps are the beats. `lesson.json` holds each beat's
@@ -168,7 +176,7 @@ adapter.
 
 The receipt records `contextBytes` for the plan and author prompts, and the
 size and SHA-256 of every prompt. Tests fail when the plan prompt grows over
-9,000 bytes or the author prompt over 12,000 bytes. For comparison, the
+10,000 bytes or the author prompt over 12,000 bytes. For comparison, the
 v1 eval harness sent about 25,600 bytes of engine docs in every call.
 
 ## Run receipt (`marty.run-receipt/v1`)

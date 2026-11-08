@@ -5,7 +5,7 @@ import Foundation
 /// author step sees a short format guide plus `explain` entries for the parts the plan chose. The receipt records the
 /// size and SHA-256 of every prompt, so a change in context is always measured.
 public enum MartyPrompts {
-    public static let version = "marty-prompts/7"
+    public static let version = "marty-prompts/8"
 
     static let role = """
         You are Marty, a teacher who explains how things work with checked 3D models. A deterministic engine \
@@ -103,8 +103,9 @@ public enum MartyPrompts {
         - "annotations" (top level): {"labels": [{"id", "at", "text"}], "arrows": [{"id", "meaning", ...}],
           "dimensions": [{"id", "a", "b"}]}. An anchor is "<part>", {"part": "<part>", "offset": [x,y,z]},
           {"part": "<part>", "point": "centre"} or {"world": [x,y,z]}. Ids must differ from part ids. Text: at most 40
-          characters filled, numbers only as {fact} placeholders; at most 12 shown at once (a step's "annotate": [ids]
-          shows only those).
+          characters filled, numbers only as {fact} placeholders. Define each one once here; each step's "annotate":
+          [ids] shows only those (at most 12), and every defined id must be in some step's list (strict refuses an
+          unlisted one: annotation.unused).
           Weight: {"id": "aW", "meaning": "force", "cause": "gravity", "from": "<part>", "to": {"part": "<part>",
           "offset": [0, 0, -60]}, "text": "Weight"} (the engine checks it points down; use a part that does not turn).
           Thrust, lift, push: "meaning": "force" without "cause" (shown as not checked). Air or gas: "meaning": "flow",
@@ -140,9 +141,10 @@ public enum MartyPrompts {
          "at": [6, 7], "text": "Key figures"}]}, "solid": { ...the assembly as above, without "kind", "title" and
          "steps"... }, "beats": [...]}
         - Keep the table small (at most 4 rows; 12 characters a cell; numbers with absolute value below 1000000) and add
-          it in beat 1 or 2 (the first beat that needs it): {"op": "add", "item": {"id": "t", "k": "table", "at": [6, 4], "header":
-          true, "cells": [["Item", "Value"], ["<name>", <number>]]}} in that beat's "ops". Do not remove it later: the
-          legend counts only 2D items still on the board.
+          it in the first beat that needs it: {"op": "add", "item": {"id": "t", "k": "table", "at": [6, 4], "header":
+          true, "cells": [["Item", "Value"], ["<name>", <number>]]}} in that beat's "ops"; a later beat may remove it
+          ({"op": "remove", "id": "t"}): the legend keeps what was shown. A beat whose board has only text gives the 3D
+          model the whole frame.
         - beats (1 to 16) replace steps: {"say": "<= 200 chars", "highlight": [ids, also "t.r1" for row 1; the header
           is row 0], "view":
           {"camera", "spin", "explode", "orbit", "section", "ghost", "focus", "annotate"}, "ops": [table commands],
@@ -180,13 +182,27 @@ public enum MartyPrompts {
     }
 
     public static func repairUser(question: String, plan: String, previous: String, reason: String, part: String?, hint: String?,
-                                  facts: String? = nil, readBack: String? = nil) -> String {
+                                  facts: String? = nil, readBack: String? = nil, visibility: [String: Any]? = nil) -> String {
         var s = "Question: \(question)\n\nYour plan:\n\(plan)\n\nYour previous reply:\n\(previous)\n\n"
         s += "The engine refused it with reason `\(reason)`" + (part.map { " on part `\($0)`" } ?? "") + "."
         if let hint { s += " \(hint)" }
+        if let v = visibility.flatMap(visibilityLine) { s += " \(v)" }
         if let facts { s += "\n\nFacts the engine solved for this model (name: value):\n\(facts)" }
         if let readBack { s += "\n\nEngine read-back (where each part is and how it moves):\n\(readBack)" }
         return s + "\n\nFix the cause and reply with the corrected JSON object only (same reply format)."
+    }
+
+    /// The engine's visibility detail (annotations.visible, step.annotate.count, view.annotate.count) in words.
+    public static func visibilityLine(_ v: [String: Any]) -> String? {
+        guard let count = v["count"] as? Int, let limit = v["limit"] as? Int else { return nil }
+        let id = (v["annotation"] as? String).map { " (first over the limit: `\($0)`)" } ?? ""
+        switch v["cause"] as? String {
+        case "nosteps": return "The document has no steps, so all \(count) annotations show at once; the limit is \(limit)\(id). Add steps with \"annotate\" lists."
+        case "unannotated": return "No step has an \"annotate\" list, so every step shows all \(count) annotations; the limit is \(limit)\(id). Give every step an \"annotate\" list."
+        case "step": return "Step \(v["step"].map { "\($0)" } ?? "?")'s \"annotate\" lists \(count); the limit is \(limit)\(id). Split it over two steps."
+        case "beat": return "Beat \(v["beat"].map { "\($0)" } ?? "?")'s \"view\".\"annotate\" lists \(count); the limit is \(limit)\(id). Split it over two beats."
+        default: return "\(count) annotations would show where the limit is \(limit)\(id)."
+        }
     }
 
     /// Short facts for common refusals. Each restates an engine rule from docs/SOLID-3D.md and the parser at the pin;
@@ -226,6 +242,10 @@ public enum MartyPrompts {
             ("step.check", "A step's check is a list of 1 to 8 claims: [{\"value\": \"<fact>\", \"eq\" | \"lt\" | \"gt\": number, \"tol\": number (optional, with eq only)}] (v2 only)."),
             ("check.failed", "A claim in the step is false: the engine solved a different value. Change or remove the claim, or change the model."),
             ("check.fact", "A claim names no fact. Use a fact name the engine solved."),
+            ("annotations.visible", "Too many annotations would show at once: give every step (in an explainer, every beat's view) an \"annotate\" list of the ids it shows, at most 5 labels and pointers plus its force arrows."),
+            ("step.annotate.count", "A step's \"annotate\" list is longer than the limit: split it over two steps."),
+            ("view.annotate.count", "A beat's \"view\".\"annotate\" list is longer than the limit: split it over two beats."),
+            ("annotation.unused", "Some step uses \"annotate\", but no step lists this annotation: list it in the step that needs it, or remove it."),
             ("joint.idle", "A jointed part that nothing moves: give it a drive (input, follow or crank), a gearMesh or a fixed constraint, or remove its joint."),
             ("frame.axis.off", "The part's turn axis runs through its own origin along its joint vector and misses its own shape. The part's at, rot and parent move axis and shape together, so they cannot fix this: move the shape onto the axis (the shape entry's own at), change the joint vector only if it points the wrong way, or add \"offAxis\": true if it turns about an outside axis on purpose."),
             ("expect.axis", "The part's joint axis in the world is not the one its expect states: check its joint vector, its rot and the rot of every ancestor (a component use entry's rot too). For a repeated part every copy is checked and the repeat turns each copy: expect only what the repeat axis keeps."),
