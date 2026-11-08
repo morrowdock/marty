@@ -244,6 +244,7 @@ public enum MartyPrompts {
         Reply with ONE JSON object only, no prose and no code fences:
         {"patch": { ... }} or, when no model change is needed, {"patch": null}.
         """
+    }
 
     /// For an explainer: the engine has no patch format, so the model sends the whole changed explainer.
     public static func followUpExplainerSystem() -> String {
@@ -259,7 +260,6 @@ public enum MartyPrompts {
         Reply with ONE JSON object only, no prose and no code fences:
         {"document": { ...the whole changed explainer... }} or, when no model change is needed, {"document": null}.
         """
-    }
     }
 
     public static func followUpUser(question: String, document: String, report: String, followUp: String) -> String {

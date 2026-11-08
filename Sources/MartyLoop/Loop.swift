@@ -412,14 +412,17 @@ extension MartyLoop {
             if (r["ok"] as? Bool) == true { after = r; break }
             let reason = r["reason"] as? String ?? "unknown"
             let (facts, readBack) = repairContext(reason: reason, report: r, document: changed, components: components)
-            user = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp)
-                + "\n\nYour previous reply:\n\(text)\n\nThe engine refused it with reason `\(reason)`"
-                + ((r["part"] as? String).map { " on part `\($0)`" } ?? "") + "."
-                + (reason == "followup.textOnly" ? " Only the words changed: change the model (its solid or board)." : "")
-                + (MartyPrompts.hint(for: reason).map { " \($0)" } ?? "")
-                + (facts.map { "\n\nFacts the engine solved (name: value):\n\($0)" } ?? "")
-                + (readBack.map { "\n\nEngine read-back:\n\($0)" } ?? "")
-                + "\n\nReply with a corrected JSON object only."
+            // Built in parts: one long concatenation is too slow to type-check.
+            var u = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp)
+            u += "\n\nYour previous reply:\n\(text)\n\nThe engine refused it with reason `\(reason)`"
+            if let part = r["part"] as? String { u += " on part `\(part)`" }
+            u += "."
+            if reason == "followup.textOnly" { u += " Only the words changed: change the model (its solid or board)." }
+            if let h = MartyPrompts.hint(for: reason) { u += " \(h)" }
+            if let facts { u += "\n\nFacts the engine solved (name: value):\n\(facts)" }
+            if let readBack { u += "\n\nEngine read-back:\n\(readBack)" }
+            u += "\n\nReply with a corrected JSON object only."
+            user = u
         }
         result["attempts"] = attempts
         result["changed"] = after != nil
