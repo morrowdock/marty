@@ -472,6 +472,14 @@ final class MartyLoopTests: XCTestCase {
         let tableLint = MartyLoop.documentLint(table)
         XCTAssertEqual(tableLint.count, 2, "\(tableLint)")
         XCTAssertTrue(tableLint.contains { $0.contains("merges two figures") })
+        // givenFigures for an unchecked table: its tier, the beat suffix of a later set, and the 12-line cap.
+        let rows = (0..<14).map { ["R\($0)", $0] as [Any] }
+        let un: [String: Any] = ["notes": ["t": ["unchecked": "reported"]], "board": ["items": [["id": "t", "k": "table", "cells": [["A", 1]]]]],
+                                 "beats": [["ops": [["op": "set", "id": "t", "key": "cells", "value": rows]]]]]
+        let figs = MartyLoop.givenFigures(un)
+        XCTAssertEqual(figs.count, 12)
+        XCTAssertEqual(figs[0], "A 1 — reported (not checked)")
+        XCTAssertEqual(figs[1], "R0 0 — reported (not checked) (from beat 1)")
         func given(_ text: String, _ source: String) -> [String: Any] {
             var g = doc(labels: 1, arrows: 0, say: "The box.")
             g["annotations"] = ["labels": [["id": "l0", "at": ["world": [0, 0, 30]], "text": text, "unchecked": source]]]
