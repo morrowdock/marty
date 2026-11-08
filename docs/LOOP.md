@@ -87,13 +87,20 @@ the MCP server uses), so a run needs no MCP client.
    cannot show the what-if, gives no number beyond the report before and does
    no arithmetic. When no patch even reached the engine (only `json` or
    `followup.textOnly` problems), the prompt says "no change could be checked"
-   instead of "the engine refused". Prompt set `marty-prompts/2`. An empty follow-up (the out-of-scope bench questions have
+   instead of "the engine refused". An empty follow-up (the out-of-scope bench questions have
    none) means no follow-up turn. A what-if may move a part (a mannequin arm
-   angle, a part's `rot`); a force arrow whose new direction the model sets is
-   marked `unchecked: "schematic direction"`. An explainer has no engine patch
-   format, so its follow-up sends the whole changed explainer, which the engine
-   checks in strict mode (at most 3 repairs); a change of words only (the same
-   board and solid) is refused as `followup.textOnly`.
+   angle, a part's `rot`). A patch cannot change annotations: force arrows ride
+   their parts and turn with them, and the answer says that such a force
+   direction is schematic. An explainer has no engine patch format, so its
+   follow-up sends the whole changed explainer (`{"document": …}`, or
+   `{"document": null}` for no change; any other value is repaired), which must
+   stay an explainer (`followup.kind`) and is checked in strict mode (at most 3
+   repairs). A change of words only is refused as `followup.textOnly`: the model
+   content compared is the solid, the board items other than text items, and
+   each beat's `ops`. The answer prompt gets the accepted change (the solid
+   parts added, changed or removed, and whether the board or ops changed). In
+   an explainer, a force arrow whose new direction the model sets may be marked
+   `unchecked: "schematic direction"`.
 
 Model text is only parsed as JSON and given to the engine. It is never run.
 

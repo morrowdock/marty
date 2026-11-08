@@ -239,7 +239,7 @@ public enum MartyPrompts {
         "constraints" and "steps" (replace the whole list), "title". In a v2 document every number in a step's say must be \
         a {fact} placeholder, and every claim must still hold for the changed model: change or remove a claim that the \
         what-if makes false. A steering or what-if question may move a part (a mannequin arm angle in its "with", or a \
-        part's "rot"); a force arrow whose new direction you set gets "unchecked": "schematic direction".
+        part's "rot"). A patch cannot change annotations; force arrows ride their parts and turn with them.
 
         Reply with ONE JSON object only, no prose and no code fences:
         {"patch": { ... }} or, when no model change is needed, {"patch": null}.
@@ -273,7 +273,8 @@ public enum MartyPrompts {
         Answer the learner's follow-up in 2 to 4 short sentences, in plain words. Use only numbers from the engine \
         reports below (the facts, as written there, and the solved ratios) and sizes set in the model or in the change. \
         Prefer a fact over your own arithmetic; if you must compute, use only simple, exact arithmetic on those numbers. \
-        Reply with the answer text only.
+        If the change moved a part that carries a force arrow, say that the force direction shown is schematic. Reply \
+        with the answer text only.
         """
     }
 

@@ -385,12 +385,13 @@ extension MartyLoop {
     func explainerFollowUp(question: String, followUp: String, docText: String, before: String, report: [String: Any],
                            components: [Any]) throws -> [String: Any] {
         let base = (try? JSONSerialization.jsonObject(with: Data(docText.utf8))) as? [String: Any] ?? [:]
-        func views(_ d: [String: Any]) -> Data { MartyJSON.data(["board": d["board"] ?? NSNull(), "solid": d["solid"] ?? NSNull()]) }
+        let views = Self.modelContent
         let system = MartyPrompts.followUpExplainerSystem()
         var user = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp)
         var result: [String: Any] = ["question": followUp]
         var attempts: [[String: Any]] = []
         var after: [String: Any]? = nil
+        var acceptedChange: String? = nil
         var noChange = false
         for attempt in 0...options.repairs {
             let (text, i) = ask("followup", attempt: attempt, system: system, user: user)
@@ -400,16 +401,24 @@ extension MartyLoop {
                 user += "\n\nYour reply was not one JSON object with a \"document\" key. Reply again."
                 continue
             }
-            guard let changed = reply["document"] as? [String: Any] else { noChange = true; note(i, ["ok": true, "document": NSNull()]); break }
+            // Only an explicit null means "no change"; any other non-object is a reply to repair.
+            if reply["document"] is NSNull { noChange = true; note(i, ["ok": true, "document": NSNull()]); break }
+            guard let changed = reply["document"] as? [String: Any] else {
+                note(i, ["ok": false, "reason": "json"]); attempts.append(["ok": false, "reason": "json"])
+                user += "\n\n\"document\" must be the whole changed explainer object, or null. Reply again."
+                continue
+            }
             var r: [String: Any]
-            if views(changed) == views(base) {
+            if changed["kind"] as? String != "explainer" {
+                r = ["ok": false, "reason": "followup.kind"]
+            } else if views(changed) == views(base) {
                 r = ["ok": false, "reason": "followup.textOnly"]
             } else {
                 do { r = try engine.check(document: changed, ref: nil, components: components, strict: true) }
                 catch let e as ToolError { r = ["ok": false, "reason": e.reason] }
             }
             note(i, Self.outcome(r)); attempts.append(Self.outcome(r))
-            if (r["ok"] as? Bool) == true { after = r; break }
+            if (r["ok"] as? Bool) == true { after = r; acceptedChange = Self.changeSummary(from: base, to: changed); break }
             let reason = r["reason"] as? String ?? "unknown"
             let (facts, readBack) = repairContext(reason: reason, report: r, document: changed, components: components)
             // Built in parts: one long concatenation is too slow to type-check.
@@ -417,7 +426,8 @@ extension MartyLoop {
             u += "\n\nYour previous reply:\n\(text)\n\nThe engine refused it with reason `\(reason)`"
             if let part = r["part"] as? String { u += " on part `\(part)`" }
             u += "."
-            if reason == "followup.textOnly" { u += " Only the words changed: change the model (its solid or board)." }
+            if reason == "followup.textOnly" { u += " Only the words changed: change the model (its solid, its board items or a beat's ops)." }
+            if reason == "followup.kind" { u += " The changed document must stay an explainer (kind explainer)." }
             if let h = MartyPrompts.hint(for: reason) { u += " \(h)" }
             if let facts { u += "\n\nFacts the engine solved (name: value):\n\(facts)" }
             if let readBack { u += "\n\nEngine read-back:\n\(readBack)" }
@@ -436,18 +446,51 @@ extension MartyLoop {
         }
         let lastReason = attempts.last?["reason"] as? String
         guard modelled || (lastReason != nil && lastReason != "adapter") else { result["ok"] = false; return result }
-        let marty: Set<String> = ["json", "followup.textOnly", "adapter"]
+        let marty: Set<String> = ["json", "followup.textOnly", "followup.kind", "adapter"]
         let engineSawAChange = attempts.contains { !marty.contains($0["reason"] as? String ?? "") }
         let shownReason = engineSawAChange ? (attempts.last { !marty.contains($0["reason"] as? String ?? "") }?["reason"] as? String ?? lastReason) : lastReason
         let (answer, i) = ask("answer", attempt: 0, system: modelled ? MartyPrompts.answerSystem() : MartyPrompts.answerRefusedSystem(),
                               user: MartyPrompts.answerUser(followUp: followUp, before: before, after: after.map { Self.compact(Self.summary($0)) },
-                                                            patch: nil, ratiosChanged: ratiosChanged,
+                                                            patch: acceptedChange, ratiosChanged: ratiosChanged,
                                                             refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAChange))
         note(i, ["ok": answer != nil])
         result["ok"] = answer != nil
         result["answer"] = answer.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) as Any } ?? NSNull()
         result["answerSource"] = "model text written from the engine reports; its numbers are not checked"
         return result
+    }
+
+    /// What a follow-up may change in an explainer, without its words: the solid, the board items other than text
+    /// items, and each beat's ops (where tables are added). A change of words only (captions, title, notes, text items)
+    /// gives the same bytes.
+    static func modelContent(_ d: [String: Any]) -> Data {
+        var board = d["board"] as? [String: Any] ?? [:]
+        if let items = board["items"] as? [[String: Any]] { board["items"] = items.filter { $0["k"] as? String != "text" } }
+        let ops = (d["beats"] as? [[String: Any]] ?? []).map { $0["ops"] ?? NSNull() }
+        return MartyJSON.data(["solid": d["solid"] ?? NSNull(), "board": board, "ops": ops])
+    }
+
+    /// The accepted change of an explainer follow-up, for the answer prompt: the solid parts added, changed or removed
+    /// (by id, with their new fields), and whether the board or beat ops changed.
+    static func changeSummary(from base: [String: Any], to new: [String: Any]) -> String {
+        func parts(_ d: [String: Any]) -> [String: [String: Any]] {
+            var out: [String: [String: Any]] = [:]
+            for p in ((d["solid"] as? [String: Any])?["parts"] as? [[String: Any]] ?? []) { if let id = p["id"] as? String { out[id] = p } }
+            return out
+        }
+        let a = parts(base), b = parts(new)
+        var changed: [String: Any] = [:]
+        for id in Set(a.keys).union(b.keys).sorted() {
+            let before = a[id].map { MartyJSON.data($0) }, after = b[id].map { MartyJSON.data($0) }
+            if before != after { changed[id] = b[id] ?? "removed" }
+        }
+        var summary: [String: Any] = ["parts": changed]
+        let solidA = (base["solid"] as? [String: Any] ?? [:]).filter { $0.key != "parts" }
+        let solidB = (new["solid"] as? [String: Any] ?? [:]).filter { $0.key != "parts" }
+        if MartyJSON.data(solidA) != MartyJSON.data(solidB) { summary["solidOther"] = "changed (constraints, annotations or params)" }
+        if modelContent(["board": base["board"] ?? NSNull(), "beats": base["beats"] ?? NSNull()])
+            != modelContent(["board": new["board"] ?? NSNull(), "beats": new["beats"] ?? NSNull()]) { summary["boardOrOps"] = "changed" }
+        return MartyJSON.string(summary)
     }
 
     /// The engine replaces a part field as a whole, so `{"stage": {"with": {"planets": 4}}}` would reset every other
