@@ -70,10 +70,12 @@ the MCP server uses), so a run needs no MCP client.
    than 5 texts (labels, dimensions and arrows with text; an arrow without text
    does not count), and a sentence in a say or an annotation text that compares
    sizes or shares (most, all of, more than) with no hedge, no `{fact}`
-   placeholder and no given figure. A lint problem asks for one repair (attempt
-   reason `marty.lint`, `engineOk` true) when one is left; the engine-accepted
-   document is kept, and it stands, with `lint` in the receipt, when no later
-   attempt is clean.
+   placeholder and no given figure (each listed id counts once, as the engine
+   shows it). A lint problem asks for one repair at most (attempt reason
+   `marty.lint`, `engineOk` true), when one is left. The engine-accepted
+   document with the fewest findings is kept (a later one wins a tie), and it
+   stands, with `lint` and `lintAttempt` in the receipt, when no attempt is
+   clean.
 4. **Repair.** A refused document goes back to the model with the exact reason,
    the part, and, for common reasons, a one-line fact that restates the engine
    rule (for example the centre-distance formula). A caption or claim refusal

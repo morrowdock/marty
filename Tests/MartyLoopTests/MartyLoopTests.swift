@@ -423,6 +423,36 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(r2["accepted"] as? Bool, true, "the engine-accepted document stands")
         XCTAssertEqual((r2["lint"] as? [String])?.count, 1)
         XCTAssertEqual((r2["final"] as? [String: Any])?["title"] as? String, "Lint")
+        XCTAssertEqual(r2["lintAttempt"] as? Int, 0)
+        // One lint repair at most: a second lint-dirty accepted reply ends the loop; the one with fewer findings stands.
+        let worse = doc(labels: 6, arrows: 0, say: "The back engine carries most of the load.")
+        let repeated = ScriptedAdapter(replies: [plan, reply(bad), reply(worse), reply(good)])
+        let out3 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out3) }
+        let r3 = try MartyLoop(model: repeated, out: out3, options: .init()).run(question: "q")
+        XCTAssertEqual(repeated.prompts.count, 3, "plan, author, one lint repair")
+        XCTAssertEqual((r3["attempts"] as? [[String: Any]])?.map { $0["reason"] as? String }, ["marty.lint", "marty.lint"])
+        XCTAssertEqual((r3["lint"] as? [String])?.count, 1, "the better document (one finding) stands")
+        XCTAssertEqual(r3["lintAttempt"] as? Int, 0)
+        var once = MartyLoop.Options(); once.repairs = 1
+        let short = ScriptedAdapter(replies: [plan, reply(worse), reply(bad)])
+        let out4 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out4) }
+        let r4 = try MartyLoop(model: short, out: out4, options: once).run(question: "q")
+        XCTAssertEqual((r4["lint"] as? [String])?.count, 1, "the later, better document stands")
+        XCTAssertEqual(r4["lintAttempt"] as? Int, 1)
+        // A repeated id shows once.
+        var dup = doc(labels: 6, arrows: 0, say: "The box.")
+        dup["steps"] = [["say": "The box.", "annotate": ["l0", "l0", "l0", "l0", "l0", "l0", "l1", "l2", "l3", "l4", "l5"]]]
+        XCTAssertEqual(MartyLoop.documentLint(dup).first?.hasPrefix("Step 1 shows 6 texts"), true)
+        dup["steps"] = [["say": "The box.", "annotate": ["l0", "l0", "l0", "l0", "l0", "l0"]], ["say": "More.", "annotate": ["l1", "l2", "l3", "l4", "l5"]]]
+        XCTAssertEqual(MartyLoop.documentLint(dup), [])
+        var ex = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(MartyExamples.explainerExample.utf8)) as? [String: Any])
+        var solid = try XCTUnwrap(ex["solid"] as? [String: Any])
+        solid["annotations"] = ["labels": (0..<6).map { ["id": "l\($0)", "at": ["world": [0, 0, 30 + $0 * 5]], "text": "Label"] }]
+        ex["solid"] = solid
+        ex["beats"] = [["say": "All.", "view": ["annotate": ["l0", "l0", "l1", "l2", "l3", "l4"]]], ["say": "Six.", "view": ["annotate": (0..<6).map { "l\($0)" }]]]
+        XCTAssertEqual(MartyLoop.documentLint(ex).map { String($0.prefix(18)) }, ["Beat 2 shows 6 tex"])
     }
 
     func testReplyJSON() {

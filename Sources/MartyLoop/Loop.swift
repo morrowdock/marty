@@ -220,8 +220,10 @@ public final class MartyLoop {
         var accepted: [String: Any]? = nil
         var acceptedComponents: [Any] = []
         var attempts: [[String: Any]] = []
-        // An engine-accepted document that fails Marty's own lint: kept as the fallback while a repair is tried.
-        var fallback: (report: [String: Any], components: [Any], lint: [String])? = nil
+        // The best engine-accepted document that fails Marty's own lint (fewest findings; a later one wins a tie), with
+        // its components and attempt. One lint repair at most.
+        var fallback: (report: [String: Any], components: [Any], lint: [String], attempt: Int)? = nil
+        var lintRepairUsed = false
         // When the model could not be reached for the plan, stop: more calls would only fail or wait again.
         if planAdapterFailed { attempts.append(["ok": false, "reason": "adapter"]) }
         for attempt in stride(from: 0, through: planAdapterFailed ? -1 : options.repairs, by: 1) {
@@ -247,16 +249,15 @@ public final class MartyLoop {
                 // Marty's lint on the accepted document (too many texts in a step, a comparison with no figure). It
                 // only asks for one more repair when one is left; the accepted document is kept as the fallback.
                 let lint = document.map(Self.documentLint) ?? []
-                if lint.isEmpty || attempt == options.repairs {
-                    accepted = report; acceptedComponents = components
-                    if !lint.isEmpty { receipt["lint"] = lint }
-                    break
-                }
-                if fallback == nil { fallback = (report, components, lint) }
+                if lint.isEmpty { accepted = report; acceptedComponents = components; break }
+                if fallback == nil || lint.count <= fallback!.lint.count { fallback = (report, components, lint, attempts.count - 1) }
                 attempts[attempts.count - 1]["reason"] = "marty.lint"
                 attempts[attempts.count - 1]["lint"] = lint
                 attempts[attempts.count - 1]["engineOk"] = true
                 attempts[attempts.count - 1]["ok"] = false
+                // No repair left, or the one lint repair was used: the best accepted document stands (after the loop).
+                if lintRepairUsed || attempt == options.repairs { break }
+                lintRepairUsed = true
                 user = MartyPrompts.repairUser(question: question, plan: planText, previous: text, reason: "marty.lint", part: nil,
                                                hint: MartyPrompts.lintRepair + "\n" + lint.map { "- \($0)" }.joined(separator: "\n"))
                 continue
@@ -271,7 +272,10 @@ public final class MartyLoop {
                                            hint: MartyPrompts.hint(for: reason), facts: facts, readBack: readBack,
                                            visibility: report["visibility"] as? [String: Any])
         }
-        if accepted == nil, let f = fallback { accepted = f.report; acceptedComponents = f.components; receipt["lint"] = f.lint }
+        if accepted == nil, let f = fallback {
+            accepted = f.report; acceptedComponents = f.components
+            receipt["lint"] = f.lint; receipt["lintAttempt"] = f.attempt
+        }
         receipt["attempts"] = attempts
         receipt["accepted"] = accepted != nil
 
@@ -705,7 +709,8 @@ extension MartyLoop {
         var out: [String] = []
         let word = explainer ? "Beat" : "Step"
         for (n, step) in steps.enumerated() {
-            let shown = stepped ? (list(step) ?? []) : Array(texts.keys)
+            // The engine shows each listed id once.
+            let shown = Set(stepped ? (list(step) ?? []) : Array(texts.keys))
             let count = shown.filter { texts[$0] != nil }.count
             if count > maxTextsPerStep {
                 out.append("\(word) \(n + 1) shows \(count) texts (labels, dimensions and arrows with text); at most \(maxTextsPerStep). An arrow without \"text\" does not count.")
