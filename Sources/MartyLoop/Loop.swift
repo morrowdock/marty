@@ -404,6 +404,7 @@ public final class MartyLoop {
         var noChange = false
         var acceptedPatch: Any? = nil
         var acceptedStep: [String: Any]? = nil
+        var engineChecked = false
         for attempt in 0...options.repairs {
             let (text, i) = ask("followup", attempt: attempt, system: system, user: user)
             guard let text else { note(i, ["ok": false, "reason": "adapter"]); attempts.append(["ok": false, "reason": "adapter"]); break }
@@ -442,6 +443,7 @@ public final class MartyLoop {
             }
             var r: [String: Any]
             let merged = Self.mergingWith(patch, base: docText)
+            engineChecked = true
             do { r = try engine.patch(document: nil, ref: ref, patch: merged, components: components, returnDocument: false, strict: true) }
             catch let e as ToolError { r = ["ok": false, "reason": e.reason] }
             // A title or steps patch that leaves every step's effective pose and visibility as before changes only words.
@@ -499,7 +501,8 @@ public final class MartyLoop {
         guard modelled || (lastReason != nil && lastReason != "adapter") else { result["ok"] = false; return result }
         // Did the engine see any patch? json and followup.textOnly never reach it.
         let marty: Set<String> = ["json", "followup.textOnly", "adapter"]
-        let engineSawAPatch = attempts.contains { !marty.contains($0["reason"] as? String ?? "") }
+        // The engine saw a change when it was called at least once (a words-only steps patch is decided after it).
+        let engineSawAPatch = engineChecked || attempts.contains { !marty.contains($0["reason"] as? String ?? "") }
         // Show the engine's own last reason when there is one (a later bad reply is Marty's json, not the engine's).
         let shownReason = engineSawAPatch ? (attempts.last { !marty.contains($0["reason"] as? String ?? "") }?["reason"] as? String ?? lastReason) : lastReason
         // Force arrows (not gravity) that the accepted patch may have moved: their shown direction is schematic.
@@ -543,6 +546,7 @@ extension MartyLoop {
         var after: [String: Any]? = nil
         var acceptedChange: String? = nil
         var acceptedDoc: [String: Any]? = nil
+        var engineChecked = false
         var moved: [String] = []
         var noChange = false
         for attempt in 0...options.repairs {
@@ -564,6 +568,7 @@ extension MartyLoop {
             if changed["kind"] as? String != "explainer" {
                 r = ["ok": false, "reason": "followup.kind"]
             } else {
+                engineChecked = true
                 do { r = try engine.check(document: changed, ref: nil, components: components, strict: true) }
                 catch let e as ToolError { r = ["ok": false, "reason": e.reason] }
                 // The same model content and the same effective beat views (poses and visibility): words only.
@@ -614,7 +619,7 @@ extension MartyLoop {
         let lastReason = attempts.last?["reason"] as? String
         guard modelled || (lastReason != nil && lastReason != "adapter") else { result["ok"] = false; return result }
         let marty: Set<String> = ["json", "followup.textOnly", "followup.kind", "adapter"]
-        let engineSawAChange = attempts.contains { !marty.contains($0["reason"] as? String ?? "") }
+        let engineSawAChange = engineChecked || attempts.contains { !marty.contains($0["reason"] as? String ?? "") }
         let shownReason = engineSawAChange ? (attempts.last { !marty.contains($0["reason"] as? String ?? "") }?["reason"] as? String ?? lastReason) : lastReason
         let given = modelled ? Self.givenFigures(acceptedDoc ?? base) : []
         let changeObject = acceptedChange.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) }
@@ -901,7 +906,11 @@ extension MartyLoop {
     static func stepsWith(_ step: [String: Any], replace: Any?, base docText: String) -> [Any]? {
         var steps = ((try? JSONSerialization.jsonObject(with: Data(docText.utf8))) as? [String: Any])?["steps"] as? [Any] ?? []
         guard let replace, !(replace is NSNull) else { steps.append(step); return steps }
-        guard let n = replace as? Int, n >= 1, n <= steps.count else { return nil }
+        // A JSON true is an NSNumber that would cast to 1: only a real integer names a step.
+        guard let num = replace as? NSNumber, CFGetTypeID(num) != CFBooleanGetTypeID(), num.doubleValue == num.doubleValue.rounded()
+        else { return nil }
+        let n = num.intValue
+        guard n >= 1, n <= steps.count else { return nil }
         steps[n - 1] = step
         return steps
     }

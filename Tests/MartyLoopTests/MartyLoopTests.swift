@@ -816,7 +816,10 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(model.prompts[2].system.contains(#"{"step": {"say""#), "the follow-up prompt teaches the posed step")
         XCTAssertEqual(MartyLoop.stepsWith(["say": "x"], replace: 1, base: MartyJSON.string(doc))?.count, 1)
         XCTAssertEqual(MartyLoop.stepsWith(["say": "x"], replace: nil, base: MartyJSON.string(doc))?.count, 2)
-        for bad: Any in [0, -1, 2, "1"] { XCTAssertNil(MartyLoop.stepsWith(["say": "x"], replace: bad, base: MartyJSON.string(doc)), "\(bad)") }
+        for bad: Any in [0, -1, 2, "1", 1.5] { XCTAssertNil(MartyLoop.stepsWith(["say": "x"], replace: bad, base: MartyJSON.string(doc)), "\(bad)") }
+        let decodedTrue = try XCTUnwrap(ReplyJSON.object(#"{"replace": true}"#)?["replace"])
+        XCTAssertNil(MartyLoop.stepsWith(["say": "x"], replace: decodedTrue, base: MartyJSON.string(doc)), "a JSON true is not step 1")
+        XCTAssertEqual(MartyLoop.stepsWith(["say": "x"], replace: try XCTUnwrap(ReplyJSON.object(#"{"r": 1}"#)?["r"]), base: MartyJSON.string(doc))?.count, 1)
         // A pose that moves nothing (the base angle) is words only.
         let noop = #"{"step": {"say": "The arm stays.", "pose": {"pilot": {"with": {"rightShoulder": 30}}}, "annotate": ["aJet"]}}"#
         let still = ScriptedAdapter(replies: [plan, good, noop, #"{"patch": null}"#, "No change."])
@@ -824,6 +827,12 @@ final class MartyLoopTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: out3) }
         let r3 = try MartyLoop(model: still, out: out3, options: options).run(question: "q")
         XCTAssertEqual(((r3["followUp"] as? [String: Any])?["attempts"] as? [[String: Any]])?.first?["reason"] as? String, "followup.textOnly")
+        // Every attempt a no-op pose: the engine checked them, so the refused answer does not say "no change could be checked".
+        let allNoop = ScriptedAdapter(replies: [plan, good, noop, noop, noop, noop, "This model cannot show that."])
+        let out6 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out6) }
+        _ = try MartyLoop(model: allNoop, out: out6, options: options).run(question: "q")
+        XCTAssertFalse(allNoop.prompts.last?.user.contains("No change could be checked") ?? true, allNoop.prompts.last?.user ?? "")
         // Removing a pose moves the arm back: its thrust arrow is listed.
         var posedDoc = doc
         posedDoc["steps"] = [["say": "A schematic pilot wears one unit.", "annotate": ["aJet"]],
