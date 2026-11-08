@@ -814,8 +814,36 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertNotNil(f["step"])
         XCTAssertEqual(f["forceArrowsMoved"] as? [String], ["aJet"])
         XCTAssertTrue(model.prompts[2].system.contains(#"{"step": {"say""#), "the follow-up prompt teaches the posed step")
-        XCTAssertEqual(MartyLoop.stepsWith(["say": "x"], replace: 1, base: MartyJSON.string(doc)).count, 1)
-        XCTAssertEqual(MartyLoop.stepsWith(["say": "x"], replace: nil, base: MartyJSON.string(doc)).count, 2)
+        XCTAssertEqual(MartyLoop.stepsWith(["say": "x"], replace: 1, base: MartyJSON.string(doc))?.count, 1)
+        XCTAssertEqual(MartyLoop.stepsWith(["say": "x"], replace: nil, base: MartyJSON.string(doc))?.count, 2)
+        for bad: Any in [0, -1, 2, "1"] { XCTAssertNil(MartyLoop.stepsWith(["say": "x"], replace: bad, base: MartyJSON.string(doc)), "\(bad)") }
+        // A pose that moves nothing (the base angle) is words only.
+        let noop = #"{"step": {"say": "The arm stays.", "pose": {"pilot": {"with": {"rightShoulder": 30}}}, "annotate": ["aJet"]}}"#
+        let still = ScriptedAdapter(replies: [plan, good, noop, #"{"patch": null}"#, "No change."])
+        let out3 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out3) }
+        let r3 = try MartyLoop(model: still, out: out3, options: options).run(question: "q")
+        XCTAssertEqual(((r3["followUp"] as? [String: Any])?["attempts"] as? [[String: Any]])?.first?["reason"] as? String, "followup.textOnly")
+        // Removing a pose moves the arm back: its thrust arrow is listed.
+        var posedDoc = doc
+        posedDoc["steps"] = [["say": "A schematic pilot wears one unit.", "annotate": ["aJet"]],
+                             ["say": "The arm is out (schematic).", "pose": ["pilot": ["with": ["rightShoulder": 70]]], "annotate": ["aJet"]]]
+        let unpose = #"{"step": {"say": "The arm is back.", "annotate": ["aJet"]}, "replace": 2}"#
+        let back = ScriptedAdapter(replies: [plan, #"{"document": "# + MartyJSON.string(posedDoc) + "}", unpose, "The arm is back down."])
+        let out4 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out4) }
+        let r4 = try MartyLoop(model: back, out: out4, options: options).run(question: "q")
+        let f4 = try XCTUnwrap(r4["followUp"] as? [String: Any])
+        XCTAssertEqual(f4["changed"] as? Bool, true, "\(f4["attempts"] ?? "")")
+        XCTAssertEqual(f4["forceArrowsMoved"] as? [String], ["aJet"])
+        // An invalid replace is sent back.
+        let badReplace = #"{"step": {"say": "x", "annotate": ["aJet"]}, "replace": 9}"#
+        let br = ScriptedAdapter(replies: [plan, good, badReplace, #"{"patch": null}"#, "No change."])
+        let out5 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out5) }
+        let r5 = try MartyLoop(model: br, out: out5, options: options).run(question: "q")
+        XCTAssertEqual(((r5["followUp"] as? [String: Any])?["attempts"] as? [[String: Any]])?.first?["reason"] as? String, "json")
+        XCTAssertTrue(br.prompts[3].user.contains("must be the number of an existing step"))
         // A new step with no pose, show or hide is words only.
         let plainStep = #"{"step": {"say": "The arm moves out.", "annotate": ["aJet"]}}"#
         let words = ScriptedAdapter(replies: [plan, good, plainStep, #"{"patch": null}"#, "No change."])
@@ -823,14 +851,22 @@ final class MartyLoopTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: out2) }
         let r2 = try MartyLoop(model: words, out: out2, options: options).run(question: "q")
         XCTAssertEqual(((r2["followUp"] as? [String: Any])?["attempts"] as? [[String: Any]])?.first?["reason"] as? String, "followup.textOnly")
-        // Explainer: a beat view pose is a model change.
+        // Explainer: a beat that really poses a part changes the effective views; restating the base does not.
+        let engine = MartyEngine(outputRoot: nil)
         let ex = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(MartyExamples.explainerExample.utf8)) as? [String: Any])
-        var posed = ex
-        var beats = try XCTUnwrap(posed["beats"] as? [[String: Any]])
-        beats.append(["say": "The shaft is turned.", "view": ["pose": ["shaft": ["with": ["radius": 6, "length": 80]]], "annotate": [Any]()]])
-        posed["beats"] = beats
-        XCTAssertNotEqual(MartyLoop.modelContent(posed), MartyLoop.modelContent(ex))
-        XCTAssertTrue(MartyLoop.changeSummary(from: ex, to: posed).contains("beat views"))
+        func withBeat(_ view: [String: Any]) throws -> [String: Any] {
+            var d = ex; var beats = try XCTUnwrap(d["beats"] as? [[String: Any]])
+            beats.append(["say": "The base is turned.", "view": view.merging(["annotate": [Any]()]) { a, _ in a }]); d["beats"] = beats
+            return d
+        }
+        let base = try engine.check(document: ex, ref: nil, components: [], strict: true)
+        let turned = try engine.check(document: try withBeat(["pose": ["base.base": ["rot": [0, 0, 1, 30]]]]), ref: nil, components: [], strict: true)
+        let same = try engine.check(document: try withBeat(["pose": ["shaft": ["with": ["radius": 6, "length": 80]]]]), ref: nil, components: [], strict: true)
+        XCTAssertEqual(turned["ok"] as? Bool, true, "\(turned["reason"] ?? "")"); XCTAssertEqual(same["ok"] as? Bool, true, "\(same["reason"] ?? "")")
+        XCTAssertNotEqual(MartyLoop.effectiveViews(turned), MartyLoop.effectiveViews(base))
+        XCTAssertEqual(MartyLoop.effectiveViews(same), MartyLoop.effectiveViews(base), "a pose that restates the base moves nothing")
+        XCTAssertTrue(MartyLoop.viewMovedIds(before: base, after: turned).contains("base.base"))
+        XCTAssertTrue(MartyLoop.changeSummary(from: ex, to: try withBeat(["pose": ["base.base": ["rot": [0, 0, 1, 30]]]])).contains("beat views"))
     }
 
     func testReplyJSON() {
@@ -966,7 +1002,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(attempts.first?["reason"] as? String, "followup.textOnly")
         XCTAssertEqual(f["changed"] as? Bool, true)
         XCTAssertEqual(f["ratiosChanged"] as? Bool, true)
-        XCTAssertTrue(model.prompts[3].user.contains("changes only text"))
+        XCTAssertTrue(model.prompts[3].user.contains("changes only text"), model.prompts[3].user)
         XCTAssertTrue(model.prompts[4].user.contains("wheelTeeth"), "the answer prompt shows the accepted change")
     }
 

@@ -201,11 +201,17 @@ the MCP server uses), so a run needs no MCP client.
    base: the model replies `{"step": {...}}` (one new step with `pose`, and
    `show` for parts seen only there; `"replace": <n>` edits step n instead) and
    Marty sends it as a steps patch, so the base pose stays for every other step.
-   A steps patch counts as a model change only when a step's `pose`, `show` or
-   `hide` differs; the accepted step is in `followUp.step`, and the force arrows
-   on the posed parts are listed in `forceArrowsMoved`. In an explainer, the
-   model adds or edits one beat whose `view` has `pose` and `show`; beat views
-   are model content and are part of the accepted change. A patch cannot change annotations: an arrow end on a
+   A title or steps patch counts as a model change only when the engine's
+   effective step views change (the report's `stepViews`: the parts each step
+   really poses or hides, and the pose read-back), so a pose that restates the
+   base moves nothing and is words only; `"replace"` must name an existing step.
+   The accepted step is in `followUp.step`, and the force arrows on parts whose
+   effective placement changed in some step (posed before or after, so removing
+   a pose counts) are listed in `forceArrowsMoved`. In an explainer, the model
+   adds or edits one beat whose `view` has `pose` and `show`; the same effective
+   views (Marty copies `stepViews` from the explainer's solid view) decide
+   whether it changed the model, and the authored beat views are part of the
+   accepted change. A patch cannot change annotations: an arrow end on a
    part moves and turns with that part (and with the parts it hangs on), and an
    end at a world point stays where it is. The engine checks a gravity arrow
    again in the changed model. Marty lists the other force arrows that the

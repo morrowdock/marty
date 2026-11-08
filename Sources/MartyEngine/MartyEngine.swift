@@ -114,7 +114,7 @@ public final class MartyEngine {
             out["stepTiers"] = beats.map { $0["tier"] ?? NSNull() }
         }
         if let solid = (out["views"] as? [String: Any])?["solid"] as? [String: Any] {
-            for k in ["facts", "ratios", "readBack"] { if let v = solid[k] { out[k] = v } }
+            for k in ["facts", "ratios", "readBack", "stepViews"] { if let v = solid[k] { out[k] = v } }
         }
         if let ids = (out["ids"] as? [String: Any])?["solid"] { out["partIds"] = ids }
         if out["triangles"] == nil, let t = (out["budget"] as? [String: Any])?["triangles"] { out["triangles"] = t }
