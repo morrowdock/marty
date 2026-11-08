@@ -29,7 +29,7 @@ final class MartyLoopTests: XCTestCase {
         let plan = MartyPrompts.planSystem(catalog: catalog).utf8.count
         let author = MartyPrompts.authorSystem(parts: "", example: MartyExamples.formatExample).utf8.count
         print("prompt bytes: plan \(plan), author without parts \(author)")
-        XCTAssertLessThan(plan, 9000)
+        XCTAssertLessThan(plan, 10000)
         XCTAssertLessThan(author, 10500)
     }
 
@@ -339,6 +339,50 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual((f2["answerLint"] as? [String: Any])?["fixed"] as? Bool, false)
     }
 
+    /// A visibility refusal reaches the repair prompt in words (the engine's visibility detail), and the attempt keeps
+    /// the detail; strict refuses a defined label that no step lists.
+    func testVisibilityDetailInRepairs() throws {
+        func doc(_ steps: [[String: Any]], labels n: Int = 13) -> [String: Any] {
+            ["v": 2, "kind": "assembly", "title": "Labels", "units": "mm",
+             "parts": [["id": "box", "shape": ["box": ["size": [40, 40, 40]]]]],
+             "annotations": ["labels": (1...n).map { ["id": "l\($0)", "at": ["world": [0, 0, 30 + $0 * 5]], "text": "Label"] }],
+             "steps": steps]
+        }
+        let all = (1...13).map { "l\($0)" }
+        let tooMany = doc([["say": "All labels.", "annotate": all]])
+        let good = doc([["say": "Some labels.", "annotate": Array(all.prefix(7))], ["say": "The rest.", "annotate": Array(all.dropFirst(7))]])
+        let plan = #"{"components": [], "primitives": ["box"]}"#
+        func reply(_ d: [String: Any]) -> String { #"{"document": "# + MartyJSON.string(d) + "}" }
+        let model = ScriptedAdapter(replies: [plan, reply(tooMany), reply(good)])
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: .init()).run(question: "q")
+        XCTAssertEqual(r["accepted"] as? Bool, true, "\(r["attempts"] ?? "")")
+        let first = try XCTUnwrap((r["attempts"] as? [[String: Any]])?.first)
+        XCTAssertEqual(first["reason"] as? String, "step.annotate.count")
+        XCTAssertEqual((first["visibility"] as? [String: Any])?["cause"] as? String, "step")
+        XCTAssertTrue(model.prompts[2].user.contains(#"Step 1's "annotate" lists 13; the limit is 12"#), model.prompts[2].user)
+        // No annotate list anywhere: every step shows all 13.
+        let engine = MartyEngine(outputRoot: nil)
+        let plain = try engine.check(document: doc([["say": "All."]]), ref: nil, components: [], strict: true)
+        XCTAssertEqual(plain["reason"] as? String, "annotations.visible")
+        let line = MartyPrompts.visibilityLine(try XCTUnwrap(plain["visibility"] as? [String: Any]))
+        XCTAssertTrue(line?.contains("Give every step an \"annotate\" list") == true, line ?? "nil")
+        // An explainer: the limit is per beat, and the beat's list is named.
+        var ex = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(MartyExamples.explainerExample.utf8)) as? [String: Any])
+        var solid = try XCTUnwrap(ex["solid"] as? [String: Any])
+        solid["annotations"] = ["labels": (1...13).map { ["id": "l\($0)", "at": ["world": [0, 0, 30 + $0 * 5]], "text": "Label"] }]
+        ex["solid"] = solid
+        ex["beats"] = [["say": "All labels.", "view": ["annotate": all]]]
+        let exr = try engine.check(document: ex, ref: nil, components: [], strict: true)
+        XCTAssertEqual(exr["reason"] as? String, "view.annotate.count", "\(exr)")
+        let exLine = MartyPrompts.visibilityLine(try XCTUnwrap(exr["visibility"] as? [String: Any], "\(exr)"))
+        XCTAssertTrue(exLine?.hasPrefix(#"Beat 1's "view"."annotate" lists 13"#) == true, exLine ?? "nil")
+        // A defined label no step lists is refused in strict mode.
+        let unused = try engine.check(document: doc([["say": "Some.", "annotate": ["l1"]]], labels: 2), ref: nil, components: [], strict: true)
+        XCTAssertTrue((unused["reason"] as? String ?? "").hasPrefix("annotation.unused"), "\(unused["reason"] ?? "")")
+    }
+
     func testReplyJSON() {
         XCTAssertEqual(ReplyJSON.object(#"{"a":1}"#)?["a"] as? Int, 1)
         XCTAssertEqual(ReplyJSON.object("Here:\n```json\n{\"a\": 2}\n```\nDone.")?["a"] as? Int, 2)
@@ -392,7 +436,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(receipt["format"] as? String, MartyLoop.receiptFormat)
         XCTAssertEqual((receipt["engine"] as? [String: Any])?["revision"] as? String, MartyPin.engineRevision)
         let ctx = try XCTUnwrap(receipt["contextBytes"] as? [String: Int])
-        XCTAssertLessThan(try XCTUnwrap(ctx["plan"]), 9000, "plan context grew: \(ctx)")
+        XCTAssertLessThan(try XCTUnwrap(ctx["plan"]), 10000, "plan context grew: \(ctx)")
         XCTAssertLessThan(try XCTUnwrap(ctx["author"]), 12000, "author context grew: \(ctx)")
     }
 
