@@ -448,8 +448,12 @@ public enum QuoteCheck {
     /// first content word of its claim ("Engine count for the jet suit": engine), never the product or context words.
     static func countedWords(value: String, claim: String) -> Set<String> {
         let filler: Set<String> = ["the", "and", "with", "for", "per", "its", "of", "on", "in", "a", "an", "number", "count", "total", "each",
-                                   "how", "many", "there", "are", "is"]
-        let valueWords = value.lowercased().split { !$0.isLetter }.map(String.init).filter { $0.count >= 3 && !filler.contains($0) }
+                                   "how", "many", "there", "are", "is", "current", "new", "latest", "main"]
+        // Only the words after the value's number name what is counted ("Version 1" counts nothing).
+        let tokens = value.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
+        let at = tokens.firstIndex { $0.first?.isNumber == true || numberWords[$0] != nil || ordinals[$0] != nil }
+        let after = at.map { Array(tokens[($0 + 1)...]) } ?? []
+        let valueWords = after.filter { $0.allSatisfy(\.isLetter) && $0.count >= 3 && !filler.contains($0) }
         if !valueWords.isEmpty { return Set(valueWords) }
         return Set(claim.lowercased().split { !$0.isLetter }.map(String.init).filter { $0.count >= 3 && !filler.contains($0) }.prefix(1))
     }

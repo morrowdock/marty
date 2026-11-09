@@ -986,11 +986,13 @@ extension MartyLoop {
         // A beat or step number that names a view of the model ("beat 4 shows this") is no fact.
         func withoutViewRefs(_ t: String) -> String {
             // ("beat 4", "beats 2 and 3", "steps 2-4", "beats 1, 2 and 5")
-            guard views > 0, let re = try? NSRegularExpression(pattern: #"(?i)\b(beats?|steps?)\s+(\d+(?:\s*(?:,|and|or|to|-|\x{2013})\s*\d+)*)\b"#) else { return t }
+            guard views > 0, let re = try? NSRegularExpression(pattern: #"(?i)\b(beats?|steps?)\s+(\d+(?:\s*(?:,\s*(?:and|or)?|and|or|to|-|\x{2013})\s*\d+)*)\b"#),
+                  let digits = try? NSRegularExpression(pattern: #"\d+"#) else { return t }
             let ns = t as NSString
             var out = t
             for m in re.matches(in: t, range: NSRange(location: 0, length: ns.length)).reversed() {
-                let nums = Self.numbers(ns.substring(with: m.range(at: 2))).compactMap { Int($0) }
+                let list = ns.substring(with: m.range(at: 2)) as NSString
+                let nums = digits.matches(in: list as String, range: NSRange(location: 0, length: list.length)).compactMap { Int(list.substring(with: $0.range)) }
                 if !nums.isEmpty, nums.allSatisfy({ (1...views).contains($0) }) {
                     out = (out as NSString).replacingCharacters(in: m.range, with: ns.substring(with: m.range(at: 1)))
                 }
@@ -1010,7 +1012,9 @@ extension MartyLoop {
         func denials(_ text: String) -> [String] {
             guard !posed.isEmpty, let dre = try? NSRegularExpression(pattern: Self.denials) else { return [] }
             return Self.sentences(text).filter { sentence in
-                for clause in sentence.components(separatedBy: CharacterSet(charactersIn: ",;:")) {
+                let clauses = sentence.replacingOccurrences(of: #"(?i)\s+(?:but|and|while|whereas|although|though|yet)\s+"#, with: ";", options: .regularExpression)
+                    .components(separatedBy: CharacterSet(charactersIn: ",;:"))
+                for clause in clauses {
                     let cns = clause as NSString
                     if dre.firstMatch(in: clause, range: NSRange(location: 0, length: cns.length)) != nil,
                        clause.range(of: Self.motionWords, options: .regularExpression) != nil { return true }

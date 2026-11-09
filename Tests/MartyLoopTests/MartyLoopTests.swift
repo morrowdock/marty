@@ -1377,6 +1377,11 @@ final class MartyLoopTests: XCTestCase {
                           out: tempOut(), options: .init())
             .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &airflow)
         XCTAssertNil(airflow["answerPosedLint"]); XCTAssertNil(airflow["answerLint"])
+        var mixed: [String: Any] = [:]
+        _ = try MartyLoop(model: ScriptedAdapter(replies: ["The model shows steering but does not model airflow. Beats 1, 2, and 2 show it; beats 1,2 too."]),
+                          out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &mixed)
+        XCTAssertNil(mixed["answerPosedLint"]); XCTAssertNil(mixed["answerLint"])
 
         // Short quotes; counts written as ordinals, articles and pairs.
         var rows = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [
@@ -1396,6 +1401,10 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertFalse(QuoteCheck.statesCountWord("1", "a jet suit powered by five miniature engines", entities: QuoteCheck.countedWords(value: "1", claim: "Engine count for the jet suit")))
         XCTAssertTrue(QuoteCheck.statesCountWord("2", "Both battery packs are mounted at the rear", entities: QuoteCheck.countedWords(value: "2", claim: "Batteries")))
         XCTAssertTrue(QuoteCheck.statesCountWord("1", "it has a rear jet engine", entities: QuoteCheck.countedWords(value: "1 rear engine", claim: "Rear engine")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "The company unveiled a new version of its jet suit with five engines",
+                                                  entities: QuoteCheck.countedWords(value: "Version 1", claim: "Current model")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "The company unveiled a new version of its jet suit with five engines",
+                                                  entities: QuoteCheck.countedWords(value: "Jet Suit Mk 1", claim: "Current model")))
         XCTAssertEqual(rows.rows[3].sources[0].check, "quote too short to check")
     }
 
