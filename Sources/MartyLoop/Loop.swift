@@ -108,11 +108,78 @@ public final class MartyLoop {
         return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
-    /// The anchor issues of a refusal: the one it names (`anchor`) first, then the others (`anchorIssues`).
+    /// The document with the engine's checked suggestions applied: a label's "at" or a pointer's "to" set to its
+    /// anchor `suggest`, and a hidden arrow's "from" (and "to") set to its arrow `suggest` (`{"from", "to"?}`). The
+    /// engine checks all printed suggestions together (one joint fixed point), so they are applied at once. An
+    /// annotation given two different values for one field (from different views) is left alone (a conflict).
+    /// Returns the ids it changed.
+    static func applySuggestions(_ document: Any, _ issues: [[String: Any]]) -> (document: Any, applied: [String]) {
+        guard var d = document as? [String: Any] else { return (document, []) }
+        var byId: [String: [String: (value: Any, data: Data)]] = [:]
+        var conflicts = Set<String>()
+        for i in issues {
+            guard let id = i["id"] as? String, let sug = i["suggest"], !(sug is NSNull) else { continue }
+            let changes: [String: Any]
+            if i["check"] as? String == "arrow" {
+                guard let o = sug as? [String: Any] else { continue }
+                changes = o.filter { ["from", "to"].contains($0.key) }
+            } else {
+                changes = [i["kind"] as? String == "pointer" || i["kind"] as? String == "arrow" ? "to" : "at": sug]
+            }
+            for (key, value) in changes {
+                let data = MartyJSON.data(value)
+                if let old = byId[id]?[key], old.data != data { conflicts.insert(id) }
+                byId[id, default: [:]][key] = (value, data)
+            }
+        }
+        var applied: [String] = []
+        func fix(_ ann: inout [String: Any]) {
+            for kind in ["labels", "arrows"] {
+                guard var list = ann[kind] as? [[String: Any]] else { continue }
+                for n in list.indices {
+                    guard let id = list[n]["id"] as? String, let s = byId[id], !conflicts.contains(id) else { continue }
+                    var changed = false
+                    for (key, v) in s where MartyJSON.data(list[n][key] ?? NSNull()) != v.data { list[n][key] = v.value; changed = true }
+                    if changed { applied.append(id) }
+                }
+                ann[kind] = list
+            }
+        }
+        if var ann = d["annotations"] as? [String: Any] { fix(&ann); d["annotations"] = ann }
+        if var solid = d["solid"] as? [String: Any], var ann = solid["annotations"] as? [String: Any] {
+            fix(&ann); solid["annotations"] = ann; d["solid"] = solid
+        }
+        return (d, applied)
+    }
+
+    /// The parts that labels and pointers are anchored on (their "at" or "to"), so a fix that ghosts one is dropped.
+    static func anchoredParts(_ document: Any) -> Set<String> {
+        guard let d = document as? [String: Any] else { return [] }
+        var out = Set<String>()
+        for ann in [d["annotations"], (d["solid"] as? [String: Any])?["annotations"]].compactMap({ $0 as? [String: Any] }) {
+            for kind in ["labels", "arrows"] {
+                for a in ann[kind] as? [[String: Any]] ?? [] {
+                    for k in ["at", "to", "from"] {
+                        if let p = a[k] as? String { out.insert(p) } else if let p = (a[k] as? [String: Any])?["part"] as? String { out.insert(p) }
+                    }
+                }
+            }
+        }
+        return out
+    }
+
+    /// The anchor and arrow issues of a refusal: the anchor issue it names (`anchor`) first, then the others
+    /// (`anchorIssues`), then the hidden arrow it names (`arrow`) and the others (`arrowIssues`), each marked
+    /// `"check": "arrow"`.
     static func anchorIssues(_ r: [String: Any]) -> [[String: Any]] {
         var out: [[String: Any]] = []
-        if let a = r["anchor"] as? [String: Any] { out.append(a) }
-        for i in r["anchorIssues"] as? [[String: Any]] ?? [] where !out.contains(where: { MartyJSON.data($0) == MartyJSON.data(i) }) { out.append(i) }
+        func add(_ i: [String: Any]) { if !out.contains(where: { MartyJSON.data($0) == MartyJSON.data(i) }) { out.append(i) } }
+        if let a = r["anchor"] as? [String: Any] { add(a) }
+        for i in r["anchorIssues"] as? [[String: Any]] ?? [] { add(i) }
+        var arrows: [[String: Any]] = []
+        if let a = r["arrow"] as? [String: Any] { arrows.append(a) }
+        arrows += r["arrowIssues"] as? [[String: Any]] ?? []
+        for var a in arrows { a["check"] = "arrow"; add(a) }
         return out
     }
 
@@ -124,6 +191,7 @@ public final class MartyLoop {
         if let u = r["unsourced"] { o["unsourced"] = u }
         if let d = r["direction"] { o["direction"] = d }
         if let a = r["anchor"] { o["anchor"] = a }
+        if let a = r["arrow"] { o["arrow"] = a }
         return o
     }
 
@@ -320,6 +388,7 @@ public final class MartyLoop {
             let reply = ReplyJSON.object(text)
             var document: Any? = nil
             var trimmedNow: [String] = []
+            var autoFixed: [String] = []
             if let reply { document = reply["document"] ?? (reply["kind"] != nil ? reply as Any : nil) }
             let components = reply?["components"] as? [Any] ?? []
             var report: [String: Any]
@@ -331,11 +400,22 @@ public final class MartyLoop {
                 document = doc1; trimmedNow = cut
                 do { report = try engine.check(document: doc1, ref: nil, components: components, strict: true) }
                 catch let e as ToolError { report = ["ok": false, "reason": e.reason] }
+                // The engine's checked anchor suggestions are applied by Marty and checked again (at most 3 rounds)
+                // before the model is asked: each was verified on a copy, so only the issues left go to the model.
+                var round = 0
+                while (report["ok"] as? Bool) != true, round < 3, let cur = document {
+                    let (fixed, applied) = Self.applySuggestions(cur, Self.anchorIssues(report))
+                    guard !applied.isEmpty else { break }
+                    round += 1
+                    guard let r2 = try? engine.check(document: fixed, ref: nil, components: components, strict: true) else { break }
+                    document = fixed; report = r2; autoFixed += applied
+                }
             } else {
                 report = ["ok": false, "reason": "json", "part": NSNull()]
             }
             var outcome = Self.outcome(report)
             if !trimmedNow.isEmpty { outcome["trimmed"] = trimmedNow }
+            if !autoFixed.isEmpty { outcome["autoFixed"] = autoFixed }
             note(i, outcome)
             attempts.append(outcome)
             if (report["ok"] as? Bool) == true, let document,
@@ -377,11 +457,16 @@ public final class MartyLoop {
             // Engine context for the repair: the facts for caption and claim refusals, the read-back for frame,
             // idle-joint and expect refusals. Only what the engine actually returned is attached.
             let (facts, readBack) = repairContext(reason: reason, report: report, document: document, components: components)
-            user = MartyPrompts.repairUser(question: question, plan: planText, previous: text, reason: reason, part: part,
+            // After Marty applied suggestions, the model gets that document, so it does not undo them.
+            let previous = autoFixed.isEmpty ? text
+                : "(Marty applied the engine's checked anchor suggestions for " + autoFixed.map { "`\($0)`" }.joined(separator: ", ")
+                    + "; this is the document after them.)\n" + MartyJSON.string(["document": document ?? NSNull(), "components": components])
+            user = MartyPrompts.repairUser(question: question, plan: planText, previous: previous, reason: reason, part: part,
                                            hint: MartyPrompts.hint(for: reason), facts: facts, readBack: readBack,
                                            visibility: report["visibility"] as? [String: Any], limit: report["limit"] as? [String: Any],
                                            table: factBlock, anchors: Self.anchorIssues(report),
-                                           detail: Self.refusalDetail(report, document: document))
+                                           detail: Self.refusalDetail(report, document: document),
+                                           anchoredParts: document.map(Self.anchoredParts) ?? [])
         }
         if accepted == nil, let f = fallback {
             accepted = f.report; acceptedComponents = f.components
@@ -655,14 +740,24 @@ extension MartyLoop {
                 continue
             }
             let (trimmedDoc, explainerCut) = TextBudget.trimmed(changed0)
-            let changed = trimmedDoc as? [String: Any] ?? changed0
+            var changed = trimmedDoc as? [String: Any] ?? changed0
             var r: [String: Any]
+            var autoFixed: [String] = []
             if changed["kind"] as? String != "explainer" {
                 r = ["ok": false, "reason": "followup.kind"]
             } else {
                 engineChecked = true
                 do { r = try engine.check(document: changed, ref: nil, components: components, strict: true) }
                 catch let e as ToolError { r = ["ok": false, "reason": e.reason] }
+                // As for the author: the engine's checked anchor suggestions are applied and checked again first.
+                var round = 0
+                while (r["ok"] as? Bool) != true, round < 3 {
+                    let (fixed, applied) = Self.applySuggestions(changed, Self.anchorIssues(r))
+                    guard !applied.isEmpty, let fixedDoc = fixed as? [String: Any] else { break }
+                    round += 1
+                    guard let r2 = try? engine.check(document: fixedDoc, ref: nil, components: components, strict: true) else { break }
+                    changed = fixedDoc; r = r2; autoFixed += applied
+                }
                 // The same model content and the same effective beat views (poses and visibility): words only.
                 if (r["ok"] as? Bool) == true, views(changed) == views(base), Self.effectiveViews(r) == Self.effectiveViews(report) {
                     r = ["ok": false, "reason": "followup.textOnly"]
@@ -685,6 +780,7 @@ extension MartyLoop {
             }
             var o = Self.outcome(r)
             if !explainerCut.isEmpty { o["trimmed"] = explainerCut }
+            if !autoFixed.isEmpty { o["autoFixed"] = autoFixed }
             note(i, o); attempts.append(o)
             if (r["ok"] as? Bool) == true {
                 after = r; acceptedDoc = changed; acceptedChange = Self.changeSummary(from: base, to: changed); acceptedPush = stepPush
@@ -695,7 +791,12 @@ extension MartyLoop {
             let (facts, readBack) = repairContext(reason: reason, report: r, document: changed, components: components)
             // Built in parts: one long concatenation is too slow to type-check.
             var u = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp, table: factBlock)
-            u += "\n\nYour previous reply:\n\(text)\n\nThe engine refused it with reason `\(reason)`"
+            u += "\n\nYour previous reply:\n\(text)"
+            if !autoFixed.isEmpty {
+                u += "\n\n(Marty applied the engine's checked anchor suggestions for " + autoFixed.map { "`\($0)`" }.joined(separator: ", ")
+                    + "; this is the document after them.)\n" + MartyJSON.string(["document": changed])
+            }
+            u += "\n\nThe engine refused it with reason `\(reason)`"
             if let part = r["part"] as? String { u += " on part `\(part)`" }
             u += "."
             if reason == "followup.textOnly" { u += " Only the words changed: change the model (its solid, its board items, a beat's ops, or a beat view whose pose really moves a part)." }
@@ -704,7 +805,7 @@ extension MartyLoop {
             if let v = (r["visibility"] as? [String: Any]).flatMap(MartyPrompts.visibilityLine) { u += " \(v)" }
             if let l = (r["limit"] as? [String: Any]).flatMap(MartyPrompts.limitLine) { u += " \(l)" }
             if let lines = r["unsourced"] as? [String] { u += " " + MartyPrompts.factRepair + "\n" + lines.map { "- \($0)" }.joined(separator: "\n") }
-            if let a = MartyPrompts.anchorLines(Self.anchorIssues(r)) { u += "\n" + a }
+            if let a = MartyPrompts.anchorLines(Self.anchorIssues(r), anchoredParts: Self.anchoredParts(changed)) { u += "\n" + a }
             if let d = Self.refusalDetail(r, document: changed) { u += "\n" + d }
             if let d = r["direction"] as? [String] { u += " " + MartyPrompts.directionRepair + " " + (d.first ?? "") + "\n" + d.dropFirst().map { "- \($0)" }.joined(separator: "\n") }
             if let facts { u += "\n\nFacts the engine solved (name: value):\n\(facts)" }
@@ -1262,7 +1363,7 @@ extension MartyLoop {
 /// Small accepted documents used as format examples in prompts. Tests check each one with the engine.
 /// The example is about no bench subject (no gears, cranks or blades), so it shows the format without giving away an answer.
 public enum MartyExamples {
-    public static let formatExample = #"{"v":2,"kind":"assembly","title":"A shaft held in two bearings","units":"mm","parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"labels":[{"id":"lShaft","at":{"part":"shaft.input","offset":[0,-6,40]},"text":"Shaft"},{"id":"lRated","at":{"world":[0,-70,20]},"text":"Rated 3000 rpm","unchecked":"assumed example"}],"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-20]},"to":{"part":"base.base","offset":[0,0,-60]},"text":"Weight"}]},"steps":[{"say":"Two bearings hold a shaft in line on a base.","camera":"hero","annotate":["lShaft","lRated","aW"]},{"say":"Input: the shaft makes {shaft.input.speed} turn for each input turn.","highlight":["shaft.input"],"spin":1,"check":[{"value":"shaft.input.speed","eq":1}],"annotate":["lShaft"]},{"say":"Cut open: the lower bearing rings the shaft.","section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"highlight":["shaft.lowerBearing"],"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]},{"say":"Seen through the base.","ghost":["base.base"],"annotate":["aW"]}]}"#
+    public static let formatExample = #"{"v":2,"kind":"assembly","title":"A shaft held in two bearings","units":"mm","parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"labels":[{"id":"lShaft","at":{"part":"shaft.input","offset":[0,-6,40]},"text":"Shaft"},{"id":"lRated","at":{"world":[0,-70,20]},"text":"Rated 3000 rpm","unchecked":"assumed example"}],"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-80]},"to":{"part":"base.base","offset":[0,0,-120]},"text":"Weight"}]},"steps":[{"say":"Two bearings hold a shaft in line on a base.","camera":"hero","annotate":["lShaft","lRated","aW"]},{"say":"Input: the shaft makes {shaft.input.speed} turn for each input turn.","highlight":["shaft.input"],"spin":1,"check":[{"value":"shaft.input.speed","eq":1}],"annotate":["lShaft"]},{"say":"Cut open: the lower bearing rings the shaft.","section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"highlight":["shaft.lowerBearing"],"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]},{"say":"Seen through the base.","ghost":["base.base"],"annotate":["aW"]}]}"#
     /// A small explainer: the same shaft with a table of one given number (with its source) and one engine fact.
-    public static let explainerExample = #"{"v":1,"kind":"explainer","title":"A shaft held in two bearings","primary":"solid","notes":{"t":{"basis":"F1 maker's data sheet, 2024, claimed"}},"board":{"v":1,"items":[{"id":"cap","k":"text","at":[6,7],"text":"Key figures"}]},"solid":{"v":2,"parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-20]},"to":{"part":"base.base","offset":[0,0,-60]},"text":"Weight"}]}},"beats":[{"say":"Two bearings hold a shaft on a base; the table gives its rated speed.","highlight":["t.r1","shaft.shaft"],"ops":[{"op":"add","item":{"id":"t","k":"table","at":[6,4],"header":true,"cells":[["Item","Value"],["Rated rpm",3000],["Turns/input","{shaft.input.speed}"]]}}],"view":{"annotate":["aW"]}},{"say":"Cut open: the lower bearing rings the shaft.","highlight":["shaft.lowerBearing"],"view":{"section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]}}]}"#
+    public static let explainerExample = #"{"v":1,"kind":"explainer","title":"A shaft held in two bearings","primary":"solid","notes":{"t":{"basis":"F1 maker's data sheet, 2024, claimed"}},"board":{"v":1,"items":[{"id":"cap","k":"text","at":[6,7],"text":"Key figures"}]},"solid":{"v":2,"parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-80]},"to":{"part":"base.base","offset":[0,0,-120]},"text":"Weight"}]}},"beats":[{"say":"Two bearings hold a shaft on a base; the table gives its rated speed.","highlight":["t.r1","shaft.shaft"],"ops":[{"op":"add","item":{"id":"t","k":"table","at":[6,4],"header":true,"cells":[["Item","Value"],["Rated rpm",3000],["Turns/input","{shaft.input.speed}"]]}}],"view":{"annotate":["aW"]}},{"say":"Cut open: the lower bearing rings the shaft.","highlight":["shaft.lowerBearing"],"view":{"section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]}}]}"#
 }

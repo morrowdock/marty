@@ -80,14 +80,15 @@ final class MartyEngineTests: XCTestCase {
                 let text = try String(contentsOf: models.appendingPathComponent(file), encoding: .utf8)
                 var mine = try XCTUnwrap(try JSONSerialization.jsonObject(with: MartyJSON.data(try e.check(document: text, ref: nil, components: [], strict: strict))) as? [String: Any])
                 // `file` describes different bytes (the CLI's file; Marty's canonical JSON). The goldens predate the fields
-                // the engine's own golden test strips (`engine`, `partTiers`, `motionTiers`, and the anchor fields
-                // `anchorIssues`, `anchorUntested`, `anchor`); Marty must have the first three.
+                // the engine's own golden test strips (`engine`, `partTiers`, `motionTiers`, the anchor fields
+                // `anchorIssues`, `anchorUntested`, `anchor`, and the arrow fields `arrowIssues`, `arrow`); Marty must have
+                // the first three.
                 if mine["readBack"] != nil {
                     XCTAssertNotNil(mine["partTiers"] as? [Any], "\(name): partTiers")
                     XCTAssertNotNil(mine["motionTiers"] as? [Any], "\(name): motionTiers")
                 }
                 XCTAssertNotNil(mine["engine"] as? [String: Any], "\(name): engine")
-                for k in ["file", "engine", "partTiers", "motionTiers", "anchorIssues", "anchorUntested", "anchor"] {
+                for k in ["file", "engine", "partTiers", "motionTiers", "anchorIssues", "anchorUntested", "anchor", "arrowIssues", "arrow"] {
                     cli.removeValue(forKey: k); mine.removeValue(forKey: k)
                 }
                 for k in ["ref", "partIds"] { mine.removeValue(forKey: k) }
