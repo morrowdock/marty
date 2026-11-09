@@ -48,14 +48,17 @@ the MCP server uses), so a run needs no MCP client.
    around them, and white space unified; trailing punctuation ignored; an
    ellipsis or a bracketed insertion such as "[…]" or "[s]" in the quote is a
    gap, so the quote's parts must all be found in order; all parts together at
-   least 16 characters and the longest at least 8, matched on word boundaries
-   at the quote's edges and at a gap with a space beside it (a gap inside a
-   word, "engine[s]", needs none), so a bare "85 mph" is no evidence and does
-   not match "185 mph"; a part that starts with a sign, "-5 degrees", may
-   follow a letter but not a digit). A found
+   least 16 characters and the longest at least 8, each part matched on word
+   boundaries except where a gap is glued to a letter (a word completed in
+   brackets, "engine[s]", "[T]he"), so a bare "85 mph" is no evidence and
+   neither "85 mph" nor "[…]85 mph" matches "185 mph"; a leading decimal point
+   is kept (".5 litres" is not "5 litres"), and a part that starts with a sign
+   or a decimal point, "-5 degrees", may follow a letter but not a digit). A found
    Each source's date comes only from its fetched page: its publication date
-   (its JSON-LD or meta date in either attribute order and either quote style,
-   or its first `<time>`), whether or not the quote was found; a page that
+   (its publication meta tag in either attribute order and either quote
+   style; else the top-level `datePublished` of its JSON-LD article object,
+   never a nested one such as a related article's; else a `<time>` marked as
+   the publication date), whether or not the quote was found; a page that
    states none, or a page that was not fetched, leaves the date empty (the
    model's date is removed; every change is listed in `downgrades`). The site that counts is the one the page finally came
    from (a redirect to a blocked or free hosting site fails). Each source records its `check` ("quote found", "quote not found",

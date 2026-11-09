@@ -1300,7 +1300,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(QuoteCheck.found("The suit [...] gives a thrust of 144 kgf in total", in: page))
         XCTAssertTrue(QuoteCheck.found("with five engines [it] gives a thrust of 144 kgf", in: page))
         XCTAssertFalse(QuoteCheck.found("gives a thrust of 155 kgf in total", in: page))
-        XCTAssertEqual(QuoteCheck.pageDate(#"<script type="application/ld+json">{"datePublished": "2019-07-12T10:00"}</script>"#), "2019-07-12")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<script type="application/ld+json">{"@type": "Article", "datePublished": "2019-07-12T10:00"}</script>"#), "2019-07-12")
         XCTAssertEqual(QuoteCheck.pageDate(#"<meta property="article:published_time" content="2020-03-05T00:00:00Z">"#), "2020-03-05")
         XCTAssertNil(QuoteCheck.pageDate("<p>no date</p>"))
         func src(_ url: String, _ quote: String, _ date: String) -> [String: Any] { ["url": url, "publisher": "P", "date": date, "quote": quote] }
@@ -1329,6 +1329,20 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertFalse(QuoteCheck.found("The engine produce 144 kgf of thrust", in: "<p>The engines produce 144 kgf of thrust.</p>"))
         XCTAssertFalse(QuoteCheck.found("85 mph [...] 85 mph", in: "<p>85 mph and 85 mph</p>"), "no part of 8 characters")
         XCTAssertFalse(QuoteCheck.found("of 85 mph", in: "<p>top speed of 185 mph and more</p>"))
+        XCTAssertFalse(QuoteCheck.found("maximum speed [\u{2026}]85 mph", in: "<p>the maximum speed 185 mph</p>"), "a spaced gap protects both sides")
+        XCTAssertTrue(QuoteCheck.found("maximum speed [\u{2026}]85 mph", in: "<p>the maximum speed is about 85 mph</p>"))
+        XCTAssertFalse(QuoteCheck.found("[\u{2026}]85 mph top speed here", in: "<p>185 mph top speed here</p>"), "a leading gap keeps the outer boundary of a number")
+        XCTAssertTrue(QuoteCheck.found("[T]he engines produce 144 kgf", in: "<p>The engines produce 144 kgf.</p>"))
+        XCTAssertFalse(QuoteCheck.found(".5 litres per minute", in: "<p>it uses 5 litres per minute</p>"), "a decimal point is kept")
+        XCTAssertTrue(QuoteCheck.found(".5 litres per minute", in: "<p>it uses .5 litres per minute</p>"))
+        XCTAssertFalse(QuoteCheck.found("flow [...] .5 litres per minute", in: "<p>flow of 1.5 litres per minute</p>"))
+        // The page's own date: explicit meta first; JSON-LD only from the page's article object, never a nested one.
+        let related = #"<script type="application/json">{"relatedArticles":[{"datePublished":"2017-01-01"}]}</script><meta property="article:published_time" content="2026-11-01">"#
+        XCTAssertEqual(QuoteCheck.pageDate(related), "2026-11-01")
+        XCTAssertNil(QuoteCheck.pageDate(#"<script type="application/json">{"datePublished":"2017-01-01"}</script>"#))
+        XCTAssertEqual(QuoteCheck.pageDate(#"<script type="application/ld+json">{"@graph": [{"@type": "WebPage", "datePublished": "2019-01-01"}, {"@type": "NewsArticle", "datePublished": "2019-07-12T10:00", "mentions": {"@type": "Article", "datePublished": "2001-01-01"}}]}</script>"#), "2019-07-12")
+        XCTAssertNil(QuoteCheck.pageDate(#"<time datetime="2015-05-05">May</time>"#), "an unmarked time is not the publication date")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<time itemprop="datePublished" datetime="2016-06-06">June</time>"#), "2016-06-06")
         // Date metadata in either attribute order, with any of the names, in single or double quotes.
         XCTAssertEqual(QuoteCheck.pageDate(#"<meta content="2020-01-02" name="citation_publication_date">"#), "2020-01-02")
         XCTAssertEqual(QuoteCheck.pageDate(#"<meta content='2021-02-03T00:00' property='og:published_time'>"#), "2021-02-03")

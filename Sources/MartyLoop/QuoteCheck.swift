@@ -210,7 +210,7 @@ public enum QuoteCheck {
         // starts with a sign ("-5 degrees") is matched after a letter but not after a digit (see `match`).
         t = t.replacingOccurrences(of: #" ?- ?"#, with: "-", options: .regularExpression)
         // A removed tag leaves a space before punctuation ("derail ."); drop it on both sides.
-        t = t.replacingOccurrences(of: #" ([.,;:!?)\]])"#, with: "$1", options: .regularExpression)
+        t = t.replacingOccurrences(of: #" ([.,;:!?)\]])(?![0-9])"#, with: "$1", options: .regularExpression)
             .replacingOccurrences(of: #"([(\[]) "#, with: "$1", options: .regularExpression)
         return t.trimmingCharacters(in: .whitespaces)
     }
@@ -242,25 +242,26 @@ public enum QuoteCheck {
     /// Where `quote` is in `page` (normalized page text and the matched ranges), or nil: every part of the quote
     /// (split at an ellipsis or a bracketed insertion) in order, all parts together at least `minimumPart`
     /// characters and the longest at least half that. A part starts and ends on a word boundary ("85 mph" does not
-    /// match inside "185 mph") at the quote's outer edges and at a gap with a space beside it; a gap inside a word
-    /// ("engine[s]") needs none. A part that starts with a sign ("-5 degrees") may follow a letter, not a digit.
+    /// match inside "185 mph"), except a letter glued to a gap (a word completed in brackets, "engine[s]"). A part that starts with a sign ("-5 degrees") may follow a letter, not a digit.
     static func match(_ quote: String, in page: String, html: Bool = true) -> (page: String, ranges: [Range<String.Index>])? {
         // In a quote, an ellipsis and any bracketed insertion ("[...]", "[…]", "[s]", "[the suit]") are gaps.
         let gap = "\u{1}"
         var q = normalized(quote, html: false).replacingOccurrences(of: #"\[[^\]]{0,40}\]"#, with: gap, options: .regularExpression)
             .replacingOccurrences(of: "...", with: gap)
-        q = q.trimmingCharacters(in: CharacterSet(charactersIn: " .,;:!?"))   // a trailing period the page may not have
+        q = trimEdges(q)   // a trailing period the page may not have
         let p = normalized(page, html: html)
-        let edge = CharacterSet(charactersIn: " .,;:!?")
         let raw = q.components(separatedBy: gap)
-        // Each part with whether it needs a word boundary before and after it.
+        // A part needs a word boundary on each side, except where a gap is glued to it (no space or punctuation
+        // between) and the glued character is a letter: a word completed in brackets ("engine[s]", "[T]he"). A
+        // number always needs its boundaries ("[…]85 mph" does not match "185 mph").
+        func glued(_ c: Character?) -> Bool { c.map { !" .,;:!?".contains($0) } ?? false }
         var parts: [(text: String, before: Bool, after: Bool)] = []
         for (n, r) in raw.enumerated() {
-            let t = r.trimmingCharacters(in: edge)
+            let t = trimEdges(r)
             guard !t.isEmpty else { continue }
-            let spacedBefore = n == 0 || r.first.map { $0 == " " } ?? true
-            let spacedAfter = n == raw.count - 1 || r.last.map { $0 == " " } ?? true
-            parts.append((t, spacedBefore, spacedAfter))
+            let inWordBefore = n > 0 && glued(r.first) && t.first?.isLetter == true
+            let inWordAfter = n < raw.count - 1 && glued(r.last) && t.last?.isLetter == true
+            parts.append((t, !inWordBefore, !inWordAfter))
         }
         // All parts together at least 16 characters, the longest at least 8 (a bare value is no evidence).
         guard let longest = parts.map(\.text.count).max(), longest >= minimumPart / 2,
@@ -278,7 +279,8 @@ public enum QuoteCheck {
         for (part, needBefore, needAfter) in parts {
             var search = from
             var hit: Range<String.Index>? = nil
-            let signed = part.first == "-" && part.dropFirst().first?.isNumber == true
+            // A sign or a leading decimal point ("-5", ".5") may follow a letter or a space, never a digit.
+            let signed = (part.first == "-" || part.first == "." || part.first == ",") && part.dropFirst().first?.isNumber == true
             while let r = p.range(of: part, range: search..<p.endIndex) {
                 if (!needBefore || boundary(r.lowerBound, before: true, signed: signed)) && (!needAfter || boundary(r.upperBound, before: false)) { hit = r; break }
                 search = p.index(after: r.lowerBound)
@@ -290,6 +292,19 @@ public enum QuoteCheck {
     }
 
     public static func found(_ quote: String, in page: String, html: Bool = true) -> Bool { match(quote, in: page, html: html) != nil }
+
+    /// Spaces and punctuation trimmed from both ends, except a leading decimal point or comma before a digit (".5
+    /// litres" is not "5 litres").
+    static func trimEdges(_ s: String) -> String {
+        let edge = " .,;:!?"
+        var t = Substring(s)
+        while let c = t.last, edge.contains(c) { t = t.dropLast() }
+        while let c = t.first, edge.contains(c) {
+            if (c == "." || c == ","), t.dropFirst().first?.isNumber == true { break }
+            t = t.dropFirst()
+        }
+        return String(t)
+    }
 
     /// Whether the quote, or the page text within 160 characters around it, attributes the figure to its maker or
     /// one person.
@@ -303,22 +318,54 @@ public enum QuoteCheck {
         }
     }
 
-    /// The page's publication date (YYYY-MM-DD) from its metadata: JSON-LD datePublished, the article:published_time
-    /// or date meta tags, or the first <time datetime>; nil when the page states none.
+    /// The page's own publication date (YYYY-MM-DD), nil when the page states none. In order: its publication meta
+    /// tags (article:published_time, og:published_time, date, dc.date, citation_publication_date, pubdate,
+    /// itemprop datePublished; either attribute order and quote style); the top-level `datePublished` of its JSON-LD
+    /// article object (Article, NewsArticle, BlogPosting, ...; then WebPage), never a nested one such as a related
+    /// article's; a `<time>` marked as the publication date (itemprop datePublished or pubdate).
     static func pageDate(_ html: String) -> String? {
-        let names = #"(?:article:published_time|og:published_time|date|dc\.date|dc\.date\.issued|citation_publication_date|pubdate)"#
-        let patterns = [#""datePublished"\s*:\s*"(\d{4}-\d{2}-\d{2})"#,
-                        #"(?i)<meta[^>]+(?:property|name)=["']"# + names + #"["'][^>]+content=["'](\d{4}[-/]\d{2}[-/]\d{2})"#,
-                        #"(?i)<meta[^>]+content=["'](\d{4}[-/]\d{2}[-/]\d{2})[^"']*["'][^>]+(?:property|name)=["']"# + names + #"["']"#,
-                        #"(?i)<time[^>]+datetime=["'](\d{4}-\d{2}-\d{2})"#]
-        for p in patterns {
-            guard let re = try? NSRegularExpression(pattern: p) else { continue }
-            let ns = html as NSString
-            if let m = re.firstMatch(in: html, range: NSRange(location: 0, length: min(ns.length, 400_000))), m.numberOfRanges > 1 {
-                return ns.substring(with: m.range(at: 1)).replacingOccurrences(of: "/", with: "-")
+        let ns = html as NSString
+        let scan = NSRange(location: 0, length: min(ns.length, 400_000))
+        func first(_ p: String) -> String? {
+            guard let re = try? NSRegularExpression(pattern: p), let m = re.firstMatch(in: html, range: scan), m.numberOfRanges > 1 else { return nil }
+            return ns.substring(with: m.range(at: 1)).replacingOccurrences(of: "/", with: "-")
+        }
+        let names = #"(?:article:published_time|og:published_time|date|dc\.date|dc\.date\.issued|citation_publication_date|pubdate|datePublished)"#
+        let attr = #"(?:property|name|itemprop)=["']"# + names + #"["']"#
+        let date = #"(\d{4}[-/]\d{2}[-/]\d{2})"#
+        if let d = first(#"(?i)<meta[^>]+"# + attr + #"[^>]+content=["']"# + date) ?? first(#"(?i)<meta[^>]+content=["']"# + date + #"[^"']*["'][^>]+"# + attr) {
+            return d
+        }
+        if let d = jsonLDDate(html, scan) { return d }
+        let marked = #"(?:itemprop=["']datePublished["']|pubdate)"#
+        return first(#"(?i)<time[^>]+"# + marked + #"[^>]*datetime=["'](\d{4}-\d{2}-\d{2})"#)
+            ?? first(#"(?i)<time[^>]+datetime=["'](\d{4}-\d{2}-\d{2})[^>]*"# + marked)
+    }
+
+    static let articleTypes: Set<String> = ["Article", "NewsArticle", "BlogPosting", "TechArticle", "ScholarlyArticle", "Report",
+                                            "ReportageNewsArticle", "AnalysisNewsArticle", "LiveBlogPosting", "PressRelease"]
+
+    /// The top-level `datePublished` of the page's JSON-LD article object (in a script of type application/ld+json,
+    /// itself, in a list or in its @graph), else of its WebPage object.
+    static func jsonLDDate(_ html: String, _ scan: NSRange) -> String? {
+        guard let re = try? NSRegularExpression(pattern: #"(?is)<script[^>]+type=["']application/ld\+json["'][^>]*>(.*?)</script>"#) else { return nil }
+        let ns = html as NSString
+        var objects: [[String: Any]] = []
+        for m in re.matches(in: html, range: scan) {
+            guard let o = try? JSONSerialization.jsonObject(with: Data(ns.substring(with: m.range(at: 1)).utf8)) else { continue }
+            let top = (o as? [Any]) ?? [o]
+            for case let d as [String: Any] in top {
+                objects.append(d)
+                for case let g as [String: Any] in d["@graph"] as? [Any] ?? [] { objects.append(g) }
             }
         }
-        return nil
+        func types(_ d: [String: Any]) -> [String] { (d["@type"] as? [String]) ?? [(d["@type"] as? String) ?? ""] }
+        func date(_ d: [String: Any]) -> String? {
+            guard let s = d["datePublished"] as? String, s.range(of: #"^\d{4}-\d{2}-\d{2}"#, options: .regularExpression) != nil else { return nil }
+            return String(s.prefix(10))
+        }
+        return objects.first { types($0).contains(where: articleTypes.contains) && date($0) != nil }.flatMap(date)
+            ?? objects.first { types($0).contains("WebPage") && date($0) != nil }.flatMap(date)
     }
 
     /// Words in a quote that mark a statement by the maker or one person: such a row is at most a CLAIM.
