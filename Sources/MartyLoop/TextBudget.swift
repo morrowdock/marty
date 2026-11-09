@@ -143,7 +143,7 @@ import MartyEngine
     /// nil (the repair asks the model to shorten).
     static func cutAtWord(_ t: String, limit: Int) -> String? {
         // A text with a list (numbered or bulleted items, or items in a sentence) is never cut.
-        if t.range(of: #"(^|\s)(\d{1,2}[.)]|[-\u{2022}*\u{2013}])\s"#, options: .regularExpression) != nil { return nil }
+        if t.range(of: #"(^|\s)(\d{1,2}[.)]|[-\x{2022}*\x{2013}])\s"#, options: .regularExpression) != nil { return nil }
         // Nor one with an abbreviation, whose period is no sentence end ("e.g.", "approx.").
         if t.range(of: #"(?i)\b(e\.g|i\.e|etc|vs|approx|fig|no|cf|ca|incl|max|min|mr|mrs|dr|st)\."#, options: .regularExpression) != nil { return nil }
         let marked = t.replacingOccurrences(of: #"(?<=[.!?])\s+"#, with: "\u{1}", options: .regularExpression)

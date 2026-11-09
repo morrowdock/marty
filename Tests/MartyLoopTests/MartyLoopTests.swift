@@ -1149,6 +1149,7 @@ final class MartyLoopTests: XCTestCase {
         // The length cut never shortens a list, numbered or bulleted.
         XCTAssertNil(TextBudget.cutAtWord("The shaft rotates in its bearings. 1. Fit bearing. 2. Tighten guard.", limit: 60))
         XCTAssertNil(TextBudget.cutAtWord("The shaft rotates in its bearings and turns freely. - Do not touch.", limit: 55))
+        XCTAssertNil(TextBudget.cutAtWord("The shaft rotates in its bearings and turns freely. \u{2022} Keep it clean. \u{2022} Oil it.", limit: 55), "a bullet list")
         XCTAssertNil(TextBudget.cutAtWord(String(repeating: "x", count: 60) + ". Then the shaft turns and", limit: 64), "an unfinished sentence is not dropped")
         XCTAssertNil(TextBudget.cutAtWord("The shaft turns in two bearings on a base. The same holds for e.g. a guarded shaft.", limit: 60), "an abbreviation")
     }
@@ -1173,6 +1174,9 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(FactCheck.reason(none), "fact.notPublished.annotation.lV")
         XCTAssertTrue(none.first?.line.contains("not found in this search") == true)
         XCTAssertFalse(FactCheck.findings(["v": 2, "kind": "assembly", "title": "The total thrust is unpublished"], evidence: .init()).isEmpty)
+        for phrase in ["The figure hasn't been published", "The figure hasn\u{2019}t been published", "The figure is not publicly released", "The data was never made public"] {
+            XCTAssertEqual(FactCheck.findings(["v": 2, "kind": "assembly", "title": phrase], evidence: .init()).first?.kind, "notPublished", phrase)
+        }
         var sourced = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [["id": "F1", "claim": "Thrust figures", "label": "CLAIM",
             "sources": [["url": "https://a.org/1", "publisher": "A", "date": "2020", "quote": "the maker has not published its thrust figures"]]]]])))
         sourced.checkQuotes(fetcher: TestPages(pages: ["https://a.org/1": "<p>So far the maker has not published its thrust figures.</p>"], fallback: nil))
@@ -1218,6 +1222,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertNil(QuoteCheck.pageDate(#"<h1>Title</h1><p>Last updated on <time>June 1, 2023</time></p>"#))
         XCTAssertEqual(QuoteCheck.pageDate(#"<h1>Title</h1><p>Updated at <time>June 1, 2023</time></p><time>May 2, 2021</time>"#), "2021-05-02")
         XCTAssertNil(QuoteCheck.pageDate(#"<h1>Title</h1><div class="date"><time>June 1, 2023</time> (updated)</div>"#))
+        XCTAssertEqual(QuoteCheck.pageDate(#"<h1>Title</h1><p>Published <time>May 2, 2021</time> Updated <time>June 1, 2023</time></p>"#), "2021-05-02")
         XCTAssertEqual(QuoteCheck.pageDate(#"<meta content="2019-03-03" name="date"><meta name="pubdate" content="2020-04-04">"#), "2019-03-03", "document order")
         XCTAssertEqual(QuoteCheck.pageDate(#"<script type="application/ld+json">{"@type": "Article", "datePublished": "2021-02-29"}</script><h1>T</h1><time>May 2, 2021</time>"#), "2021-05-02")
         XCTAssertEqual(QuoteCheck.pageDate(#"<h1>FEATURE: Meet the man</h1><time class="time" datetime="2020-51-09">09 Apr 2020</time>"#), "2020-04-09")
@@ -1283,6 +1288,10 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(QuoteCheck.statedNumbers("two dozen panels", inOrder: true), ["24"])
         XCTAssertEqual(QuoteCheck.statedNumbers("twenty-four modules", inOrder: true), ["24"])
         XCTAssertEqual(Set(QuoteCheck.statedNumbers("two hundred and, five")), ["200", "5"])
+        XCTAssertFalse(QuoteCheck.found("The aircraft has 2 jet engines", in: "<p>The aircraft has 2 jet engines per wing.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The engine produces 100 brake horsepower", in: "<p>The engine produces 100 brake horsepower per litre.</p>"))
+        XCTAssertTrue(QuoteCheck.found("The aircraft has 2 jet engines", in: "<p>The aircraft has 2 jet engines under its wings.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The device has 5 engines", in: "<p>The device has 5 engines to ten engines.</p>"))
         // A worded or Roman value is checked like a digit one.
         var romanRow = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [
             ["id": "F1", "claim": "Version", "value": "Mk XII", "label": "CLAIM", "sources": [["url": "https://a.org/5", "publisher": "A", "date": "2020", "quote": "The current Mk IV device is lighter"]]],

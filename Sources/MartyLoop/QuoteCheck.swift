@@ -665,7 +665,18 @@ public enum QuoteCheck {
             let e = s + last
             // A counted noun right after a number ("5 engines") keeps its bounds, rates and ranges ("or more", "per
             // wing", "every …"), though it is no unit (no default deny after it).
-            let countEnd = last > 0 && w[last].text.allSatisfy(\.isLetter) && w[last - 1].hasDigit && !w[last - 1].closedAfter
+            // (Also a few words: "2 jet engines", "100 brake horsepower".)
+            let countEnd: Bool = {
+                guard w[last].text.allSatisfy(\.isLetter) else { return false }
+                var k = last - 1
+                while k >= 0, k >= last - 3 {
+                    if w[k].closedAfter { return false }
+                    if w[k].hasDigit { return true }
+                    guard w[k].text.allSatisfy(\.isLetter) else { return false }
+                    k -= 1
+                }
+                return false
+            }()
             if !completedEnd, e + 1 < p.count, !p[e].closedAfter, numericEnd(w) || countEnd {
                 let next = p[e + 1]
                 // A dash goes on with a number only when a number follows it ("10 - 20"); before a word it is
@@ -710,7 +721,7 @@ public enum QuoteCheck {
                 }
                 let dashBeforeWord = next.text == "-" && !(unitEnd && quantityEnd(w, last) != nil) && !(after.map { $0.hasDigit || $0.text.first == "." || isSign($0) } ?? false)
                 if bare(next), !dashBeforeWord { return false }
-                if next.text == "to", e + 2 < p.count, p[e + 2].hasDigit || isSign(p[e + 2]) { return false }
+                if next.text == "to", e + 2 < p.count, p[e + 2].hasDigit || isSign(p[e + 2]) || Self.numberWords[p[e + 2].text] != nil { return false }
                 // The start of a "between … and …" range.
                 if next.text == "and", e + 2 < p.count, p[e + 2].hasDigit || isSign(p[e + 2]), let k = quantityEnd(p, e),
                    p[max(0, k - 3)..<k].contains(where: { $0.text == "between" }) { return false }
@@ -875,10 +886,16 @@ public enum QuoteCheck {
                 .replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
                 .replacingOccurrences(of: "\u{00A0}", with: " ").lowercased()
             if before.range(of: #"(updated|modified|revised|last edited|related)\s*(?:on|at)?\s*:?\s*$"#, options: .regularExpression) != nil { continue }
-            // Nor one followed by an update marker ("June 1, 2023 (updated)").
-            let following = decodeEntities(ans.substring(with: NSRange(location: close, length: min(120, ans.length - close))))
-                .replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression).lowercased()
-            if following.range(of: #"^\s*\(?\s*(updated|modified|revised)"#, options: .regularExpression) != nil { continue }
+            // Nor one followed by its own update marker ("June 1, 2023 (updated)"); an update label that introduces the
+            // next date ("… Updated <time>…") belongs to that date.
+            let rest = ans.substring(with: NSRange(location: close, length: min(200, ans.length - close)))
+            if let gt = rest.firstIndex(of: ">") {
+                let tail = rest[rest.index(after: gt)...]
+                let segment = decodeEntities(String(tail.prefix { $0 != "<" })).lowercased()
+                let nextTag = tail.drop { $0 != "<" }.lowercased()
+                let introducesNext = nextTag.hasPrefix("<time") || nextTag.range(of: #"^<[a-z0-9]+[^>]*(date|byline|publish|posted)"#, options: .regularExpression) != nil
+                if segment.range(of: #"^\s*[\(\[,\-\x{2013}\x{2014}]?\s*(updated|modified|revised)"#, options: .regularExpression) != nil, !introducesNext { continue }
+            }
             let text = decodeEntities(inner.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression))
                 .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             if text.lowercased().range(of: #"\b(updated|modified|revised|related)\b"#, options: .regularExpression) != nil { continue }
