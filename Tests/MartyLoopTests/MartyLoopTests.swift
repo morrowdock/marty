@@ -1620,6 +1620,22 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(QuoteCheck.found("10 kg is required for operation", in: "<p>Exactly 10 kg is required for operation.</p>"), "10 kg is required for operation | Exactly 10 kg is required for operation.")
         XCTAssertTrue(QuoteCheck.found("Up to 10 litres per minute can be delivered", in: "<p>Up to 10 litres per minute can be delivered.</p>"), "Up to 10 litres per minute can be delivered | Up to 10 litres per minute can be delivered.")
         XCTAssertTrue(QuoteCheck.found("The panel measures 10 cm by 20 cm", in: "<p>The panel measures 10 cm by 20 cm.</p>"), "The panel measures 10 cm by 20 cm | The panel measures 10 cm by 20 cm.")
+        // Round 24: abbreviated bounds, trailing bounds, modifiers before a quantity, cubic/square and data units.
+        XCTAssertFalse(QuoteCheck.found("10 kg is required for operation", in: "<p>Approx. 10 kg is required for operation.</p>"), "10 kg is required for operation | Approx. 10 kg is required for operation.")
+        XCTAssertFalse(QuoteCheck.found("10 kg is required for operation", in: "<p>Max. 10 kg is required for operation.</p>"), "10 kg is required for operation | Max. 10 kg is required for operation.")
+        XCTAssertFalse(QuoteCheck.found("The electric motor weighs 10 kg", in: "<p>The electric motor weighs 10 kg or less.</p>"), "The electric motor weighs 10 kg | The electric motor weighs 10 kg or less.")
+        XCTAssertFalse(QuoteCheck.found("The power output is 10 kW", in: "<p>The power output is 10 kW or more.</p>"), "The power output is 10 kW | The power output is 10 kW or more.")
+        XCTAssertFalse(QuoteCheck.found("The power output is 10 kW", in: "<p>The power output is 10 kW max.</p>"), "The power output is 10 kW | The power output is 10 kW max.")
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres in just 30 seconds.</p>"), "The pump delivers 10 litres | The pump delivers 10 litres in just 30 seconds.")
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres in approximately 30 seconds.</p>"), "The pump delivers 10 litres | The pump delivers 10 litres in approximately 30 seconds.")
+        XCTAssertFalse(QuoteCheck.found("The panel measures 10 cm", in: "<p>The panel measures 10 cm by about 20 cm.</p>"), "The panel measures 10 cm | The panel measures 10 cm by about 20 cm.")
+        XCTAssertFalse(QuoteCheck.found("The capacity is 100", in: "<p>The capacity is 100 cubic metres.</p>"), "The capacity is 100 | The capacity is 100 cubic metres.")
+        XCTAssertFalse(QuoteCheck.found("The drive stores 100", in: "<p>The drive stores 100 gigabytes of data.</p>"), "The drive stores 100 | The drive stores 100 gigabytes of data.")
+        XCTAssertFalse(QuoteCheck.found("The drive stores 100", in: "<p>The drive stores 100 GB of data.</p>"), "The drive stores 100 | The drive stores 100 GB of data.")
+        XCTAssertTrue(QuoteCheck.found("The electric motor weighs 10 kg or less", in: "<p>The electric motor weighs 10 kg or less.</p>"), "The electric motor weighs 10 kg or less | The electric motor weighs 10 kg or less.")
+        XCTAssertTrue(QuoteCheck.found("Approx. 10 kg is required for operation", in: "<p>Approx. 10 kg is required for operation.</p>"), "Approx. 10 kg is required for operation | Approx. 10 kg is required for operation.")
+        XCTAssertTrue(QuoteCheck.found("It weighs 10 kg and flies well", in: "<p>It weighs 10 kg and flies well.</p>"), "It weighs 10 kg and flies well | It weighs 10 kg and flies well.")
+        XCTAssertTrue(QuoteCheck.found("The capacity is 100 cubic metres", in: "<p>The capacity is 100 cubic metres.</p>"), "The capacity is 100 cubic metres | The capacity is 100 cubic metres.")
         // Table cells are separate; inline markup joins.
         let specs = "<p>Maximum thrust of the rig</p><table><tr><th>Motors</th><td>1</td><td>144 kgf</td></tr></table>"
         XCTAssertFalse(QuoteCheck.found("Maximum thrust [\u{2026}] 1,144 kgf", in: specs))

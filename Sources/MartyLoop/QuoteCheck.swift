@@ -278,11 +278,23 @@ public enum QuoteCheck {
         let spelled = ["percent", "percentage", "pct", "bar", "psi", "rpm", "mph", "kph", "kmh", "knot", "knots", "hp", "bhp", "kgf", "lbf",
                        "btu", "db", "decibel", "decibels", "degree", "degrees", "kelvin", "celsius", "fahrenheit", "foot", "feet", "inch",
                        "inches", "yard", "yards", "mile", "miles", "ton", "tons", "tonne", "tonnes", "pound", "pounds", "lb", "lbs", "ounce",
-                       "ounces", "oz", "gallon", "gallons", "gal", "horsepower", "calorie", "calories", "kcal", "ft", "in"]
+                       "ounces", "oz", "gallon", "gallons", "gal", "horsepower", "calorie", "calories", "kcal", "ft", "in",
+                       "cubic", "square", "sq", "cu", "bit", "bits", "byte", "bytes", "kb", "mb", "gb", "tb", "pb", "kib", "mib", "gib",
+                       "tib", "kbps", "mbps", "gbps", "bps", "flops"]
         if spelled.contains(t) { return true }
-        return t.range(of: "^(kilo|mega|giga|tera|milli|micro|nano|centi|deci)?(watt|volt|amp|ampere|joule|newton|pascal|metre|meter|gram|litre|liter|hertz|second|ohm|watt-hour)s?$",
+        return t.range(of: "^(kilo|mega|giga|tera|milli|micro|nano|centi|deci)?(watt|volt|amp|ampere|joule|newton|pascal|metre|meter|gram|litre|liter|hertz|second|ohm|watt-hour|bit|byte)s?$",
                        options: .regularExpression) != nil
     }
+
+    /// Words between a connector and a quantity ("in just 30 seconds", "by about 20 cm").
+    static let modifiers: Set<String> = ["just", "about", "approximately", "approx", "roughly", "only", "around", "nearly", "almost",
+                                         "some", "under", "over", "less", "than", "more", "at", "least", "most", "up", "to", "a", "mere"]
+    /// Words right after a quantity that bound or qualify it ("10 kg max", "10 kw peak").
+    static let postBounds: Set<String> = ["max", "maximum", "min", "minimum", "approx", "approximately", "nominal", "typical", "peak",
+                                          "plus", "minimum", "maximal", "or"]
+    /// The word after "or"/"and" that makes it a bound ("or less", "or more", "and up", "and above").
+    static let boundTails: Set<String> = ["less", "more", "fewer", "greater", "higher", "lower", "above", "below", "over", "under",
+                                          "so", "up", "beyond", "thereabouts", "better", "worse"]
 
     /// Written bounds and approximations right before a number: the quote must keep them ("up to 10", "at least 10").
     static let boundWords: Set<String> = ["than", "least", "most", "about", "around", "approximately", "approx", "nearly", "almost",
@@ -453,6 +465,9 @@ public enum QuoteCheck {
             var t = String(raw), after = false
             func trimEnd() { while let c = t.last, ".,;:!?".contains(c) { t.removeLast(); after = true } }
             trimEnd()
+            // A bound abbreviation's period ("approx. 10", "max. 10") does not end it either.
+            if after, raw.last == ".", !raw.dropLast().contains(where: { ".,;:!?".contains($0) }),
+               ["approx", "appx", "max", "min", "ca", "c", "est", "abt", "nom", "typ"].contains(t) { after = false }
             // A unit abbreviation's period after a number ("10 in.", "10 gal.", "10 cu. ft.") does not end the
             // quantity: what may follow it is decided in `match` (a sentence after it, "10 s. A second", then misses).
             if after, raw.last == ".", !raw.dropLast().contains(where: { ".,;:!?".contains($0) }), t.count <= 3,
@@ -574,9 +589,19 @@ public enum QuoteCheck {
                 if withUnit, !Self.proseAfterQuantity.contains(next.text) { return false }
                 // An allowed word that leads into another quantity or a time continues it ("10 cm by 20 cm",
                 // "10 litres in 30 seconds", "10 kg over 2 hours").
-                if withUnit || w[last].hasDigit, let t = after,
-                   t.hasDigit || isSign(t) || Self.countWords.contains(t.text) || ((t.text == "a" || t.text == "an") && e + 3 < p.count && Self.timeUnits.contains(p[e + 3].text)),
-                   ["by", "in", "over", "for", "within", "under", "every", "each"].contains(next.text) { return false }
+                // Modifiers between the connector and the quantity are skipped ("in just 30 seconds", "by about 20 cm").
+                var m = e + 2
+                while m < p.count, m < e + 5, Self.modifiers.contains(p[m].text) { m += 1 }
+                if withUnit || w[last].hasDigit, m < p.count, ["by", "in", "over", "for", "within", "under", "every", "each"].contains(next.text) {
+                    let t = p[m]
+                    if t.hasDigit || isSign(t) || Self.countWords.contains(t.text)
+                        || ((t.text == "a" || t.text == "an") && m + 1 < p.count && Self.timeUnits.contains(p[m + 1].text)) { return false }
+                }
+                // A bound after the quantity ("10 kg or less", "10 kw or more", "10 kg max", "10 bar and up").
+                if withUnit || w[last].hasDigit {
+                    if Self.postBounds.contains(next.text) { return false }
+                    if next.text == "or" || next.text == "and", let t = after, Self.boundTails.contains(t.text) { return false }
+                }
                 // After a bare number, a unit word goes on ("10 percent", "100 watt hours", "10 m").
                 if !withUnit, w[last].hasDigit, Self.isUnitWord(next.text) { return false }
                 // A number goes on with a magnitude ("$10 million", "3 bn").

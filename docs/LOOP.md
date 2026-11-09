@@ -89,7 +89,10 @@ the MCP server uses), so a run needs no MCP client.
    hours", "10 m"); a unit abbreviation's period after a number ("10 in.",
    "10 gal.") never ends the quantity; a part that starts with a number may
    not follow a written bound or approximation ("up to", "at least", "less
-   than", "about", "over", ...); a quantity's unit may
+   than", "about", "over", "approx.", "max.", ...), and a quantity may not be
+   followed by one ("or less", "or more", "max", "and up"); modifiers between
+   a connector and a quantity are skipped ("in just 30 seconds"); cubic,
+   square and data units are unit words; a quantity's unit may
    be a few words with unit symbols ("10 degrees Celsius", "10 N-m", "10 m/s"); a range in words is whole at both ends ("10 to 20 bar" and
    "between 10 degrees Celsius and 20 degrees Celsius" give neither end); a gap glued to a number keeps these rules
    ("[…]5 degrees" is not "−5 degrees"); a dash before a word is punctuation
