@@ -1527,7 +1527,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertFalse(QuoteCheck.found("1050 horsepower.", in: "<p>It makes 1050 horsepower.</p>"), "punctuation is no context")
         XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres (per minute).</p>"))
         XCTAssertFalse(QuoteCheck.found("The engine makes 10 kW", in: "<p>The engine makes 10 kW (maximum) at full speed.</p>"))
-        for aside in ["(a minute)", "(an hour)", "(and up)", "(at most)", "(or more)", "(up to 12)", "at most", "up to 12"] {
+        for aside in ["(a minute)", "(an hour)", "(and up)", "(at most)", "(or more)", "(up to 12)", "at most", "up to 12", "twice a minute", "(once per minute)", "quarterly"] {
             XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres \(aside) when it runs.</p>"), aside)
         }
         var short = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": ["LPG", "gas", "Jet A", "diesel"].enumerated().map { n, v in
@@ -1550,6 +1550,17 @@ final class MartyLoopTests: XCTestCase {
         steps[0]["say"] = "Two bearings hold a shaft. The lower bearing carries most of the load."
         crowded["steps"] = steps
         XCTAssertEqual(MartyLoop.shareFindings(crowded), ["The lower bearing carries most of the load"])
+        for share in ["The lower bearing carries half the load", "The lower bearing carries a third of the load", "It carries two thirds of the weight"] {
+            XCTAssertEqual(MartyLoop.unsupportedComparatives(share + ".", sources: []), [share], share)
+        }
+        let afterTrim = MartyLoop.withoutShareSentences(["steps": [["say": "The lower bearing carries half the load. The base carries most of the load."]]]).document
+        // Both sentences are unsupported shares: nothing is cut, both stay found, so the fallback is refused.
+        XCTAssertEqual(MartyLoop.shareFindings(afterTrim).count, 2)
+        var fuel: [String: Any] = [:]
+        _ = try MartyLoop(model: ScriptedAdapter(replies: ["With one arm raised, the engines use more than twice the fuel.", "With one arm raised, the engines use about the same fuel."]),
+                          out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 4, result: &fuel)
+        XCTAssertNotNil(fuel["answerLint"], "a performance comparison next to a pose is still checked")
         var stuck: [String: Any] = [:]
         _ = try MartyLoop(model: ScriptedAdapter(replies: ["It weighs 99 kg.", "It still weighs 99 kg."]), out: tempOut(), options: .init())
             .writeAnswer(system: "s", user: "u", sources: [], result: &stuck)

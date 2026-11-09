@@ -463,6 +463,10 @@ public enum QuoteCheck {
         return false
     }
 
+    /// Frequency words that make a quantity a rate ("10 litres twice a minute", "10 kg daily").
+    static let rateWords: Set<String> = ["once", "twice", "thrice", "daily", "hourly", "weekly", "monthly", "yearly", "annually", "annual",
+        "nightly", "quarterly", "biweekly", "fortnightly", "apiece", "semiannually", "biannually"]
+
     /// Share and comparison words: a claim that uses one needs a quote that uses it too.
     static let shareWords: Set<String> = ["most", "majority", "half", "halves", "third", "thirds", "quarter", "quarters", "share", "shares",
         "split", "mainly", "mostly", "chiefly", "primarily", "largely", "largest", "main", "bulk", "predominantly", "dominant", "equal",
@@ -675,7 +679,7 @@ public enum QuoteCheck {
             if raw.first == "(" || raw.first == "[" {
                 let inner = String(raw.dropFirst()).trimmingCharacters(in: CharacterSet(charactersIn: "()[].,;:!?"))
                 let qualifies = inner.first?.isNumber == true || inner.first.map { "+-\u{2212}~\u{00B1}\u{2248}<>".contains($0) } == true
-                    || ["per", "every", "each", "plus", "daily", "hourly", "weekly", "monthly", "yearly", "annually"].contains(inner)
+                    || ["per", "every", "each", "plus"].contains(inner) || rateWords.contains(inner)
                     || isUnitWord(inner) || postBounds.contains(inner) || boundTails.contains(inner) || magnitudes.contains(inner)
                     || boundWords.contains(inner)
                 // (Two-word openers: "(a minute)", "(an hour)", "(and up)", "(or more)", "(at most)", "(up to)".)
@@ -842,8 +846,8 @@ public enum QuoteCheck {
                 // magnitude, bound or rate word, or a short symbol-like word, may go on with the quantity.)
                 let plainProse = next.text.count >= 4 && next.text.allSatisfy(\.isLetter) && !Self.isUnitWord(next.text)
                     && !Self.timeUnits.contains(next.text) && !Self.magnitudes.contains(next.text) && !Self.postBounds.contains(next.text)
-                    && !Self.boundTails.contains(next.text) && !["every", "each", "plus", "times", "minus", "daily", "hourly", "weekly",
-                        "monthly", "yearly", "annually", "annual", "nightly", "apiece", "continuously"].contains(next.text)
+                    && !Self.boundTails.contains(next.text) && !["every", "each", "plus", "times", "minus", "continuously"].contains(next.text)
+                    && !Self.rateWords.contains(next.text)
                 if withUnit, !Self.proseAfterQuantity.contains(next.text), !plainProse { return false }
                 // An allowed word that leads into another quantity or a time continues it ("10 cm by 20 cm",
                 // "10 litres in 30 seconds", "10 kg over 2 hours").
