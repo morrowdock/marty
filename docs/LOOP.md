@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-08. Prompts `marty-prompts/14`. Engine pin as in
+Status: early preview, 2026-11-08. Prompts `marty-prompts/15`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -162,7 +162,11 @@ the MCP server uses), so a run needs no MCP client.
    `step.annotate.count`, `view.annotate.count`) also gets the engine's
    visibility detail in words: which annotation, how many show, the limit, the
    cause and the step or beat; the attempt in the receipt keeps the detail
-   (also in follow-up repairs). A `parts.resolved` refusal gets the engine's
+   (also in follow-up repairs). A label or pointer dot refusal
+   (`annotation.anchor.hidden`, `.off`, `.untested`) gets the engine's anchor
+   issues (`anchor` first, then `anchorIssues`, at most 6): the dot, the cause,
+   the step or beat, the part, what hides it or is nearer, and the engine's
+   own fix; the attempt keeps `anchor`. A `parts.resolved` refusal gets the engine's
    limit detail the same way (the resolved count, the limit and the component
    instances that add the most parts; attempt key `limit`). A `parts.count`
    refusal from component expansion has no detail at the pin and gets a hint. Only what the engine returned is
