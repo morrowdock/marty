@@ -1026,6 +1026,28 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(MartyLoop.documentLint(doc("Thrust 144 kgf", "maker")).count, 1, "a typed figure still needs a year")
     }
 
+    /// A label dot hidden inside another part is refused (annotation.anchor.hidden); the repair prompt carries the
+    /// engine's anchor issues and fix, and the repaired example is accepted.
+    func testAnchorIssuesInRepairs() throws {
+        let hidden = MartyExamples.formatExample.replacingOccurrences(of: #""offset":[0,-6,40]"#, with: #""offset":[0,0,60]"#)
+        XCTAssertNotEqual(hidden, MartyExamples.formatExample)
+        let plan = #"{"components": ["shaftWithBearing", "housingBase"], "primitives": []}"#
+        let model = ScriptedAdapter(replies: [plan, #"{"document": \#(hidden)}"#, #"{"document": \#(MartyExamples.formatExample)}"#])
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: .init()).run(question: "q")
+        XCTAssertEqual(r["accepted"] as? Bool, true, "\(r["attempts"] ?? "")")
+        let first = try XCTUnwrap((r["attempts"] as? [[String: Any]])?.first)
+        XCTAssertEqual(first["reason"] as? String, "annotation.anchor.hidden.lShaft")
+        XCTAssertNotNil(first["anchor"])
+        let repair = model.prompts[2].user
+        XCTAssertTrue(repair.contains("Label and pointer dots the engine refused") && repair.contains("`shaft.upperBearing` hides the anchor"), repair)
+        XCTAssertNotNil(MartyPrompts.hint(for: "annotation.anchor.hidden.lShaft"))
+        // A curly apostrophe still negates a cancellation.
+        let pm = PoseText.Push(side: 0, depth: 0, sideAbs: 1, outward: 0, arrows: 2, mannequin: true)
+        XCTAssertEqual(PoseText.disagreements("The sideways parts don\u{2019}t balance out, so the sideways part pushes the suit.", push: pm).count, 1)
+    }
+
     func testReplyJSON() {
         XCTAssertEqual(ReplyJSON.object(#"{"a":1}"#)?["a"] as? Int, 1)
         XCTAssertEqual(ReplyJSON.object("Here:\n```json\n{\"a\": 2}\n```\nDone.")?["a"] as? Int, 2)

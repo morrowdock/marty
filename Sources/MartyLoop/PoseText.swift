@@ -121,7 +121,7 @@ import MartyEngine
                                                     options: .caseInsensitive) else { return false }
             let ns = s as NSString
             return re.matches(in: s, range: NSRange(location: 0, length: ns.length)).contains { m in
-                let before = ns.substring(to: m.range.location).lowercased()
+                let before = ns.substring(to: m.range.location).lowercased().replacingOccurrences(of: "\u{2019}", with: "'")
                 let words = before.split { !$0.isLetter && $0 != "'" }.suffix(3)
                 return !words.contains { ["not", "never", "don't", "doesn't", "didn't", "won't", "can't", "cannot", "fail", "fails"].contains(String($0)) || $0.hasSuffix("n't") }
             }

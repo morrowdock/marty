@@ -5,7 +5,7 @@ import Foundation
 /// author step sees a short format guide plus `explain` entries for the parts the plan chose. The receipt records the
 /// size and SHA-256 of every prompt, so a change in context is always measured.
 public enum MartyPrompts {
-    public static let version = "marty-prompts/14"
+    public static let version = "marty-prompts/15"
 
     static let role = """
         You are Marty, a teacher who explains how things work with checked 3D models. A deterministic engine \
@@ -223,16 +223,34 @@ public enum MartyPrompts {
 
     public static func repairUser(question: String, plan: String, previous: String, reason: String, part: String?, hint: String?,
                                   facts: String? = nil, readBack: String? = nil, visibility: [String: Any]? = nil,
-                                  limit: [String: Any]? = nil, table: String? = nil) -> String {
+                                  limit: [String: Any]? = nil, table: String? = nil, anchors: [[String: Any]] = []) -> String {
         var s = "Question: \(question)\n\nYour plan:\n\(plan)\n\nYour previous reply:\n\(previous)\n\n"
         if let table { s += "\(table)\n\n" }
         s += "The engine refused it with reason `\(reason)`" + (part.map { " on part `\($0)`" } ?? "") + "."
         if let hint { s += " \(hint)" }
         if let v = visibility.flatMap(visibilityLine) { s += " \(v)" }
         if let l = limit.flatMap(limitLine) { s += " \(l)" }
+        if let a = anchorLines(anchors) { s += "\n\(a)" }
         if let facts { s += "\n\nFacts the engine solved for this model (name: value):\n\(facts)" }
         if let readBack { s += "\n\nEngine read-back (where each part is and how it moves):\n\(readBack)" }
         return s + "\n\nFix the cause and reply with the corrected JSON object only (same reply format)."
+    }
+
+    /// The engine's label and pointer dot issues (`anchor`, `anchorIssues`): at most 6, each with the view, the part,
+    /// what is in the way and the engine's own fix.
+    public static func anchorLines(_ issues: [[String: Any]]) -> String? {
+        guard !issues.isEmpty else { return nil }
+        let lines = issues.prefix(6).map { i -> String in
+            var w: [String] = []
+            if let c = i["cause"] as? String { w.append(c) }
+            if let s = i["step"] as? Int { w.append("step \(s)") }
+            if let b = i["beat"] as? Int { w.append("beat \(b)") }
+            if let p = i["part"] as? String { w.append("on `\(p)`") }
+            if let b = i["by"] as? String { w.append("hidden by `\(b)`") }
+            if let c = i["closer"] as? String { w.append("`\(c)` is nearer") }
+            return "- `\(i["id"] as? String ?? "?")` (" + w.joined(separator: ", ") + "): " + (i["fix"] as? String ?? "")
+        }
+        return "Label and pointer dots the engine refused (each must sit visibly on the part it names):\n" + lines.joined(separator: "\n")
     }
 
     /// The engine's `parts.resolved` detail (the report's `limit`): the resolved count, the limit and the instances
@@ -298,6 +316,9 @@ public enum MartyPrompts {
             ("step.check", "A step's check is a list of 1 to 8 claims: [{\"value\": \"<fact>\", \"eq\" | \"lt\" | \"gt\": number, \"tol\": number (optional, with eq only)}] (v2 only)."),
             ("check.failed", "A claim in the step is false: the engine solved a different value. Change or remove the claim, or change the model."),
             ("check.fact", "A claim names no fact. Use a fact name the engine solved."),
+            ("annotation.anchor.off", "A label dot or pointer tip is not on the part it names, or another part is nearer to it: put it on that part's surface (an offset in the part's own frame), using the engine's fix below."),
+            ("annotation.anchor.hidden", "A label dot or pointer tip is hidden, ghosted, off screen or covered by another part in a view that shows it: move it to a face of its part that faces the camera, ghost the part in the way, or change the camera, as the engine's fix below says."),
+            ("annotation.anchor.untested", "The engine's anchor test ran out of budget: show fewer labels in that view, or hide or ghost parts that are not needed there."),
             ("parts.count", "\"parts\" holds 1 to 48 entries, and component expansion may make at most 96 parts (a microTurbojet is 11, a mannequin 12): use fewer component instances, or plain shapes for the units that are not cut open."),
             ("parts.resolved", "The model has too many parts after component and repeat expansion: use fewer component instances, or plain shapes for the units that are not cut open."),
             ("annotations.visible", "Too many annotations would show at once: give every step (in an explainer, every beat's view) an \"annotate\" list of the ids it shows, at most 5 labels and pointers plus its force arrows."),

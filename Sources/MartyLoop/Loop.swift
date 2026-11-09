@@ -84,6 +84,14 @@ public final class MartyLoop {
 
     func note(_ index: Int, _ outcome: [String: Any]) { calls[index]["outcome"] = outcome }
 
+    /// The anchor issues of a refusal: the one it names (`anchor`) first, then the others (`anchorIssues`).
+    static func anchorIssues(_ r: [String: Any]) -> [[String: Any]] {
+        var out: [[String: Any]] = []
+        if let a = r["anchor"] as? [String: Any] { out.append(a) }
+        for i in r["anchorIssues"] as? [[String: Any]] ?? [] where !out.contains(where: { MartyJSON.data($0) == MartyJSON.data(i) }) { out.append(i) }
+        return out
+    }
+
     static func outcome(_ r: [String: Any]) -> [String: Any] {
         var o: [String: Any] = ["ok": r["ok"] ?? false, "reason": r["reason"] ?? NSNull(), "part": r["part"] ?? NSNull(),
                                 "ref": r["ref"] ?? NSNull(), "error": r["error"] ?? NSNull(), "component": r["component"] ?? NSNull()]
@@ -91,6 +99,7 @@ public final class MartyLoop {
         if let l = r["limit"] { o["limit"] = l }
         if let u = r["unsourced"] { o["unsourced"] = u }
         if let d = r["direction"] { o["direction"] = d }
+        if let a = r["anchor"] { o["anchor"] = a }
         return o
     }
 
@@ -326,7 +335,7 @@ public final class MartyLoop {
             user = MartyPrompts.repairUser(question: question, plan: planText, previous: text, reason: reason, part: part,
                                            hint: MartyPrompts.hint(for: reason), facts: facts, readBack: readBack,
                                            visibility: report["visibility"] as? [String: Any], limit: report["limit"] as? [String: Any],
-                                           table: factBlock)
+                                           table: factBlock, anchors: Self.anchorIssues(report))
         }
         if accepted == nil, let f = fallback {
             accepted = f.report; acceptedComponents = f.components
@@ -498,6 +507,7 @@ public final class MartyLoop {
                 + ((r["visibility"] as? [String: Any]).flatMap(MartyPrompts.visibilityLine).map { " \($0)" } ?? "")
                 + ((r["limit"] as? [String: Any]).flatMap(MartyPrompts.limitLine).map { " \($0)" } ?? "")
                 + ((r["unsourced"] as? [String]).map { " " + MartyPrompts.factRepair + "\n" + $0.map { "- \($0)" }.joined(separator: "\n") } ?? "")
+                + (MartyPrompts.anchorLines(Self.anchorIssues(r)).map { "\n" + $0 } ?? "")
                 + ((r["direction"] as? [String]).map { " " + MartyPrompts.directionRepair + " " + ($0.first ?? "") + "\n" + $0.dropFirst().map { "- \($0)" }.joined(separator: "\n") } ?? "")
                 + (facts.map { "\n\nFacts the engine solved for the changed model (name: value):\n\($0)" } ?? "")
                 + "\n\nReply with a corrected JSON object only."
@@ -632,6 +642,7 @@ extension MartyLoop {
             if let v = (r["visibility"] as? [String: Any]).flatMap(MartyPrompts.visibilityLine) { u += " \(v)" }
             if let l = (r["limit"] as? [String: Any]).flatMap(MartyPrompts.limitLine) { u += " \(l)" }
             if let lines = r["unsourced"] as? [String] { u += " " + MartyPrompts.factRepair + "\n" + lines.map { "- \($0)" }.joined(separator: "\n") }
+            if let a = MartyPrompts.anchorLines(Self.anchorIssues(r)) { u += "\n" + a }
             if let d = r["direction"] as? [String] { u += " " + MartyPrompts.directionRepair + " " + (d.first ?? "") + "\n" + d.dropFirst().map { "- \($0)" }.joined(separator: "\n") }
             if let facts { u += "\n\nFacts the engine solved (name: value):\n\(facts)" }
             if let readBack { u += "\n\nEngine read-back:\n\(readBack)" }
@@ -1188,7 +1199,7 @@ extension MartyLoop {
 /// Small accepted documents used as format examples in prompts. Tests check each one with the engine.
 /// The example is about no bench subject (no gears, cranks or blades), so it shows the format without giving away an answer.
 public enum MartyExamples {
-    public static let formatExample = #"{"v":2,"kind":"assembly","title":"A shaft held in two bearings","units":"mm","parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"labels":[{"id":"lShaft","at":{"part":"shaft.input","offset":[0,0,60]},"text":"Shaft"},{"id":"lRated","at":{"world":[0,-70,20]},"text":"Rated 3000 rpm","unchecked":"assumed example"}],"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-20]},"to":{"part":"base.base","offset":[0,0,-60]},"text":"Weight"}]},"steps":[{"say":"Two bearings hold a shaft in line on a base.","camera":"hero","annotate":["lShaft","lRated","aW"]},{"say":"Input: the shaft makes {shaft.input.speed} turn for each input turn.","highlight":["shaft.input"],"spin":1,"check":[{"value":"shaft.input.speed","eq":1}],"annotate":["lShaft"]},{"say":"Cut open: the lower bearing rings the shaft.","section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"highlight":["shaft.lowerBearing"],"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]},{"say":"Seen through the base.","ghost":["base.base"],"annotate":["aW"]}]}"#
+    public static let formatExample = #"{"v":2,"kind":"assembly","title":"A shaft held in two bearings","units":"mm","parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"labels":[{"id":"lShaft","at":{"part":"shaft.input","offset":[0,-6,40]},"text":"Shaft"},{"id":"lRated","at":{"world":[0,-70,20]},"text":"Rated 3000 rpm","unchecked":"assumed example"}],"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-20]},"to":{"part":"base.base","offset":[0,0,-60]},"text":"Weight"}]},"steps":[{"say":"Two bearings hold a shaft in line on a base.","camera":"hero","annotate":["lShaft","lRated","aW"]},{"say":"Input: the shaft makes {shaft.input.speed} turn for each input turn.","highlight":["shaft.input"],"spin":1,"check":[{"value":"shaft.input.speed","eq":1}],"annotate":["lShaft"]},{"say":"Cut open: the lower bearing rings the shaft.","section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"highlight":["shaft.lowerBearing"],"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]},{"say":"Seen through the base.","ghost":["base.base"],"annotate":["aW"]}]}"#
     /// A small explainer: the same shaft with a table of one given number (with its source) and one engine fact.
     public static let explainerExample = #"{"v":1,"kind":"explainer","title":"A shaft held in two bearings","primary":"solid","notes":{"t":{"basis":"F1 maker's data sheet, 2024, claimed"}},"board":{"v":1,"items":[{"id":"cap","k":"text","at":[6,7],"text":"Key figures"}]},"solid":{"v":2,"parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-20]},"to":{"part":"base.base","offset":[0,0,-60]},"text":"Weight"}]}},"beats":[{"say":"Two bearings hold a shaft on a base; the table gives its rated speed.","highlight":["t.r1","shaft.shaft"],"ops":[{"op":"add","item":{"id":"t","k":"table","at":[6,4],"header":true,"cells":[["Item","Value"],["Rated rpm",3000],["Turns/input","{shaft.input.speed}"]]}}],"view":{"annotate":["aW"]}},{"say":"Cut open: the lower bearing rings the shaft.","highlight":["shaft.lowerBearing"],"view":{"section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]}}]}"#
 }
