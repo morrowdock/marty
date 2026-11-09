@@ -127,9 +127,11 @@ the MCP server uses), so a run needs no MCP client.
    row the model itself gave as UNKNOWN without sources is a researched
    absence, "not found in this search"); a row whose value's first number is in
    none of its found quotes (number words such as "five" or "twenty-four", as
-   one number, ordinals such as "a fifth", Roman version numerals such as "Mk
-   IV", and for 1 and 2 an article or "single", "both", "either", "pair" count
-   as stated) (a value computed from other figures, such as a
+   one number, Roman version numerals such as "Mk IV", and, right before one of
+   the row's own words within three words, an ordinal ("a fifth engine"), or
+   for 1 an article or "single", for 2 "both", "either" or "pair" ("a rear jet
+   engine", "either side") count as stated; "a housing with five rotors"
+   states no 1 rotor, "first flight" no count) (a value computed from other figures, such as a
    ratio of two rows) is also `unconfirmed` and left out; a VERIFIED row needs
    found quotes on two sites and no found
    quote whose text or page text within 160 characters attributes the figure
@@ -483,9 +485,12 @@ the MCP server uses), so a run needs no MCP client.
    and no number that is also in the evidence (the given figures shown, the
    engine fact texts and ratios, numbers set in the change; never raw JSON),
    gets one rewrite request. The answer prompt lists the beats or steps that
-   already pose parts ("beat 4 poses …"): an answer that denies such a motion
-   ("the model does not show", "held still", "not a steering move") gets one
-   rewrite request to say which beat shows it (`answerPosedLint`). `answerLint`
+   already pose parts ("beat 4 poses …"; after an accepted change, those of the
+   changed document): an answer that denies a motion while such a view exists
+   ("the model does not show steering", "held still", "not a steering move";
+   not an unrelated limit such as "not shown to scale") gets one
+   rewrite request to say which beat shows it (`answerPosedLint`); a beat or
+   step number that names one of its views is no fact for the number check. `answerLint`
    records the sentences and whether the
    rewrite cleared them. A sentence with a number, year or version that is in no
    source (the fact table, the reports, the change, the question and the

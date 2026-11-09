@@ -148,7 +148,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(ok["modelled"] as? Bool, true)
         XCTAssertTrue(mOK.prompts[3].user.contains(#""radius":8"#), "the answer prompt shows the accepted change: \(mOK.prompts[3].user)")
         // A table edit in a beat's ops is a model change; a board text item edit alone is words only.
-        let table = MartyExamples.explainerExample.replacingOccurrences(of: #"["Rated rpm",3000]"#, with: #"["Rated rpm",3500]"#)
+        let table = MartyExamples.explainerExample.replacingOccurrences(of: #"["Rated rpm",3000,"#, with: #"["Rated rpm",3500,"#)
         XCTAssertNotEqual(table, MartyExamples.explainerExample)
         // The learner names the new figure, so it is evidence; an invented one is refused (fact.unsourced).
         let (_, invented) = try run([#"{"document": \#(table)}"#, #"{"document": null}"#, "No change."])
@@ -158,7 +158,7 @@ final class MartyLoopTests: XCTestCase {
         // The answer gets the changed values, before and after.
         XCTAssertTrue(mTable.prompts[3].user.contains("3000") && mTable.prompts[3].user.contains("3500"), mTable.prompts[3].user)
         // The answer gets the given figures of the accepted explainer, with their source.
-        XCTAssertTrue(mTable.prompts[3].user.contains("- Rated rpm 3500 — F1 maker's data sheet, 2024, claimed (given)"), mTable.prompts[3].user)
+        XCTAssertTrue(mTable.prompts[3].user.contains("- Rated rpm 3500") && mTable.prompts[3].user.contains("F1 maker's data sheet, 2024, claimed (given)"), mTable.prompts[3].user)
         let summary = MartyLoop.changeSummary(from: ["board": ["params": ["angle": 10]]], to: ["board": ["params": ["angle": 30]]])
         XCTAssertTrue(summary.contains("10") && summary.contains("30") && summary.contains("board"), summary)
         // A gravity arrow is checked again by the engine: no schematic-direction line.
@@ -1365,6 +1365,13 @@ final class MartyLoopTests: XCTestCase {
         _ = try MartyLoop(model: ScriptedAdapter(replies: ["The model does not show steering."]), out: tempOut(), options: .init())
             .writeAnswer(system: "s", user: "u", sources: [], posed: [], result: &quiet)
         XCTAssertNil(quiet["answerPosedLint"], "no posed view: nothing to contradict")
+        // Honest limits that are not about motion stay; a valid beat reference is no unsourced number.
+        var honest: [String: Any] = [:]
+        let honestAnswer = try MartyLoop(model: ScriptedAdapter(replies: ["The real suit is not shown to scale, and the engine does not model airflow. Beat 2 shows this."]),
+                                         out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &honest)
+        XCTAssertEqual(honestAnswer, "The real suit is not shown to scale, and the engine does not model airflow. Beat 2 shows this.")
+        XCTAssertNil(honest["answerPosedLint"]); XCTAssertNil(honest["answerLint"])
 
         // Short quotes; counts written as ordinals, articles and pairs.
         var rows = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [
@@ -1374,6 +1381,12 @@ final class MartyLoopTests: XCTestCase {
             ["id": "F4", "claim": "Model", "value": "Mk4", "label": "CLAIM", "sources": [["url": "https://a.org/7", "publisher": "A", "date": "2021", "quote": "the Mk4 suit"]]]]])))
         rows.checkQuotes(fetcher: TestPages(pages: ["https://a.org/7": "<p>It has two miniature jet engines on each arm, and a fifth engine; a rear jet engine housed in a backpack sits on either side of the engine housing. See the Mk4 suit.</p>"], fallback: nil))
         XCTAssertFalse(rows.rows[0].unconfirmed, "\(rows.downgrades)"); XCTAssertFalse(rows.rows[1].unconfirmed); XCTAssertFalse(rows.rows[2].unconfirmed)
+        // An unrelated article or a prose ordinal confirms no count.
+        var loose = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [
+            ["id": "F1", "claim": "Rotors", "value": "1 rotor", "label": "CLAIM", "sources": [["url": "https://a.org/8", "publisher": "A", "date": "2021", "quote": "The product uses a housing with five rotors"]]],
+            ["id": "F2", "claim": "Rotors", "value": "1", "label": "CLAIM", "sources": [["url": "https://a.org/8", "publisher": "A", "date": "2021", "quote": "It completed its first flight in 2017"]]]]])))
+        loose.checkQuotes(fetcher: TestPages(pages: ["https://a.org/8": "<p>The product uses a housing with five rotors. It completed its first flight in 2017.</p>"], fallback: nil))
+        XCTAssertTrue(loose.rows[0].unconfirmed); XCTAssertTrue(loose.rows[1].unconfirmed)
         XCTAssertEqual(rows.rows[3].sources[0].check, "quote too short to check")
     }
 

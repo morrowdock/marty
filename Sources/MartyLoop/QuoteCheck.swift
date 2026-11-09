@@ -333,9 +333,9 @@ public enum QuoteCheck {
         "seven": "7", "eight": "8", "nine": "9", "ten": "10", "eleven": "11", "twelve": "12", "thirteen": "13", "fourteen": "14",
         "fifteen": "15", "sixteen": "16", "seventeen": "17", "eighteen": "18", "nineteen": "19", "twenty": "20", "thirty": "30",
         "forty": "40", "fifty": "50", "sixty": "60", "seventy": "70", "eighty": "80", "ninety": "90", "hundred": "100",
-        "thousand": "1000", "million": "1000000", "billion": "1000000000", "single": "1", "twin": "2", "pair": "2", "dozen": "12",
-        "first": "1", "second": "2", "third": "3", "fourth": "4", "fifth": "5", "sixth": "6", "seventh": "7", "eighth": "8",
-        "ninth": "9", "tenth": "10"]
+        "thousand": "1000", "million": "1000000", "billion": "1000000000", "single": "1", "twin": "2", "pair": "2", "dozen": "12"]
+    static let ordinals: [String: String] = ["first": "1", "second": "2", "third": "3", "fourth": "4", "fifth": "5", "sixth": "6",
+        "seventh": "7", "eighth": "8", "ninth": "9", "tenth": "10"]
 
     /// The numbers a quote states: its digits, number words ("five"), and Roman version numerals after a version
     /// word ("Mk IV" is 4).
@@ -410,15 +410,33 @@ public enum QuoteCheck {
         return inOrder ? ordered : Array(Set(ordered + MartyLoop.numbers(quote)))
     }
 
-    /// Whether `quote` states the count 1 or 2 in words that are no number words: "a", "an", "one", "single", "sole"
-    /// for 1 ("a rear jet engine"), "both", "either", "pair", "twin" for 2 ("either side of the engine").
-    static func statesSmallCount(_ headline: String, _ quote: String) -> Bool {
-        let q = quote.lowercased()
+    /// Whether `quote` states the count `headline` of the row's counted thing (`entities`: the words of its value
+    /// and claim) in words that are no cardinal: an ordinal ("a fifth engine" is 5), or for 1 an article, "single"
+    /// or "sole" ("a rear jet engine"), for 2 "both", "either", "pair" or "twin" ("either side"). The word must come
+    /// within three words before one of the row's words ("a housing with five rotors" states no 1 rotor; "first
+    /// flight" no count of engines).
+    static func statesCountWord(_ headline: String, _ quote: String, entities: Set<String>) -> Bool {
+        let cue: Set<String>
         switch headline {
-        case "1": return q.range(of: #"\b(a|an|one|single|sole)\b"#, options: .regularExpression) != nil
-        case "2": return q.range(of: #"\b(both|either|pair|twin|two)\b"#, options: .regularExpression) != nil
-        default: return false
+        case "1": cue = ["a", "an", "single", "sole"]
+        case "2": cue = ["both", "either", "pair", "twin"]
+        default: cue = []
         }
+        func stem(_ w: String) -> String { w.count > 3 && w.hasSuffix("s") ? String(w.dropLast()) : w }
+        let words = quote.lowercased().split { !$0.isLetter }.map(String.init)
+        let wanted = Set(entities.map(stem))
+        guard !wanted.isEmpty else { return false }
+        for (i, w) in words.enumerated() where cue.contains(w) || ordinals[w] == headline {
+            if i > 0, words[i - 1] == "one", w != "a" { continue }   // "one of five" is no count
+            if words[(i + 1)..<min(words.count, i + 4)].contains(where: { wanted.contains(stem($0)) }) { return true }
+        }
+        return false
+    }
+
+    /// The words that name a row's counted thing: the letters words of its value and claim, without filler.
+    static func countedWords(value: String, claim: String) -> Set<String> {
+        let filler: Set<String> = ["the", "and", "with", "for", "per", "its", "of", "on", "in", "a", "an", "number", "count", "total", "each"]
+        return Set((value + " " + claim).lowercased().split { !$0.isLetter }.map(String.init).filter { $0.count >= 3 && !filler.contains($0) })
     }
 
     /// The value of a Roman numeral (i to mmmcmxcix), or nil.
@@ -1077,7 +1095,7 @@ extension FactTable {
             // from other figures (a ratio of two rows' numbers) is no published fact: the row is left out.
             if !rows[n].unconfirmed, after != .unknown, let headline = QuoteCheck.statedNumbers(rows[n].value, inOrder: true).first,
                !foundQuotes.flatMap({ QuoteCheck.statedNumbers($0) }).contains(headline),
-               !foundQuotes.contains(where: { QuoteCheck.statesSmallCount(headline, $0) }) {
+               !foundQuotes.contains(where: { QuoteCheck.statesCountWord(headline, $0, entities: QuoteCheck.countedWords(value: rows[n].value, claim: rows[n].claim)) }) {
                 downgrades.append("\(rows[n].id): value \(rows[n].value) is in none of its found quotes (computed, not published); left out")
                 after = .unknown
                 rows[n].unconfirmed = true

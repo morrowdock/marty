@@ -163,13 +163,12 @@ public enum MartyPrompts {
     /// The explainer form (MartyGraphics docs/EXPLAINER.md), added to the author prompt only when the plan chose it.
     static let explainerGuide = """
         Explainer form (your plan chose it): {"v": 1, "kind": "explainer", "title": "...", "notes": {"<table id>":
-         {"basis": "<source>"}}, "primary": "solid", "board": {"v": 1, "items": [<the first table>]}, "solid": {
-         ...the assembly as above, without "kind", "title" and "steps"... }, "beats": [...]}. No board text item (it
-         shows on every beat); a table shows each figure's publisher (a "Source" column).
-        - Keep the table small (at most 4 rows; 12 characters a cell; numbers with absolute value below 1000000) and add
-          it in the first beat that needs it: {"op": "add", "item": {"id": "t", "k": "table", "at": [6, 4], "header":
-          true, "cells": [["Item", "Value"], ["<name>", <number>]]}} in that beat's "ops"; a later beat may remove it
-          ({"op": "remove", "id": "t"}): the legend keeps what was shown.
+         {"basis": "<source>"}}, "primary": "solid", "board": {"v": 1, "items": [{"id": "t", "k": "table", "at": [6, 4],
+         "header": true, "cells": [["Item", "Value", "Source"]]}]}, "solid": { ...the assembly as above, without "kind",
+         "title" and "steps"... }, "beats": [...]}. No board text item (it shows on every beat).
+        - Keep the table small (at most 4 rows; 12 characters a cell; numbers with absolute value below 1000000) and
+          fill it in the first beat that needs it: {"op": "set", "id": "t", "key": "cells", "value": [["Item", "Value",
+          "Source"], ["<name>", <number>, "<publisher>"]]} in that beat's "ops" (the board keeps at least one item).
         - beats (1 to 16) replace steps: {"say": "<= 200 chars", "highlight": [ids, also "t.r1" for row 1; the header
           is row 0], "view":
           {"camera", "spin", "explode", "orbit", "section", "ghost", "focus", "annotate", "pose", "hide", "show"},
