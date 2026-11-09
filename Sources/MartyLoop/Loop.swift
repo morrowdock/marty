@@ -84,6 +84,28 @@ public final class MartyLoop {
 
     func note(_ index: Int, _ outcome: [String: Any]) { calls[index]["outcome"] = outcome }
 
+    /// The full detail of a refusal for the repair prompt: every structured field the engine gave (location, limit,
+    /// actual, path, cause, by, closer, fix, and the newer repair and suggest), and the texts of the refused document
+    /// that are over their length limit (measured as the engine counts them, with the facts the report has).
+    static func refusalDetail(_ r: [String: Any], document: Any?) -> String? {
+        var lines: [String] = []
+        if let rep = r["repair"] as? String, !rep.isEmpty { lines.append("Engine repair: \(rep)") }
+        var fields: [String: Any] = [:]
+        for k in ["location", "limit", "actual", "path", "cause", "by", "closer", "fix", "suggest", "detail"] {
+            guard let v = r[k], !(v is NSNull) else { continue }
+            if let o = v as? [String: Any] {
+                let kept = o.filter { !($0.value is NSNull) }
+                if !kept.isEmpty { fields[k] = kept }
+            } else { fields[k] = v }
+        }
+        if !fields.isEmpty { lines.append("Engine detail: " + MartyJSON.string(fields)) }
+        var facts: [String: String] = [:]
+        for (k, v) in r["facts"] as? [String: Any] ?? [:] { if let t = (v as? [String: Any])?["text"] as? String { facts[k] = t } }
+        let long = document.map { TextBudget.issues($0, facts: facts) } ?? []
+        if !long.isEmpty { lines.append("Texts over their length limit:\n" + long.prefix(8).map { "- \($0.line)" }.joined(separator: "\n")) }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+
     /// The anchor issues of a refusal: the one it names (`anchor`) first, then the others (`anchorIssues`).
     static func anchorIssues(_ r: [String: Any]) -> [[String: Any]] {
         var out: [[String: Any]] = []
@@ -279,20 +301,25 @@ public final class MartyLoop {
             guard let text else { note(i, ["ok": false, "reason": "adapter"]); attempts.append(["ok": false, "reason": "adapter"]); break }
             let reply = ReplyJSON.object(text)
             var document: Any? = nil
+            var trimmedNow: [String] = []
             if let reply { document = reply["document"] ?? (reply["kind"] != nil ? reply as Any : nil) }
             let components = reply?["components"] as? [Any] ?? []
             var report: [String: Any]
             if components.count > MartyLimits.componentsPerRequest {
                 report = ["ok": false, "reason": "components.count", "part": NSNull()]
-            } else if let document {
-                // Strict, as the engine recommends for model authors.
-                do { report = try engine.check(document: document, ref: nil, components: components, strict: true) }
+            } else if let doc0 = document {
+                // Over-long texts are cut at a word before the check (recorded); then strict, as the engine recommends.
+                let (doc1, cut) = TextBudget.trimmed(doc0)
+                document = doc1; trimmedNow = cut
+                do { report = try engine.check(document: doc1, ref: nil, components: components, strict: true) }
                 catch let e as ToolError { report = ["ok": false, "reason": e.reason] }
             } else {
                 report = ["ok": false, "reason": "json", "part": NSNull()]
             }
-            note(i, Self.outcome(report))
-            attempts.append(Self.outcome(report))
+            var outcome = Self.outcome(report)
+            if !trimmedNow.isEmpty { outcome["trimmed"] = trimmedNow }
+            note(i, outcome)
+            attempts.append(outcome)
             if (report["ok"] as? Bool) == true, let document,
                case let unsourced = FactCheck.findings(document, evidence: .build(table: facts, question: question, report: report, model: document)),
                let reason = FactCheck.reason(unsourced) {
@@ -335,7 +362,8 @@ public final class MartyLoop {
             user = MartyPrompts.repairUser(question: question, plan: planText, previous: text, reason: reason, part: part,
                                            hint: MartyPrompts.hint(for: reason), facts: facts, readBack: readBack,
                                            visibility: report["visibility"] as? [String: Any], limit: report["limit"] as? [String: Any],
-                                           table: factBlock, anchors: Self.anchorIssues(report))
+                                           table: factBlock, anchors: Self.anchorIssues(report),
+                                           detail: Self.refusalDetail(report, document: document))
         }
         if accepted == nil, let f = fallback {
             accepted = f.report; acceptedComponents = f.components
@@ -455,7 +483,8 @@ public final class MartyLoop {
                 continue
             }
             var r: [String: Any]
-            let merged = Self.mergingWith(patch, base: docText)
+            let (trimmedPatch, patchCut) = TextBudget.trimmed(Self.mergingWith(patch, base: docText))
+            let merged = trimmedPatch
             engineChecked = true
             do { r = try engine.patch(document: nil, ref: ref, patch: merged, components: components, returnDocument: false, strict: true) }
             catch let e as ToolError { r = ["ok": false, "reason": e.reason] }
@@ -490,7 +519,9 @@ public final class MartyLoop {
                 stepPush = push
                 if !wrong.isEmpty { r = ["ok": false, "reason": "followup.direction", "direction": wrong] }
             }
-            note(i, Self.outcome(r)); attempts.append(Self.outcome(r))
+            var o = Self.outcome(r)
+            if !patchCut.isEmpty { o["trimmed"] = patchCut }
+            note(i, o); attempts.append(o)
             if (r["ok"] as? Bool) == true { after = r; acceptedPatch = merged; acceptedStep = stepReply; acceptedPush = stepPush; break }
             let reason = r["reason"] as? String ?? "unknown"
             // Facts of the changed model: the same patch with steps cleared and a plain title, plain profile.
@@ -508,6 +539,7 @@ public final class MartyLoop {
                 + ((r["limit"] as? [String: Any]).flatMap(MartyPrompts.limitLine).map { " \($0)" } ?? "")
                 + ((r["unsourced"] as? [String]).map { " " + MartyPrompts.factRepair + "\n" + $0.map { "- \($0)" }.joined(separator: "\n") } ?? "")
                 + (MartyPrompts.anchorLines(Self.anchorIssues(r)).map { "\n" + $0 } ?? "")
+                + (Self.refusalDetail(r, document: merged).map { "\n" + $0 } ?? "")
                 + ((r["direction"] as? [String]).map { " " + MartyPrompts.directionRepair + " " + ($0.first ?? "") + "\n" + $0.dropFirst().map { "- \($0)" }.joined(separator: "\n") } ?? "")
                 + (facts.map { "\n\nFacts the engine solved for the changed model (name: value):\n\($0)" } ?? "")
                 + "\n\nReply with a corrected JSON object only."
@@ -591,11 +623,13 @@ extension MartyLoop {
             }
             // Only an explicit null means "no change"; any other non-object is a reply to repair.
             if reply["document"] is NSNull { noChange = true; note(i, ["ok": true, "document": NSNull()]); break }
-            guard let changed = reply["document"] as? [String: Any] else {
+            guard let changed0 = reply["document"] as? [String: Any] else {
                 note(i, ["ok": false, "reason": "json"]); attempts.append(["ok": false, "reason": "json"])
                 user += "\n\n\"document\" must be the whole changed explainer object, or null. Reply again."
                 continue
             }
+            let (trimmedDoc, explainerCut) = TextBudget.trimmed(changed0)
+            let changed = trimmedDoc as? [String: Any] ?? changed0
             var r: [String: Any]
             if changed["kind"] as? String != "explainer" {
                 r = ["ok": false, "reason": "followup.kind"]
@@ -623,7 +657,9 @@ extension MartyLoop {
                     if !wrong.isEmpty { r = ["ok": false, "reason": "followup.direction", "direction": wrong] }
                 }
             }
-            note(i, Self.outcome(r)); attempts.append(Self.outcome(r))
+            var o = Self.outcome(r)
+            if !explainerCut.isEmpty { o["trimmed"] = explainerCut }
+            note(i, o); attempts.append(o)
             if (r["ok"] as? Bool) == true {
                 after = r; acceptedDoc = changed; acceptedChange = Self.changeSummary(from: base, to: changed); acceptedPush = stepPush
                 moved = Self.movedForceArrows(explainerFrom: base, to: changed, viewMoved: Self.viewMovedIds(before: report, after: r))
@@ -643,6 +679,7 @@ extension MartyLoop {
             if let l = (r["limit"] as? [String: Any]).flatMap(MartyPrompts.limitLine) { u += " \(l)" }
             if let lines = r["unsourced"] as? [String] { u += " " + MartyPrompts.factRepair + "\n" + lines.map { "- \($0)" }.joined(separator: "\n") }
             if let a = MartyPrompts.anchorLines(Self.anchorIssues(r)) { u += "\n" + a }
+            if let d = Self.refusalDetail(r, document: changed) { u += "\n" + d }
             if let d = r["direction"] as? [String] { u += " " + MartyPrompts.directionRepair + " " + (d.first ?? "") + "\n" + d.dropFirst().map { "- \($0)" }.joined(separator: "\n") }
             if let facts { u += "\n\nFacts the engine solved (name: value):\n\(facts)" }
             if let readBack { u += "\n\nEngine read-back:\n\(readBack)" }

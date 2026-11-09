@@ -33,7 +33,7 @@ final class MartyLoopTests: XCTestCase {
         let author = MartyPrompts.authorSystem(parts: "", example: MartyExamples.formatExample).utf8.count
         print("prompt bytes: plan \(plan), author without parts \(author)")
         XCTAssertLessThan(plan, 12000)
-        XCTAssertLessThan(author, 12000)
+        XCTAssertLessThan(author, 12500)
     }
 
     /// The format example shows the explainer tools (section, ghost, a gravity force, an unchecked given number) and the
@@ -58,7 +58,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual((r["steps"] as? [String])?.count, 2)
         let plan = MartyPrompts.authorSystem(parts: "", example: MartyExamples.formatExample, explainer: MartyExamples.explainerExample).utf8.count
         print("prompt bytes: author with the explainer form, without parts \(plan)")
-        XCTAssertLessThan(plan, 14500)
+        XCTAssertLessThan(plan, 15000)
     }
 
     /// The plan chooses the explainer form: the author prompt gets the explainer section; the accepted explainer makes a
@@ -1048,6 +1048,41 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(PoseText.disagreements("The sideways parts don\u{2019}t balance out, so the sideways part pushes the suit.", push: pm).count, 1)
     }
 
+    /// The length budget: over-long texts are measured as the engine counts them, cut at a word before the check
+    /// (recorded), and a refusal's repair gets every structured detail and the texts over their limit.
+    func testLengthBudgetAndRepairDetail() throws {
+        var ex = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(MartyExamples.explainerExample.utf8)) as? [String: Any])
+        ex["title"] = "A shaft held in two bearings on a solid base plate, seen whole and then cut open to show"
+        XCTAssertEqual(TextBudget.issues(ex).map(\.line), ["title: 88 characters, the limit is 80"])
+        let (cut, paths) = TextBudget.trimmed(ex)
+        XCTAssertEqual(paths, ["title"])
+        let t = try XCTUnwrap((cut as? [String: Any])?["title"] as? String)
+        XCTAssertLessThanOrEqual(t.unicodeScalars.count, 80); XCTAssertTrue(ex["title"].map { "\($0)" }!.hasPrefix(t.trimmingCharacters(in: CharacterSet(charactersIn: "."))), t)
+        // A placeholder is never cut; a text that would lose more than 40 % is left for the repair.
+        let say = "The wheel turns {pair.wheel.speed|abs|frac} " + String(repeating: "and keeps turning ", count: 14)
+        let d: [String: Any] = ["v": 2, "kind": "assembly", "title": "t", "steps": [["say": say], ["say": String(repeating: "x", count: 500)]]]
+        let (d2, p2) = TextBudget.trimmed(d)
+        XCTAssertEqual(p2, ["steps[1].say"])
+        let s1 = try XCTUnwrap(((d2 as? [String: Any])?["steps"] as? [[String: Any]])?.first?["say"] as? String)
+        XCTAssertTrue(s1.contains("{pair.wheel.speed|abs|frac}") && s1.unicodeScalars.count <= 240, s1)
+        // Labels count with placeholders filled.
+        XCTAssertEqual(TextBudget.length("Turns {a.speed}", filled: true, facts: ["a.speed": "1/3"]), 9)
+        // The loop trims before the check and records it; the explainer is accepted.
+        let plan = #"{"form": "explainer", "components": ["shaftWithBearing"], "primitives": []}"#
+        let model = ScriptedAdapter(replies: [plan, #"{"document": "# + MartyJSON.string(ex) + "}"], research: [Self.exampleTable])
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: .init()).run(question: "q")
+        XCTAssertEqual(r["accepted"] as? Bool, true, "\(r["attempts"] ?? "")")
+        XCTAssertEqual((r["attempts"] as? [[String: Any]])?.first?["trimmed"] as? [String], ["title"])
+        // The repair detail lists the engine's structured fields and the long texts.
+        let detail = try XCTUnwrap(MartyLoop.refusalDetail(["reason": "x", "location": ["statement": 3, "view": "header", "beat": NSNull()],
+                                                             "repair": "Shorten the title to 80 characters.", "limit": 80, "actual": 87], document: ex))
+        XCTAssertTrue(detail.contains("Engine repair: Shorten the title") && detail.contains(#""actual":87"#) && detail.contains("title: 88 characters"), detail)
+        XCTAssertFalse(detail.contains("null"), detail)
+        XCTAssertTrue(MartyPrompts.authorSystem(parts: "", example: "").contains("title 80, step say 240"))
+    }
+
     func testReplyJSON() {
         XCTAssertEqual(ReplyJSON.object(#"{"a":1}"#)?["a"] as? Int, 1)
         XCTAssertEqual(ReplyJSON.object("Here:\n```json\n{\"a\": 2}\n```\nDone.")?["a"] as? Int, 2)
@@ -1102,7 +1137,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual((receipt["engine"] as? [String: Any])?["revision"] as? String, MartyPin.engineRevision)
         let ctx = try XCTUnwrap(receipt["contextBytes"] as? [String: Int])
         XCTAssertLessThan(try XCTUnwrap(ctx["plan"]), 12000, "plan context grew: \(ctx)")
-        XCTAssertLessThan(try XCTUnwrap(ctx["author"]), 13500, "author context grew: \(ctx)")
+        XCTAssertLessThan(try XCTUnwrap(ctx["author"]), 14000, "author context grew: \(ctx)")
     }
 
     func testLoopStopsAfterTheRepairLimit() throws {
