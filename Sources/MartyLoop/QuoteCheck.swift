@@ -475,8 +475,10 @@ public enum QuoteCheck {
         let quoted = Set(quotes.flatMap(words).map(singular))
         for w in words(value + " " + claim) where shareWords.contains(w) && !quoted.contains(singular(w)) { return w }
         guard statedNumbers(value, inOrder: true).isEmpty else { return nil }
-        let filler: Set<String> = ["with", "from", "that", "this", "than", "their", "there", "which", "about", "into", "over", "each"]
-        let content = words(value).filter { $0.count >= 4 && !filler.contains($0) }
+        // (Only function words are left out: a short term or acronym, "LPG", "gas", "Jet A", must be stated too.)
+        let filler: Set<String> = ["with", "from", "that", "this", "than", "their", "there", "which", "about", "into", "over", "each",
+            "the", "a", "an", "and", "or", "of", "in", "on", "at", "to", "for", "by", "as", "is", "are", "was", "were", "its", "it", "be", "but", "not"]
+        let content = words(value).filter { !filler.contains($0) }
         guard let first = content.first else { return nil }
         return content.contains(where: { quoted.contains(singular($0)) }) ? nil : first
     }
@@ -676,7 +678,12 @@ public enum QuoteCheck {
                     || ["per", "every", "each", "plus", "daily", "hourly", "weekly", "monthly", "yearly", "annually"].contains(inner)
                     || isUnitWord(inner) || postBounds.contains(inner) || boundTails.contains(inner) || magnitudes.contains(inner)
                     || boundWords.contains(inner)
-                if !qualifies { close() }
+                // (Two-word openers: "(a minute)", "(an hour)", "(and up)", "(or more)", "(at most)", "(up to)".)
+                let second = n + 1 < raws.count ? String(raws[n + 1]).trimmingCharacters(in: CharacterSet(charactersIn: "()[].,;:!?")) : ""
+                let qualifiesTwo = (["a", "an"].contains(inner) && timeUnits.contains(second))
+                    || (["and", "or"].contains(inner) && (boundTails.contains(second) || second == "more" || second == "less"))
+                    || (inner == "at" && ["most", "least"].contains(second)) || (inner == "up" && second == "to")
+                if !qualifies, !qualifiesTwo { close() }
             }
             // A hyphen between two words ("five-engine", "suit - with") is punctuation: next to a number it stays
             // a word of its own (a sign or a range).
@@ -854,6 +861,9 @@ public enum QuoteCheck {
                 if withUnit || w[last].hasDigit || countEnd {
                     if Self.postBounds.contains(next.text) { return false }
                     if next.text == "or" || next.text == "and", let t = after, Self.boundTails.contains(t.text) { return false }
+                    // ("10 litres at most", "10 kW at least", "10 litres up to 12")
+                    if next.text == "at", let t = after, ["most", "least"].contains(t.text) { return false }
+                    if next.text == "up", let t = after, t.text == "to" { return false }
                 }
                 // After a bare number, a unit word goes on ("10 percent", "100 watt hours", "10 m").
                 if !withUnit, w[last].hasDigit, Self.isUnitWord(next.text) { return false }

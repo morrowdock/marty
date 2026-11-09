@@ -1527,6 +1527,14 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertFalse(QuoteCheck.found("1050 horsepower.", in: "<p>It makes 1050 horsepower.</p>"), "punctuation is no context")
         XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres (per minute).</p>"))
         XCTAssertFalse(QuoteCheck.found("The engine makes 10 kW", in: "<p>The engine makes 10 kW (maximum) at full speed.</p>"))
+        for aside in ["(a minute)", "(an hour)", "(and up)", "(at most)", "(or more)", "(up to 12)", "at most", "up to 12"] {
+            XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres \(aside) when it runs.</p>"), aside)
+        }
+        var short = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": ["LPG", "gas", "Jet A", "diesel"].enumerated().map { n, v in
+            ["id": "F\(n + 1)", "claim": "Fuel", "value": v, "label": "CLAIM", "sources": [["url": "https://a.org/12", "publisher": "A", "date": "2021", "quote": "The engine runs on diesel fuel"]]] as [String: Any]
+        }])))
+        short.checkQuotes(fetcher: TestPages(pages: ["https://a.org/12": "<p>The engine runs on diesel fuel.</p>"], fallback: nil))
+        XCTAssertEqual(short.rows.map(\.unconfirmed), [true, true, true, false])
         XCTAssertTrue(QuoteCheck.found("does boast a gut-punching 1,050 horsepower", in: "<p>It does boast a gut-punching 1,050 horsepower (incidentally, more than a car).</p>"))
         var inferred = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [["id": "F1", "claim": "Fuel type", "value": "kerosene", "label": "PLAUSIBLE", "sources": [] as [Any]]]])))
         inferred.checkQuotes(fetcher: TestPages(pages: [:], fallback: nil))
