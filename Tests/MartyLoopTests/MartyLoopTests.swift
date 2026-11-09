@@ -1215,6 +1215,9 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(QuoteCheck.pageDate(#"<h1>Title</h1><div class="byline">Published <time>May 2, 2021</time>, updated <time>June 1, 2023</time></div>"#), "2021-05-02", "dated children judged one by one")
         XCTAssertEqual(QuoteCheck.pageDate(#"<aside class="related"><h1>Title</h1><time>June 1, 2023</time></aside><time>May 2, 2021</time>"#), "2021-05-02")
         XCTAssertEqual(QuoteCheck.pageDate(#"<h1>Title</h1><p>Related: <time>June 1, 2023</time></p><time>May 2, 2021</time>"#), "2021-05-02")
+        XCTAssertNil(QuoteCheck.pageDate(#"<h1>Title</h1><p>Last updated on <time>June 1, 2023</time></p>"#))
+        XCTAssertEqual(QuoteCheck.pageDate(#"<h1>Title</h1><p>Updated at <time>June 1, 2023</time></p><time>May 2, 2021</time>"#), "2021-05-02")
+        XCTAssertNil(QuoteCheck.pageDate(#"<h1>Title</h1><div class="date"><time>June 1, 2023</time> (updated)</div>"#))
         XCTAssertEqual(QuoteCheck.pageDate(#"<meta content="2019-03-03" name="date"><meta name="pubdate" content="2020-04-04">"#), "2019-03-03", "document order")
         XCTAssertEqual(QuoteCheck.pageDate(#"<script type="application/ld+json">{"@type": "Article", "datePublished": "2021-02-29"}</script><h1>T</h1><time>May 2, 2021</time>"#), "2021-05-02")
         XCTAssertEqual(QuoteCheck.pageDate(#"<h1>FEATURE: Meet the man</h1><time class="time" datetime="2020-51-09">09 Apr 2020</time>"#), "2020-04-09")
@@ -1269,6 +1272,17 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertFalse(QuoteCheck.found("A capacity of 100 passengers", in: "<p>A capacity of 100 passengers or fewer.</p>"))
         XCTAssertTrue(QuoteCheck.found("The device has 5 engines", in: "<p>The device has 5 engines that turn.</p>"))
         XCTAssertTrue(QuoteCheck.found("The device has 5 engines", in: "<p>The device has 5 engines - the arms hold two.</p>"))
+        XCTAssertTrue(QuoteCheck.found("The device has 5 engines", in: "<p>The device has 5 engines in two pods.</p>"))
+        XCTAssertTrue(QuoteCheck.found("5 engines for two different roles", in: "<p>It uses 5 engines for two different roles.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The device has 5 engines", in: "<p>The device has 5 engines every 2 metres.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The vessel carries 100 metric tons", in: "<p>The vessel carries 100 metric tons or more.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The vessel travels 100 nautical miles", in: "<p>The vessel travels 100 nautical miles per hour.</p>"))
+        XCTAssertFalse(QuoteCheck.found("It gives 100 pounds force", in: "<p>It gives 100 pounds force per engine.</p>"))
+        XCTAssertEqual(QuoteCheck.statedNumbers("The aircraft has two single-spool engines", inOrder: true), ["2", "1"])
+        XCTAssertEqual(QuoteCheck.statedNumbers("two twin-blade fans", inOrder: true), ["2", "2"])
+        XCTAssertEqual(QuoteCheck.statedNumbers("two dozen panels", inOrder: true), ["24"])
+        XCTAssertEqual(QuoteCheck.statedNumbers("twenty-four modules", inOrder: true), ["24"])
+        XCTAssertEqual(Set(QuoteCheck.statedNumbers("two hundred and, five")), ["200", "5"])
         // A worded or Roman value is checked like a digit one.
         var romanRow = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [
             ["id": "F1", "claim": "Version", "value": "Mk XII", "label": "CLAIM", "sources": [["url": "https://a.org/5", "publisher": "A", "date": "2020", "quote": "The current Mk IV device is lighter"]]],

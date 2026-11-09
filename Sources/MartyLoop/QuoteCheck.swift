@@ -280,7 +280,8 @@ public enum QuoteCheck {
                        "inches", "yard", "yards", "mile", "miles", "ton", "tons", "tonne", "tonnes", "pound", "pounds", "lb", "lbs", "ounce",
                        "ounces", "oz", "gallon", "gallons", "gal", "horsepower", "calorie", "calories", "kcal", "ft", "in",
                        "cubic", "square", "sq", "cu", "bit", "bits", "byte", "bytes", "kb", "mb", "gb", "tb", "pb", "kib", "mib", "gib",
-                       "tib", "kbps", "mbps", "gbps", "bps", "flops"]
+                       "tib", "kbps", "mbps", "gbps", "bps", "flops",
+                       "metric", "nautical", "force", "imperial", "fluid", "statute", "troy", "tons-force", "pound-force"]
         if spelled.contains(t) { return true }
         return t.range(of: "^(kilo|mega|giga|tera|milli|micro|nano|centi|deci)?(watt|volt|amp|ampere|joule|newton|pascal|metre|meter|gram|litre|liter|hertz|second|ohm|watt-hour|bit|byte)s?$",
                        options: .regularExpression) != nil
@@ -373,8 +374,12 @@ public enum QuoteCheck {
                 while j < words.count {
                     let x = words[j].w
                     if x == "and", j > i, ["hundred", "thousand", "million", "billion"].contains(words[j - 1].w),
-                       j + 1 < words.count, numberWords[words[j + 1].w] != nil, !words[j - 1].stop { j += 1; continue }
+                       j + 1 < words.count, numberWords[words[j + 1].w] != nil, !words[j - 1].stop, !words[j].stop { j += 1; continue }
+                    // "single", "twin" and "pair" are counts of their own, never part of a run ("two single-spool
+                    // engines" is 2); alone they are 1, 2 and 2.
+                    if ["single", "twin", "pair"].contains(x), j > i { break }
                     guard let v = numberWords[x].flatMap(Int.init) else { break }
+                    if ["single", "twin", "pair"].contains(x) { current = v; j += 1; break }
                     switch x {
                     case "hundred": current = max(current, 1) * 100
                     case "thousand": total += max(current, 1) * 1_000; current = 0
@@ -681,7 +686,9 @@ public enum QuoteCheck {
                 // Modifiers between the connector and the quantity are skipped ("in just 30 seconds", "by about 20 cm").
                 var m = e + 2
                 while m < p.count, m < e + 5, Self.modifiers.contains(p[m].text) { m += 1 }
-                if withUnit || w[last].hasDigit || countEnd, m < p.count, ["by", "in", "over", "for", "within", "under", "every", "each"].contains(next.text) {
+                // (After a counted noun only a rate goes on: "5 engines in two pods" is an arrangement.)
+                let connectors: Set<String> = withUnit || w[last].hasDigit ? ["by", "in", "over", "for", "within", "under", "every", "each"] : ["every", "each"]
+                if withUnit || w[last].hasDigit || countEnd, m < p.count, connectors.contains(next.text) {
                     let t = p[m]
                     if t.hasDigit || isSign(t) || Self.countWords.contains(t.text)
                         || ((t.text == "a" || t.text == "an") && m + 1 < p.count && Self.timeUnits.contains(p[m + 1].text)) { return false }
@@ -867,7 +874,11 @@ public enum QuoteCheck {
             let before = decodeEntities(ans.substring(with: NSRange(location: max(0, t.range.location - 300), length: min(300, t.range.location))))
                 .replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
                 .replacingOccurrences(of: "\u{00A0}", with: " ").lowercased()
-            if before.range(of: #"(updated|modified|revised|last edited|related)\s*:?\s*$"#, options: .regularExpression) != nil { continue }
+            if before.range(of: #"(updated|modified|revised|last edited|related)\s*(?:on|at)?\s*:?\s*$"#, options: .regularExpression) != nil { continue }
+            // Nor one followed by an update marker ("June 1, 2023 (updated)").
+            let following = decodeEntities(ans.substring(with: NSRange(location: close, length: min(120, ans.length - close))))
+                .replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression).lowercased()
+            if following.range(of: #"^\s*\(?\s*(updated|modified|revised)"#, options: .regularExpression) != nil { continue }
             let text = decodeEntities(inner.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression))
                 .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             if text.lowercased().range(of: #"\b(updated|modified|revised|related)\b"#, options: .regularExpression) != nil { continue }
