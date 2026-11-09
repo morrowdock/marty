@@ -186,30 +186,236 @@ public enum QuoteCheck {
         if html {
             t = t.replacingOccurrences(of: #"(?is)<(script|style|noscript)\b.*?</\1\s*>"#, with: " ", options: .regularExpression)
             t = t.replacingOccurrences(of: #"(?s)<!--.*?-->"#, with: " ", options: .regularExpression)
+            // Block tags (cells, rows, paragraphs, line breaks, list items, headings) separate text with a block mark
+            // that is never a thousands space ("<td>1</td><td>144 kgf</td>" is not "1,144 kgf"); inline tags join
+            // their text as it renders ("<span>1</span><span>.5</span>" is "1.5"); any other tag is a space.
+            // A superscript is marked, never joined to the number before it ("144<sup>1</sup>" is "144^1", not
+            // "1441"; "10<sup>3</sup>" is "10^3").
+            t = t.replacingOccurrences(of: #"(?is)<sup\b[^>]*>(.*?)</sup\s*>"#, with: "^$1 ", options: .regularExpression)
+            // A subscript likewise ("101<sub>2</sub>" is "101_2", not "1012").
+            t = t.replacingOccurrences(of: #"(?is)<sub\b[^>]*>(.*?)</sub\s*>"#, with: "_$1 ", options: .regularExpression)
+            t = t.replacingOccurrences(of: #"(?i)</?(?:td|th|tr|thead|tbody|tfoot|table|caption|p|div|br|hr|li|ul|ol|dl|dt|dd|h[1-6]|section|article|header|footer|aside|nav|main|figure|figcaption|blockquote|pre|form|fieldset|legend|details|summary|address)\b[^>]*>"#,
+                                       with: "\u{2}", options: .regularExpression)
+            t = t.replacingOccurrences(of: #"(?i)</?(?:span|a|b|i|em|strong|sup|sub|small|abbr|code|mark|u|s|q|cite|bdi|bdo|data|dfn|kbd|samp|var|wbr|time|font)\b[^>]*>"#,
+                                       with: "", options: .regularExpression)
             t = t.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
             t = decodeEntities(t)
+            // Reference marks of the page ("[3]", "[edit]", "[citation needed]") are not quoted text.
+            // A superscripted reference ("^[1]") goes with its mark; then any other reference mark.
+            t = t.replacingOccurrences(of: #"\^\s*\[(?:\d{1,3}|[a-z]|edit|citation needed|note \d+)\]"#, with: "", options: [.regularExpression, .caseInsensitive])
+            t = t.replacingOccurrences(of: #"\[(?:\d{1,3}|[a-z]|edit|citation needed|note \d+)\]"#, with: "", options: [.regularExpression, .caseInsensitive])
         }
+        // Unicode superscripts likewise ("10³" is "10^3", "10⁻³" is "10^-3"), before NFKC would fold them to digits.
+        t = markedSuperscripts(t)
+        // A vulgar fraction stays a fraction: "1½" is "1+1/2" (NFKC alone makes it "11⁄2", a different number).
+        t = plainFractions(t)
+        // A digit-grouping space (no-break, narrow no-break or thin, before a group of 3 digits: "1 144 kgf") is a
+        // thousands separator, so the number stays one token ("144" is not inside it). Before NFKC, which makes
+        // these spaces plain.
+        t = t.replacingOccurrences(of: "(?<=[0-9])[\u{00A0}\u{202F}\u{2009}](?=[0-9]{3}(?![0-9]))", with: ",", options: .regularExpression)
+        // Unicode compatibility forms (NFKC: ligatures, full-width forms, superscripts), then invisible characters
+        // (zero-width spaces and joiners, the word joiner U+2060, BOM, soft hyphen) are removed.
+        t = t.precomposedStringWithCompatibilityMapping
+        t = t.unicodeScalars.filter { !["\u{200B}", "\u{200C}", "\u{200D}", "\u{2060}", "\u{FEFF}", "\u{00AD}", "\u{180E}"].contains($0) }
+            .reduce(into: "") { $0.unicodeScalars.append($1) }
         t = t.lowercased()
-        for (a, b) in [("\u{2018}", "'"), ("\u{2019}", "'"), ("\u{201C}", "\""), ("\u{201D}", "\""), ("\u{2013}", "-"), ("\u{2014}", "-"),
-                       ("\u{2212}", "-"), ("\u{00A0}", " "), ("\u{00AD}", ""), ("\u{2026}", "...")] {
+        // A prime after a digit, ASCII or curly, is a unit mark ("5'11\"" and "5’11”" are 5′11″), kept, never a quote mark
+        // (dropping it would make "511"), unless a quote mark opened right before the number ("\"10\"", "“-5”" are
+        // quoted numbers).
+        t = unitPrimes(t)
+        for (a, b) in [("\u{2018}", "'"), ("\u{2019}", "'"), ("\u{201A}", "'"), ("\u{201B}", "'"),
+                       ("\u{201C}", "\""), ("\u{201D}", "\""), ("\u{201E}", "\""), ("\u{00AB}", "\""), ("\u{00BB}", "\""),
+                       ("\u{2010}", "-"), ("\u{2011}", "-"), ("\u{2012}", "-"), ("\u{2013}", "-"), ("\u{2015}", "\u{2014}"),
+                       ("\u{2212}", "-"), ("\u{00A0}", " "), ("\u{202F}", " "), ("\u{2009}", " "), ("\u{2026}", "...")] {
             t = t.replacingOccurrences(of: a, with: b)
         }
         // Quote marks are dropped on both sides: a page that quotes a figure ("'1,050 bhp'") still matches.
         t = t.replacingOccurrences(of: #"['"`]"#, with: "", options: .regularExpression)
         t = t.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        // Number operators bind without spaces ("10 ^ 3", "3 / 4", "1 : 30", "10 ± 2", "10 x 20", "≥ 10", "10 m / s"), so a
+        // number is one expression however the page spaces it.
+        t = t.replacingOccurrences(of: "(?<![<>])>=|=>", with: "\u{2265}", options: .regularExpression)
+            .replacingOccurrences(of: "<=(?!>)|=<", with: "\u{2264}", options: .regularExpression)
+        t = t.replacingOccurrences(of: "(?<=[0-9)]) ?[x\u{00D7}\u{00B7}\u{22C5}\u{2219}] ?(?=[0-9]|[.-][0-9])", with: "\u{00D7}", options: .regularExpression)
+        // Between a unit and a number, a spaced "x" multiplies too ("10 cm x 20 cm").
+        t = t.replacingOccurrences(of: "(?<=\\p{L}) x (?=[0-9]|[.-][0-9])", with: " \u{00D7} ", options: .regularExpression)
+        t = t.replacingOccurrences(of: "(?<=[0-9]) ?([\\^/\u{2044}\u{00B1}:+]) ?(?=[0-9+.-])", with: "$1", options: .regularExpression)
+        t = t.replacingOccurrences(of: "([\u{00B1}<>\u{2264}\u{2265}~\u{2248}$\u{20AC}\u{00A3}\u{00A5}]) (?=[0-9]|[.-][0-9])", with: "$1", options: .regularExpression)
+        t = t.replacingOccurrences(of: "(?<=[a-z]) ?([\\^/]) ?(?=[a-z0-9])", with: "$1", options: .regularExpression)
+        t = t.replacingOccurrences(of: "(?<=[0-9]) (?=[%\u{2030}\u{00B0}\u{2032}\u{2033}])", with: "", options: .regularExpression)
+        // A hyphen glued between letters ("n-m", "five-engine") is marked (U+2011) apart from a spaced one; any other
+        // dash is its own token, however it is spaced ("suit - with", "at − 5", "10-20"): see `tokens`, `match`.
+        t = t.replacingOccurrences(of: "(?<=\\p{L})-(?=\\p{L})", with: " \u{2011} ", options: .regularExpression)
+        t = t.replacingOccurrences(of: #"\s*-\s*"#, with: " - ", options: .regularExpression)
         // A removed tag leaves a space before punctuation ("derail ."); drop it on both sides.
-        t = t.replacingOccurrences(of: #" ([.,;:!?)\]])"#, with: "$1", options: .regularExpression)
+        t = t.replacingOccurrences(of: #" ([.,;:!?)\]])(?![0-9])"#, with: "$1", options: .regularExpression)
+            .replacingOccurrences(of: #"([(\[]) "#, with: "$1", options: .regularExpression)
+        // Plain-space thousands groups ("1 144") are one number on the page and in the quote alike; a block mark
+        // with its spaces is one mark, never a grouping space, then a space.
+        t = t.replacingOccurrences(of: "[ \u{2}]*\u{2}[ \u{2}]*", with: "\u{2}", options: .regularExpression)
+        // A spaced mixed fraction ("1 1/2", "1 ½") is one number, as "1½" is: "1+1/2".
+        t = t.replacingOccurrences(of: #"(?<![0-9.,/])([0-9]+) ([0-9]+/[0-9]+)(?![0-9/])"#, with: "$1+$2", options: .regularExpression)
+        t = groupedThousands(t)
+        // The block mark stays a token of its own (a hard boundary between tokens, see `tokens`).
+        t = t.replacingOccurrences(of: "\u{2}", with: " \u{2} ")
+        t = t.replacingOccurrences(of: #"\s*-\s*"#, with: " - ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s*\u{2014}\\s*", with: " \u{2014} ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        t = t.replacingOccurrences(of: #" ([.,;:!?)\]])(?![0-9])"#, with: "$1", options: .regularExpression)
             .replacingOccurrences(of: #"([(\[]) "#, with: "$1", options: .regularExpression)
         return t.trimmingCharacters(in: .whitespaces)
     }
 
+    static let superscripts: [Character: Character] = ["\u{2070}": "0", "\u{00B9}": "1", "\u{00B2}": "2", "\u{00B3}": "3", "\u{2074}": "4",
+        "\u{2075}": "5", "\u{2076}": "6", "\u{2077}": "7", "\u{2078}": "8", "\u{2079}": "9", "\u{207A}": "+", "\u{207B}": "-"]
+
+    /// A quote mark after a digit is a prime (a unit mark: "5'11\"", "5’11”" are 5′11″; ″ as NFKC writes it, ′′) unless
+    /// it closes a quotation of its own kind that is open in the same block ("“The turbine produces 144”",
+    /// "\"5'11\"\"" is a quoted 5′11″). Straight double quotes pair in order; a block mark ends every quotation.
+    /// Spelled or symbolic unit words that make a bare number a quantity ("10 percent", "100 watt", "10 m").
+    static func isUnitWord(_ t: String) -> Bool {
+        if isUnitSymbol(t) || timeUnits.contains(t) || magnitudes.contains(t) { return true }
+        let spelled = ["percent", "percentage", "pct", "bar", "psi", "rpm", "mph", "kph", "kmh", "knot", "knots", "hp", "bhp", "kgf", "lbf",
+                       "btu", "db", "decibel", "decibels", "degree", "degrees", "kelvin", "celsius", "fahrenheit", "foot", "feet", "inch",
+                       "inches", "yard", "yards", "mile", "miles", "ton", "tons", "tonne", "tonnes", "pound", "pounds", "lb", "lbs", "ounce",
+                       "ounces", "oz", "gallon", "gallons", "gal", "horsepower", "calorie", "calories", "kcal", "ft", "in",
+                       "cubic", "square", "sq", "cu", "bit", "bits", "byte", "bytes", "kb", "mb", "gb", "tb", "pb", "kib", "mib", "gib",
+                       "tib", "kbps", "mbps", "gbps", "bps", "flops"]
+        if spelled.contains(t) { return true }
+        return t.range(of: "^(kilo|mega|giga|tera|milli|micro|nano|centi|deci)?(watt|volt|amp|ampere|joule|newton|pascal|metre|meter|gram|litre|liter|hertz|second|ohm|watt-hour|bit|byte)s?$",
+                       options: .regularExpression) != nil
+    }
+
+    /// Words between a connector and a quantity ("in just 30 seconds", "by about 20 cm").
+    static let modifiers: Set<String> = ["just", "about", "approximately", "approx", "roughly", "only", "around", "nearly", "almost",
+                                         "some", "under", "over", "less", "than", "more", "at", "least", "most", "up", "to", "a", "mere"]
+    /// Words right after a quantity that bound or qualify it ("10 kg max", "10 kw peak").
+    static let postBounds: Set<String> = ["max", "maximum", "min", "minimum", "approx", "approximately", "nominal", "typical", "peak",
+                                          "plus", "minimum", "maximal", "or"]
+    /// The word after "or"/"and" that makes it a bound ("or less", "or more", "and up", "and above").
+    static let boundTails: Set<String> = ["less", "more", "fewer", "greater", "higher", "lower", "above", "below", "over", "under",
+                                          "so", "up", "beyond", "thereabouts", "better", "worse"]
+
+    /// Written bounds and approximations right before a number: the quote must keep them ("up to 10", "at least 10").
+    static let boundWords: Set<String> = ["than", "least", "most", "about", "around", "approximately", "approx", "nearly", "almost",
+        "roughly", "over", "under", "above", "below", "upto", "max", "maximum", "min", "minimum", "circa", "ca", "estimated", "est",
+        "exceeding", "beyond", "within", "some", "nearly", "up"]
+
+    /// Ordinary words that may follow a quantity with a unit without continuing it.
+    static let proseAfterQuantity: Set<String> = ["of", "at", "on", "in", "for", "with", "from", "into", "over", "under", "and", "or", "the",
+        "its", "his", "her", "their", "is", "was", "are", "were", "be", "been", "has", "had", "have", "which", "that", "when", "while", "after",
+        "before", "during", "by", "than", "as", "but", "so", "if", "up", "down", "out", "off", "more", "less", "total", "overall", "tall",
+        "long", "wide", "high", "deep", "thick", "away", "apart", "across", "ago", "old", "later", "earlier", "above", "below", "behind",
+        "ahead", "faster", "slower", "heavier", "lighter", "it", "this", "these", "those", "they", "he", "she", "we", "you", "not", "only",
+        "about", "around", "near", "through", "across", "without", "within", "between", "against", "toward", "towards", "while", "until"]
+
+    /// Words that scale the number before them.
+    static let magnitudes: Set<String> = ["hundred", "thousand", "million", "billion", "trillion", "k", "m", "bn", "mn", "mln", "tn", "lakh", "crore"]
+    /// Time units after "a", "an", "each" or "every" in a rate.
+    static let timeUnits: Set<String> = ["second", "seconds", "sec", "secs", "s", "minute", "minutes", "min", "mins", "hour", "hours", "hr",
+                                         "hrs", "h", "day", "days", "week", "weeks", "month", "months", "year", "years", "yr", "yrs"]
+    /// Number words that count the time unit after them ("every two hours").
+    static let countWords: Set<String> = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "twelve",
+                                          "few", "several", "half"]
+    /// Ordinary short words that are not unit symbols though they look like one ("at", "in", "of").
+    static let notUnits: Set<String> = ["a", "an", "at", "as", "am", "pm", "in", "on", "is", "it", "of", "or", "by", "to", "me", "my", "do",
+                                        "no", "so", "up", "we", "he", "us", "ha", "be", "go", "if", "cd"]
+    /// A unit symbol that multiplies a unit before it when written apart ("kw h", "n cm", "w ms"): an SI prefix and a
+    /// base or derived unit symbol.
+    static func isUnitSymbol(_ t: String) -> Bool {
+        guard !notUnits.contains(t), t.count <= 5 else { return false }
+        return t.range(of: "^(da|[yzafpnµumcdhkmgtpe])?(m|g|s|a|k|mol|n|j|w|pa|hz|v|c|f|ω|ohm|t|h|l|b|bar|wh|ah|ev)$", options: .regularExpression) != nil
+    }
+
+    /// Whether a number starts at `i` and the mark `close` follows it right away ("10'" in "'10'").
+    static func closesAfterNumber(_ chars: [Character], _ i: Int, _ close: Character) -> Bool {
+        var i = i
+        if i < chars.count, "-+\u{2212}".contains(chars[i]) { i += 1 }
+        var k = i
+        while k < chars.count, chars[k].isNumber || chars[k] == "." || chars[k] == "," { k += 1 }
+        return k > i && k < chars.count && chars[k] == close && !(k + 1 < chars.count && chars[k + 1].isNumber)
+    }
+
+    static func unitPrimes(_ s: String) -> String {
+        let chars = Array(s)
+        var out = "", curlyDouble = 0, curlySingle = 0, straightDouble = false, straightSingle = false
+        for (i, c) in chars.enumerated() {
+            let prev = out.last, next: Character? = i + 1 < chars.count ? chars[i + 1] : nil
+            let afterDigit = prev?.isNumber == true, beforeDigit = next?.isNumber == true
+            // A number may start with a sign or a decimal point ("'-10'", "'.5'").
+            let beforeNumber = beforeDigit || (next.map { "-+.\u{2212}".contains($0) } == true && i + 2 < chars.count
+                && (chars[i + 2].isNumber || (chars[i + 2] == "." && i + 3 < chars.count && chars[i + 3].isNumber)))
+            let afterWord = prev.map { $0.isLetter || $0.isNumber } ?? false, beforeLetter = next?.isLetter == true
+            switch c {
+            case "\u{2}": curlyDouble = 0; curlySingle = 0; straightDouble = false; straightSingle = false; out.append(c)
+            case "\u{201C}", "\u{201E}": curlyDouble += 1; out.append(c)
+            case "\u{2018}", "\u{201A}":   // "‘90s" opens nothing; "‘10’" does
+                if !beforeNumber || closesAfterNumber(chars, i + 1, "\u{2019}") { curlySingle += 1 }; out.append(c)
+            case "\u{201D}":
+                if afterDigit, beforeDigit || curlyDouble == 0 { out += "\u{2032}\u{2032}" } else { curlyDouble = max(0, curlyDouble - 1); out.append(c) }
+            case "\u{2019}":
+                if afterDigit, beforeDigit || curlySingle == 0 { out += "\u{2032}" }
+                else if afterWord, beforeLetter { out.append(c) }   // an apostrophe: "it’s"
+                else { if afterWord { curlySingle = max(0, curlySingle - 1) }; out.append(c) }
+            case "\"":
+                if afterDigit, beforeDigit || !straightDouble { out += "\u{2032}\u{2032}" } else { straightDouble.toggle(); out.append(c) }
+            case "'":
+                if afterDigit, beforeDigit || !straightSingle { out += "\u{2032}" }   // "5'11", "5' tall"
+                else if afterWord, beforeLetter { out.append(c) }                     // an apostrophe: "it's"
+                else if afterWord { straightSingle = false; out.append(c) }           // closes "'compact'"
+                else if beforeNumber, closesAfterNumber(chars, i + 1, "'") { straightSingle = true; out.append(c) }   // "'10'"
+                else if beforeDigit { out.append(c) }                                 // an elision: "'90s"
+                else if beforeLetter { straightSingle = true; out.append(c) }         // opens "'compact'"
+                else { out.append(c) }
+            default: out.append(c)
+            }
+        }
+        return out
+    }
+
+    /// Each vulgar fraction character as "n/d", after a digit as "+n/d" ("1½" is "1+1/2").
+    static func plainFractions(_ s: String) -> String {
+        var out = ""
+        for c in s {
+            guard let v = c.unicodeScalars.first?.value, c.unicodeScalars.count == 1,
+                  (0xBC...0xBE).contains(v) || (0x2150...0x215E).contains(v) || v == 0x2189 else { out.append(c); continue }
+            let f = String(c).precomposedStringWithCompatibilityMapping.replacingOccurrences(of: "\u{2044}", with: "/")
+            if out.last?.isNumber == true { out += "+" }
+            out += f
+        }
+        return out
+    }
+
+    /// Each run of Unicode superscript digits and signs as "^" and plain characters.
+    static func markedSuperscripts(_ s: String) -> String {
+        var out = "", inRun = false
+        for c in s {
+            if let plain = superscripts[c] { if !inRun { out.append("^") }; out.append(plain); inRun = true }
+            else { out.append(c); inRun = false }
+        }
+        return out
+    }
+
     static func decodeEntities(_ s: String) -> String {
         var t = s
-        for (e, c) in [("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"),
-                       ("&rsquo;", "'"), ("&lsquo;", "'"), ("&ldquo;", "\""), ("&rdquo;", "\""), ("&ndash;", "-"), ("&mdash;", "-"),
-                       ("&hellip;", "..."), ("&deg;", "\u{00B0}"), ("&times;", "\u{00D7}")] {
+        // Named entities (the common ones; "&amp;" last, so "&amp;minus;" stays text), then numeric ones below.
+        for (e, c) in [("&nbsp;", "\u{00A0}"), ("&thinsp;", "\u{2009}"), ("&hairsp;", "\u{200A}"), ("&ensp;", " "), ("&emsp;", " "),
+                       ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"),
+                       ("&rsquo;", "\u{2019}"), ("&lsquo;", "\u{2018}"), ("&sbquo;", "\u{201A}"), ("&ldquo;", "\u{201C}"), ("&rdquo;", "\u{201D}"), ("&bdquo;", "\u{201E}"),
+                       ("&laquo;", "\u{00AB}"), ("&raquo;", "\u{00BB}"), ("&ndash;", "\u{2013}"), ("&mdash;", "\u{2014}"), ("&minus;", "\u{2212}"),
+                       ("&hellip;", "..."), ("&deg;", "\u{00B0}"), ("&times;", "\u{00D7}"), ("&divide;", "\u{00F7}"), ("&plusmn;", "\u{00B1}"),
+                       ("&le;", "\u{2264}"), ("&ge;", "\u{2265}"), ("&asymp;", "\u{2248}"), ("&prime;", "\u{2032}"), ("&Prime;", "\u{2033}"),
+                       ("&sup1;", "\u{00B9}"), ("&sup2;", "\u{00B2}"), ("&sup3;", "\u{00B3}"), ("&frac14;", "\u{00BC}"), ("&frac12;", "\u{00BD}"),
+                       ("&frac34;", "\u{00BE}"), ("&frasl;", "\u{2044}"), ("&permil;", "\u{2030}"), ("&euro;", "\u{20AC}"), ("&pound;", "\u{00A3}"),
+                       ("&yen;", "\u{00A5}"), ("&cent;", "\u{00A2}"), ("&micro;", "\u{00B5}"), ("&middot;", "\u{00B7}"), ("&shy;", "\u{00AD}"),
+                       ("&zwj;", "\u{200D}"), ("&zwnj;", "\u{200C}"),
+                       ("&leq;", "\u{2264}"), ("&geq;", "\u{2265}"), ("&approx;", "\u{2248}"), ("&sim;", "\u{223C}"), ("&sdot;", "\u{22C5}"),
+                       ("&ne;", "\u{2260}"), ("&radic;", "\u{221A}"), ("&lowast;", "\u{2217}"), ("&infin;", "\u{221E}"), ("&mp;", "\u{2213}"),
+                       ("&amp;", "&")] {
             t = t.replacingOccurrences(of: e, with: c)
         }
+        // Any other named entity is a symbol (never letters, so a number beside it is not a bare number).
+        t = t.replacingOccurrences(of: #"&[a-zA-Z][a-zA-Z0-9]{1,30};"#, with: "\u{FFFC}", options: .regularExpression)
         guard let re = try? NSRegularExpression(pattern: #"&#(x?)([0-9a-fA-F]+);"#) else { return t }
         let ns = t as NSString
         var out = ""
@@ -227,45 +433,323 @@ public enum QuoteCheck {
     /// "85 mph" is not enough context.
     public static let minimumPart = 16
 
-    /// Where `quote` is in `page` (normalized page text and the matched ranges), or nil: every part of the quote
-    /// (split at an ellipsis), each at least `minimumPart` characters, in order, each starting and ending on a word
-    /// boundary ("85 mph" does not match inside "185 mph").
-    static func match(_ quote: String, in page: String, html: Bool = true) -> (page: String, ranges: [Range<String.Index>])? {
-        let q = normalized(quote, html: false)
-        let p = normalized(page, html: html)
-        let parts = q.components(separatedBy: "...").map { $0.trimmingCharacters(in: CharacterSet(charactersIn: " ,;:")) }.filter { !$0.isEmpty }
-        guard !parts.isEmpty, parts.allSatisfy({ $0.count >= minimumPart }) else { return nil }
-        func boundary(_ i: String.Index, before: Bool) -> Bool {
-            if before { return i == p.startIndex || !(p[p.index(before: i)].isLetter || p[p.index(before: i)].isNumber) }
-            return i == p.endIndex || !(p[i].isLetter || p[i].isNumber)
-        }
-        var from = p.startIndex
-        var ranges: [Range<String.Index>] = []
-        for part in parts {
-            var search = from
-            var hit: Range<String.Index>? = nil
-            while let r = p.range(of: part, range: search..<p.endIndex) {
-                if boundary(r.lowerBound, before: true) && boundary(r.upperBound, before: false) { hit = r; break }
-                search = p.index(after: r.lowerBound)
+    /// One word of normalized text: its text without trailing sentence punctuation (and, for a word, without
+    /// enclosing brackets), and whether a hard boundary (punctuation, a block such as a table cell or paragraph, the
+    /// start or end of the text) is on either side.
+    struct Token: Equatable {
+        var text: String
+        var closedBefore: Bool
+        var closedAfter: Bool
+        var hasLetter: Bool { text.contains { $0.isLetter } }
+        var hasDigit: Bool { text.contains { $0.isNumber } }
+    }
+
+    static func tokens(_ normalized: String) -> [Token] {
+        var out: [Token] = []
+        var closed = true
+        func close() { if !out.isEmpty { out[out.count - 1].closedAfter = true }; closed = true }
+        let raws = normalized.split(separator: " ")
+        for (n, raw) in raws.enumerated() {
+            if raw == "\u{2}" || raw == "\u{2014}" { close(); continue }
+            // A hyphen between two words ("five-engine", "suit - with") is punctuation: next to a number it stays
+            // a word of its own (a sign or a range).
+            // A glued hyphen is punctuation ("five-engine" is "five engine"), except in a compound unit right after a
+            // number ("10 n-m", "10 amp-hours"), where it stays a word of the quantity.
+            if raw == "\u{2011}" {
+                let unit = out.count >= 2 && out[out.count - 2].hasDigit && !out[out.count - 1].closedBefore
+                if unit { out.append(Token(text: "-", closedBefore: false, closedAfter: false)); closed = false } else { close() }
+                continue
             }
-            guard let r = hit else { return nil }
-            ranges.append(r); from = r.upperBound
+            if raw == "-", let before = out.last, before.text.allSatisfy({ $0.isLetter }), n + 1 < raws.count,
+               raws[n + 1].first?.isLetter == true, !raws[n + 1].contains(where: { $0.isNumber }) { close(); continue }
+            var t = String(raw), after = false
+            func trimEnd() { while let c = t.last, ".,;:!?".contains(c) { t.removeLast(); after = true } }
+            trimEnd()
+            // A bound abbreviation's period ("approx. 10", "max. 10") does not end it either.
+            if after, raw.last == ".", !raw.dropLast().contains(where: { ".,;:!?".contains($0) }),
+               ["approx", "appx", "max", "min", "ca", "c", "est", "abt", "nom", "typ"].contains(t) { after = false }
+            // A unit abbreviation's period after a number ("10 in.", "10 gal.", "10 cu. ft.") does not end the
+            // quantity: what may follow it is decided in `match` (a sentence after it, "10 s. A second", then misses).
+            if after, raw.last == ".", !raw.dropLast().contains(where: { ".,;:!?".contains($0) }), t.count <= 3,
+               t.allSatisfy({ $0.isLetter }), let before = out.last, before.hasDigit || before.text.count <= 3, !before.closedAfter,
+               out.count >= 1, out.suffix(2).contains(where: { $0.hasDigit }) { after = false }
+            if t.contains(where: { $0.isLetter }), !t.contains(where: { $0.isNumber }) {
+                t = t.trimmingCharacters(in: CharacterSet(charactersIn: "()[]{}"))
+                trimEnd()
+            }
+            if t.isEmpty || t == "..." { close(); continue }
+            out.append(Token(text: t, closedBefore: closed, closedAfter: after))
+            closed = after
+        }
+        if !out.isEmpty { out[out.count - 1].closedAfter = true }
+        return out
+    }
+
+    /// Where `quote` is in `page` (the page's tokens and the matched token ranges), or nil. The quote is split at
+    /// an ellipsis or a bracketed insertion into parts; all parts together are at least `minimumPart` characters
+    /// and the longest at least half that. Each part's words must equal the page's words in order (a word ends at a
+    /// space; a dash is a word of its own), except that a letters-only word glued to a gap may be completed by it
+    /// ("engine[s]", "[T]he"; not a unit after a number, "10 m[…]"). A number is a whole expression: a part that
+    /// starts with a number (or a sign, or a unit right after a number) may not follow a page word without letters
+    /// (an operator, a symbol, another number: "≥ 10", "10 ± 2", "6.674 30", "5′ 11″") unless a hard boundary is
+    /// between them, and one that starts with a sign may not follow a word with a digit ("2e - 3"); a part that ends
+    /// with a number or a unit after one may not be followed by such a word, nor by "to" and a number (a range).
+    static func match(_ quote: String, in page: String, html: Bool = true) -> (tokens: [Token], ranges: [Range<Int>])? {
+        // In a quote, an ellipsis and any bracketed insertion ("[...]", "[…]", "[s]", "[the suit]") are gaps.
+        let gap = "\u{1}"
+        let q = normalized(quote, html: false).replacingOccurrences(of: #"\[[^\]]{0,40}\]"#, with: gap, options: .regularExpression)
+            .replacingOccurrences(of: "...", with: gap)
+        let p = tokens(normalized(page, html: html))
+        let raw = q.components(separatedBy: gap)
+        // Each part: its words, and whether a gap is glued to its first or last word (no space between).
+        struct Part { var words: [Token]; var gluedBefore: Bool; var gluedAfter: Bool; var text: String }
+        var parts: [Part] = []
+        for (n, r) in raw.enumerated() {
+            let words = tokens(r)
+            guard !words.isEmpty else { continue }
+            let gb = n > 0 && r.first.map { !" .,;:!?".contains($0) } == true
+            let ga = n < raw.count - 1 && r.last.map { !" .,;:!?".contains($0) } == true
+            parts.append(Part(words: words, gluedBefore: gb, gluedAfter: ga, text: words.map(\.text).joined(separator: " ")))
+        }
+        guard let longest = parts.map(\.text.count).max(), longest >= minimumPart / 2,
+              parts.reduce(0, { $0 + $1.text.count }) >= minimumPart else { return nil }
+        func isSign(_ t: Token) -> Bool { t.text == "-" || t.text == "+" }
+        // At the start: a number or a sign. At the end: a number, or a unit right after a number.
+        func numericStart(_ words: [Token]) -> Bool { words[0].hasDigit || isSign(words[0]) }
+        func numericEnd(_ words: [Token]) -> Bool { quantityEnd(words, words.count - 1) != nil }
+        // The number a quantity ends with: `i` itself when it has a digit, else the number before up to 3 unit words
+        // ("10 degrees celsius"); nil when there is none.
+        func quantityEnd(_ ws: [Token], _ i: Int) -> Int? {
+            var k = i
+            while k >= 0, k > i - 6 {
+                if ws[k].hasDigit, !unitWord(ws[k]) { return k }
+                guard unitWord(ws[k]), k == i || !ws[k].closedAfter else { return nil }
+                k -= 1
+            }
+            return nil
+        }
+        // A unit word: letters with unit symbols ("m", "n·m", "m/s", "m^2", "s^", "µm", "°c") or a compound
+        // unit's hyphen.
+        func unitWord(_ t: Token) -> Bool {
+            if t.text == "-" { return true }
+            guard t.hasLetter else { return false }
+            return t.text.allSatisfy { $0.isLetter || $0.isNumber || "/^\u{00B7}\u{22C5}_\u{00B0}%".contains($0) }
+                && !(t.text.first?.isNumber ?? false)
+        }
+        func bare(_ t: Token) -> Bool { !t.hasLetter }
+        // A letters-only quote word glued to a gap may be completed by it, unless it is a unit after a number.
+        func completable(_ words: [Token], at i: Int, neighbor j: Int) -> Bool {
+            let w = words[i]
+            guard w.text.allSatisfy({ $0.isLetter }) else { return false }
+            return !(j >= 0 && j < words.count && words[j].hasDigit)
+        }
+        func fits(_ part: Part, at s: Int) -> Bool {
+            let w = part.words, last = w.count - 1
+            guard s + last < p.count else { return false }
+            // Whether a glued gap completes the first or last word (then that edge is inside a word).
+            var completedStart = false, completedEnd = false
+            for j in 0...last {
+                let page = p[s + j].text, mine = w[j].text
+                if page == mine { continue }
+                if j == 0, part.gluedBefore, completable(w, at: 0, neighbor: 1), page.hasSuffix(mine) { completedStart = true; continue }
+                if j == last, part.gluedAfter, completable(w, at: last, neighbor: last - 1), page.hasPrefix(mine) { completedEnd = true; continue }
+                return false
+            }
+            // The start: a number may not continue an expression before it (a gap glued to it changes nothing).
+            if !completedStart, s > 0, !p[s].closedBefore, numericStart(w) {
+                let prev = p[s - 1]
+                if bare(prev) { return false }
+                // The end of a range in words ("10 to 20 bar", "10 bar to 20 bar").
+                // The end of a "between … and …" range.
+                // A written bound or approximation ("up to 10", "at least 10", "less than 10", "about 10").
+                if Self.boundWords.contains(prev.text) || (prev.text == "to" && s >= 2 && p[s - 2].text == "up") { return false }
+                if (prev.text == "and" || prev.text == "to"), !prev.closedBefore, s >= 2, let k = quantityEnd(p, s - 2) {
+                    if prev.text == "to" { return false }
+                    if p[max(0, k - 3)..<k].contains(where: { $0.text == "between" }) { return false }
+                }
+                if isSign(w[0]) || w[0].text.first == "+" || w[0].text.first == "-", prev.hasDigit { return false }
+                if w[0].hasDigit, prev.text.last == "e", prev.text.dropLast().last?.isNumber == true { return false }
+            }
+            // The end: a number may not go on after it.
+            let e = s + last
+            if !completedEnd, e + 1 < p.count, !p[e].closedAfter, numericEnd(w) {
+                let next = p[e + 1]
+                // A dash goes on with a number only when a number follows it ("10 - 20"); before a word it is
+                // punctuation ("1,050 bhp - the company").
+                let after = e + 2 < p.count ? p[e + 2] : nil
+                let unitEnd = w[last].hasLetter && !(w[last].text.first?.isNumber ?? false)
+                // A unit goes on: "per …", or a power or quotient unit ("10 m s^-1", "10 metres per second").
+                if unitEnd, quantityEnd(w, last) != nil, next.text == "per" || next.text.contains("^") || next.text.contains("/") { return false }
+                // After a number, "per" always goes on ("10 per minute", "10l per minute", "10% per month").
+                if next.text == "per" { return false }
+                // A quantity with a unit (attached, "10l", "10%", "5′11″", or a unit word after the number) is followed
+                // only by ordinary prose words: any other word may continue the unit, a rate or a product ("100 amp
+                // hours", "100 v a", "10 litres every fifteen minutes").
+                let withUnit = (w[last].hasDigit && w[last].text.contains { !$0.isNumber && !".,".contains($0) }) || (unitEnd && quantityEnd(w, last) != nil)
+                if withUnit, !Self.proseAfterQuantity.contains(next.text) { return false }
+                // An allowed word that leads into another quantity or a time continues it ("10 cm by 20 cm",
+                // "10 litres in 30 seconds", "10 kg over 2 hours").
+                // Modifiers between the connector and the quantity are skipped ("in just 30 seconds", "by about 20 cm").
+                var m = e + 2
+                while m < p.count, m < e + 5, Self.modifiers.contains(p[m].text) { m += 1 }
+                if withUnit || w[last].hasDigit, m < p.count, ["by", "in", "over", "for", "within", "under", "every", "each"].contains(next.text) {
+                    let t = p[m]
+                    if t.hasDigit || isSign(t) || Self.countWords.contains(t.text)
+                        || ((t.text == "a" || t.text == "an") && m + 1 < p.count && Self.timeUnits.contains(p[m + 1].text)) { return false }
+                }
+                // A bound after the quantity ("10 kg or less", "10 kw or more", "10 kg max", "10 bar and up").
+                if withUnit || w[last].hasDigit {
+                    if Self.postBounds.contains(next.text) { return false }
+                    if next.text == "or" || next.text == "and", let t = after, Self.boundTails.contains(t.text) { return false }
+                }
+                // After a bare number, a unit word goes on ("10 percent", "100 watt hours", "10 m").
+                if !withUnit, w[last].hasDigit, Self.isUnitWord(next.text) { return false }
+                // A number goes on with a magnitude ("$10 million", "3 bn").
+                if w[last].hasDigit, Self.magnitudes.contains(next.text) { return false }
+                if quantityEnd(w, last) != nil {
+                    // A rate ("10 metres a second", "5 litres each hour") or a unit product ("10 kw h").
+                    if ["a", "an", "each", "every"].contains(next.text), let t = after,
+                       Self.timeUnits.contains(t.text) || t.hasDigit || Self.countWords.contains(t.text) { return false }
+                    if unitEnd, Self.isUnitSymbol(next.text) { return false }
+                }
+                let dashBeforeWord = next.text == "-" && !unitEnd && !(after.map { $0.hasDigit || $0.text.first == "." || isSign($0) } ?? false)
+                if bare(next), !dashBeforeWord { return false }
+                if next.text == "to", e + 2 < p.count, p[e + 2].hasDigit || isSign(p[e + 2]) { return false }
+                // The start of a "between … and …" range.
+                if next.text == "and", e + 2 < p.count, p[e + 2].hasDigit || isSign(p[e + 2]), let k = quantityEnd(p, e),
+                   p[max(0, k - 3)..<k].contains(where: { $0.text == "between" }) { return false }
+            }
+            return true
+        }
+        var from = 0
+        var ranges: [Range<Int>] = []
+        for (n, part) in parts.enumerated() {
+            // A part glued after the previous part's completed word may start in that same word.
+            let start = n > 0 && part.gluedBefore && parts[n - 1].gluedAfter ? max(0, from - 1) : from
+            guard let s = (start..<max(start, p.count)).first(where: { fits(part, at: $0) }) else { return nil }
+            ranges.append(s..<(s + part.words.count)); from = s + part.words.count
         }
         return (p, ranges)
     }
 
     public static func found(_ quote: String, in page: String, html: Bool = true) -> Bool { match(quote, in: page, html: html) != nil }
 
+
+    /// A number written with plain spaces between groups of 3 digits ("1 144", "12 500 000"; the first group 1 to 3
+    /// digits) is one number ("1,144"), on the page and in the quote: a page may group with plain spaces, and a model
+    /// often copies a narrow no-break space as a plain one. A year before a number ("2019 144") stays apart.
+    static func groupedThousands(_ s: String) -> String {
+        guard let re = try? NSRegularExpression(pattern: #"(?<![0-9.,])[0-9]{1,3}(?: [0-9]{3})+(?![0-9])"#) else { return s }
+        let ns = s as NSString
+        var out = "", last = 0
+        for m in re.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
+            out += ns.substring(with: NSRange(location: last, length: m.range.location - last))
+            out += ns.substring(with: m.range).replacingOccurrences(of: " ", with: ",")
+            last = m.range.location + m.range.length
+        }
+        return out + ns.substring(from: last)
+    }
+
+
     /// Whether the quote, or the page text within 160 characters around it, attributes the figure to its maker or
     /// one person.
     static func attributed(_ quote: String, in page: String) -> Bool {
         guard let m = match(quote, in: page) else { return false }
-        let p = m.page
+        // The quote and about 160 characters (25 words) on either side.
         return m.ranges.contains { r in
-            let lo = p.index(r.lowerBound, offsetBy: -160, limitedBy: p.startIndex) ?? p.startIndex
-            let hi = p.index(r.upperBound, offsetBy: 160, limitedBy: p.endIndex) ?? p.endIndex
-            return String(p[lo..<hi]).range(of: attribution, options: .regularExpression) != nil
+            let lo = max(0, r.lowerBound - 25), hi = min(m.tokens.count, r.upperBound + 25)
+            return m.tokens[lo..<hi].map(\.text).joined(separator: " ").range(of: attribution, options: .regularExpression) != nil
         }
+    }
+
+    /// The page's own publication date (YYYY-MM-DD), nil when the page states none. In order: its page-level
+    /// publication meta tags (property or name article:published_time, og:published_time, date, dc.date,
+    /// citation_publication_date, pubdate; either attribute order and quote style); the top-level `datePublished`
+    /// of its JSON-LD article object (Article, NewsArticle, BlogPosting, ...; then WebPage), never a nested one such
+    /// as a related article's or a comment's. Microdata (`itemprop`) and `<time>` are not read: their owner (the
+    /// article, a comment, a review) is not known without the page's item scopes.
+    static func pageDate(_ html: String) -> String? {
+        // The first 400k characters, without HTML comments (a commented-out tag is not the page's metadata).
+        let raw = (html as NSString).substring(to: min((html as NSString).length, 400_000))
+        let h = raw.replacingOccurrences(of: #"(?s)<!--.*?(-->|$)"#, with: " ", options: .regularExpression)
+        // Meta tags only outside script, style, template and noscript content (a widget's template text is not
+        // the page's metadata); JSON-LD is read from its own scripts.
+        let tags = h.replacingOccurrences(of: #"(?is)<(script|style|template|noscript)\b.*?(</\1\s*>|$)"#, with: " ", options: .regularExpression)
+        let ns = tags as NSString
+        func first(_ p: String) -> String? {
+            guard let re = try? NSRegularExpression(pattern: p),
+                  let m = re.firstMatch(in: tags, range: NSRange(location: 0, length: ns.length)), m.numberOfRanges > 1 else { return nil }
+            return ns.substring(with: m.range(at: 1)).replacingOccurrences(of: "/", with: "-")
+        }
+        let names = #"(?:article:published_time|og:published_time|date|dc\.date|dc\.date\.issued|citation_publication_date|pubdate)"#
+        let attr = #"(?:property|name)\s*=\s*["']"# + names + #"["']"#
+        let date = #"(\d{4}[-/]\d{2}[-/]\d{2})"#
+        if let d = first(#"(?i)<meta[^>]+"# + attr + #"[^>]+content\s*=\s*["']"# + date) ?? first(#"(?i)<meta[^>]+content\s*=\s*["']"# + date + #"[^"']*["'][^>]+"# + attr) {
+            return d
+        }
+        // JSON-LD outside inert templates.
+        let live = h.replacingOccurrences(of: #"(?is)<template\b.*?(</template\s*>|$)"#, with: " ", options: .regularExpression)
+        return jsonLDDate(live, NSRange(location: 0, length: (live as NSString).length))
+    }
+
+    static let articleTypes: Set<String> = ["Article", "NewsArticle", "BlogPosting", "TechArticle", "ScholarlyArticle", "Report",
+                                            "ReportageNewsArticle", "AnalysisNewsArticle", "LiveBlogPosting", "PressRelease"]
+    static let pageTypes: Set<String> = ["WebPage", "ItemPage", "AboutPage", "CollectionPage", "FAQPage", "QAPage"]
+
+    /// The `datePublished` of the page's own JSON-LD article (scripts of type application/ld+json; their top-level
+    /// objects, lists and @graph). The article is the one the page names: a page object's `mainEntity` (inline or by
+    /// @id); else the one article that says `mainEntityOfPage`; else the only article. With no article, the only
+    /// page object's own date. Anything else (several candidates, a related article) is ambiguous: nil.
+    static func jsonLDDate(_ html: String, _ scan: NSRange) -> String? {
+        guard let re = try? NSRegularExpression(pattern: #"(?is)<script[^>]+type\s*=\s*["']\s*application/ld\+json\s*["'][^>]*>(.*?)</script>"#) else { return nil }
+        let ns = html as NSString
+        var objects: [[String: Any]] = []
+        for m in re.matches(in: html, range: scan) {
+            guard let o = try? JSONSerialization.jsonObject(with: Data(ns.substring(with: m.range(at: 1)).utf8)) else { continue }
+            let top = (o as? [Any]) ?? [o]
+            for case let d as [String: Any] in top {
+                objects.append(d)
+                for case let g as [String: Any] in d["@graph"] as? [Any] ?? [] { objects.append(g) }
+            }
+        }
+        func types(_ d: [String: Any]) -> [String] { (d["@type"] as? [String]) ?? [(d["@type"] as? String) ?? ""] }
+        func isArticle(_ d: [String: Any]) -> Bool { types(d).contains(where: articleTypes.contains) }
+        func isPage(_ d: [String: Any]) -> Bool { types(d).contains(where: pageTypes.contains) }
+        func date(_ d: [String: Any]) -> String? {
+            guard let s = d["datePublished"] as? String, s.range(of: #"^\d{4}-\d{2}-\d{2}"#, options: .regularExpression) != nil else { return nil }
+            return String(s.prefix(10))
+        }
+        let articles = objects.filter(isArticle)
+        let pages = objects.filter(isPage)
+        // 1. The page names its main entity: that article's date (nil when it has none; the owner is known). All
+        // named articles count: two different ones (a collection, two page objects) are ambiguous.
+        var named: [[String: Any]] = []
+        for page in pages {
+            guard let me = page["mainEntity"] else { continue }
+            for e in (me as? [Any]) ?? [me] {
+                // A reference (also a typed stub with an @id) resolves to the graph's object first.
+                let ref = (e as? String) ?? ((e as? [String: Any])?["@id"] as? String)
+                if let ref, let a = articles.first(where: { $0["@id"] as? String == ref }) { named.append(a); continue }
+                if let inline = e as? [String: Any], isArticle(inline) { named.append(inline) }
+            }
+        }
+        // The same article named twice (by @id, or the same inline object) is one.
+        func key(_ a: [String: Any]) -> String {
+            (a["@id"] as? String).map { "id:" + $0 }
+                ?? String(decoding: (try? JSONSerialization.data(withJSONObject: a, options: [.sortedKeys])) ?? Data(), as: UTF8.self)
+        }
+        var seen = Set<String>()
+        let distinct = named.filter { seen.insert(key($0)).inserted }
+        if distinct.count == 1 { return date(distinct[0]) }
+        if distinct.count > 1 { return nil }
+        // 2. The one article that says it is the page's main entity.
+        let main = articles.filter { $0["mainEntityOfPage"] != nil }
+        if main.count == 1 { return date(main[0]) }
+        if main.count > 1 { return nil }
+        // 3. The only article; 4. with no article, the only page object.
+        if articles.count == 1 { return date(articles[0]) }
+        if articles.isEmpty, pages.count == 1 { return date(pages[0]) }
+        return nil
     }
 
     /// Words in a quote that mark a statement by the maker or one person: such a row is at most a CLAIM.
@@ -285,6 +769,16 @@ extension FactTable {
             var attributed = false
             for k in rows[n].sources.indices {
                 let src = rows[n].sources[k]
+                // A source's date comes only from its page: the page's publication date when the page states one,
+                // else none (the model's date is removed; every change is listed).
+                var dateOnPage: String? = nil
+                defer {
+                    let d = dateOnPage ?? ""
+                    rows[n].sources[k].date = d
+                    if !src.date.isEmpty, src.date != d {
+                        downgrades.append("\(rows[n].id): source date \(src.date) " + (d.isEmpty ? "removed (not stated on the page)" : "corrected from the page to \(d)"))
+                    }
+                }
                 guard !src.quote.isEmpty else { rows[n].sources[k].check = "no quote"; continue }
                 guard let url = URL(string: src.url) else { rows[n].sources[k].check = "bad url"; continue }
                 let page: (status: Int, body: String?, final: URL?)
@@ -297,6 +791,7 @@ extension FactTable {
                 if (blocked + FactTable.mirrorHosts).contains(where: { finalHost == $0 || finalHost.hasSuffix("." + $0) }) {
                     rows[n].sources[k].check = "redirected to a blocked site (\(finalHost))"; continue
                 }
+                dateOnPage = QuoteCheck.pageDate(body)
                 if QuoteCheck.found(src.quote, in: body) {
                     rows[n].sources[k].check = "quote found"
                     foundSites.insert(FactTable.site(finalHost))
@@ -310,8 +805,12 @@ extension FactTable {
             // No found quote: UNKNOWN, also when every source was dropped. A row the model gave as PLAUSIBLE with no
             // source at all (a class inference) stays PLAUSIBLE.
             let inference = before == .plausible && rows[n].sources.isEmpty && rows[n].dropped == 0
-            if foundSites.isEmpty, !inference, before != .unknown {
+            // A row whose sources were all rejected (UNKNOWN from the parse) is unconfirmed too, not "not published";
+            // only a row the model itself gave as UNKNOWN with no source rejected is a researched absence.
+            if foundSites.isEmpty, !inference, before != .unknown || rows[n].dropped > 0 || !rows[n].sources.isEmpty {
                 after = .unknown
+                // Not confirmed is not "not published": the row is left out of the author's table.
+                rows[n].unconfirmed = true
             } else if before == .verified, foundSites.count < 2 || attributed {
                 after = .claim
             }

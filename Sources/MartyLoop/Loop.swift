@@ -230,13 +230,27 @@ public final class MartyLoop {
             if let m = calls[i]["model"] as? [String: Any] { block["turns"] = m["num_turns"] ?? NSNull(); block["webTools"] = m["webTools"] ?? NSNull() }
             if let text, var table = FactTable.parse(text, blocked: limits.blockedDomains) {
                 if options.quoteCheck { table.checkQuotes(fetcher: Self.fetcher) }
+                // Stopped early (a tool or turn limit, an error, an unreadable final table): the rows confirmed so far,
+                // marked partial and warned about with the cause.
+                if let m = calls[i]["model"] as? [String: Any], m["partial"] as? Bool == true {
+                    table.partial = true
+                    let cause = m["partialCause"] as? String ?? "web tool limit"
+                    block["partialCause"] = cause
+                    block["warning"] = "research stopped early (\(cause)); the table holds only the rows confirmed before that"
+                }
                 facts = table
                 block.merge(table.json) { a, _ in a }
                 block["ok"] = true
-                note(i, ["ok": true, "rows": table.rows.count])
+                note(i, ["ok": true, "rows": table.rows.count, "partial": table.partial])
             } else {
                 let reason = text == nil ? ((calls[i]["error"] as? String).map { $0.components(separatedBy: ":").first ?? "adapter" } ?? "adapter") : "research.json"
                 block["ok"] = false; block["reason"] = reason
+                // Research was tried and stopped (a limit, a timeout, an error, an unreadable reply) before it
+                // confirmed a fact: no table, a warning with the cause, and the prompts say facts may still be published.
+                let cause = reason == "adapter.research.turns" ? "its tool limit" : reason == "adapter.timeout" ? "a timeout"
+                    : reason == "research.json" ? "an unreadable reply" : "an error (\(reason))"
+                block["warning"] = "research stopped at \(cause) before it confirmed a fact; there is no fact table"
+                facts = FactTable(needed: true, rows: [], downgrades: [], partial: true)
                 note(i, ["ok": false, "reason": reason])
             }
             receipt["research"] = block

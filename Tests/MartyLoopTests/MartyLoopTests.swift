@@ -5,15 +5,35 @@ import MartyGraphics
 import MartyEngine
 @testable import MartyLoop
 
+/// A research adapter for loop tests: a fixed research reply with chosen adapter facts, or a thrown error.
+final class ResearchStub: ModelAdapter {
+    let id = "research-stub"
+    let inner: ScriptedAdapter
+    let researchText: String?, researchMeta: [String: Any], error: AdapterError?
+    init(replies: [String], research: String?, meta: [String: Any] = [:], error: AdapterError? = nil) {
+        inner = ScriptedAdapter(replies: replies); researchText = research; researchMeta = meta; self.error = error
+    }
+    var supportsResearch: Bool { true }
+    func reply(system: String, user: String) throws -> ModelReply { try inner.reply(system: system, user: user) }
+    func research(system: String, user: String, limits: ResearchLimits) throws -> ModelReply {
+        if let error { throw error }
+        return ModelReply(text: researchText ?? "", seconds: 0, meta: researchMeta)
+    }
+}
+
 /// A page stub for the quote check: every test quote is on every page (tests never touch the network).
 struct TestPages: PageFetcher {
     var pages: [String: String] = [:]
     var fallback: String? = "It gives a thrust of 150 kgf in total. The wheel has 36 teeth. It gives a thrust of 144 kgf in total. The rated speed is 3000 rpm."
     var finals: [String: String] = [:]
+    /// The publication date the fallback page states (a source's date comes only from its page).
+    var fallbackDates: [String: String] = ["https://example.org/shaft": "2024-01-01"]
+    var fallbackDate = "2020-01-01"
     func fetch(_ url: URL) -> (status: Int, body: String?, final: URL?) {
         let final = finals[url.absoluteString].flatMap(URL.init(string:)) ?? url
         if let p = pages[url.absoluteString] { return (200, p, final) }
-        return fallback.map { (200, $0, final) } ?? (404, nil, nil)
+        let date = fallbackDates[url.absoluteString] ?? fallbackDate
+        return fallback.map { (200, "<meta name=\"date\" content=\"\(date)\">" + $0, final) } ?? (404, nil, nil)
     }
 }
 
@@ -1180,7 +1200,8 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(t.rows[1].sources[1].check, "page failed (404)")
         XCTAssertEqual(t.rows[3].sources[0].check, "quote not found")
         XCTAssertEqual(t.quoteChecks, 5, "each page is fetched once")
-        XCTAssertTrue(t.promptBlock.contains(#""check":"quote not found""#), t.promptBlock)
+        XCTAssertFalse(t.promptBlock.contains(#""id":"F4""#), "an unconfirmed row is left out: \(t.promptBlock)")
+        XCTAssertTrue(t.promptBlock.contains("not found on the cited pages"), t.promptBlock)
         var small = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [rows[0]]])))
         small.checkQuotes(fetcher: stub, budget: 1)
         XCTAssertEqual(small.rows[0].label, .claim, "one page checked: one site"); XCTAssertEqual(small.rows[0].sources[1].check, "not checked (budget)")
@@ -1237,7 +1258,7 @@ final class MartyLoopTests: XCTestCase {
         let rr = try XCTUnwrap(r["research"] as? [String: Any])
         XCTAssertEqual((rr["rows"] as? [[String: Any]])?.first?["label"] as? String, "UNKNOWN")
         XCTAssertEqual(rr["quoteChecks"] as? Int, 1)
-        XCTAssertTrue(model.prompts[0].user.contains(#""label":"UNKNOWN""#))
+        XCTAssertFalse(model.prompts[0].user.contains(#""claim":"Wheel teeth""#), "the unconfirmed row is not shown to the plan")
     }
 
     /// The fetcher's own deadline: a curl that hangs past it is stopped and reaped; output over the cap is refused.
@@ -1268,6 +1289,429 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(r.status, 200)
         XCTAssertTrue(QuoteCheck.found("variable-ratio transmission system commonly used on bicycles", in: r.body ?? ""), "the page text is matched")
         XCTAssertEqual(PinnedFetcher().fetch(URL(string: "http://127.0.0.1/")!).body, nil)
+    }
+
+    /// Round-2g quote misses: a word joiner before a dash, a trailing period, a bracketed insertion, full-width
+    /// digits, the page's reference marks. A row whose quotes are not found is left out of the author's table (never
+    /// "not published") and is no evidence; a page's publication date replaces the model's source date.
+    func testQuoteNormalizationAndUnconfirmedRows() throws {
+        let page = "<p>The suit\u{2060}\u{2014}with five engines[3]\u{2014}gives a thrust of \u{FF11}\u{FF14}\u{FF14} kgf in total.</p>"
+        XCTAssertTrue(QuoteCheck.found("The suit - with five engines - gives a thrust of 144 kgf in total.", in: page))
+        XCTAssertTrue(QuoteCheck.found("The suit [...] gives a thrust of 144 kgf in total", in: page))
+        XCTAssertTrue(QuoteCheck.found("with five engines [it] gives a thrust of 144 kgf", in: page))
+        XCTAssertFalse(QuoteCheck.found("gives a thrust of 155 kgf in total", in: page))
+        XCTAssertEqual(QuoteCheck.pageDate(#"<script type="application/ld+json">{"@type": "Article", "datePublished": "2019-07-12T10:00"}</script>"#), "2019-07-12")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<meta property="article:published_time" content="2020-03-05T00:00:00Z">"#), "2020-03-05")
+        XCTAssertNil(QuoteCheck.pageDate("<p>no date</p>"))
+        func src(_ url: String, _ quote: String, _ date: String) -> [String: Any] { ["url": url, "publisher": "P", "date": date, "quote": quote] }
+        let rows: [[String: Any]] = [
+            ["id": "F1", "claim": "Thrust", "value": "144", "unit": "kgf", "label": "CLAIM", "sources": [src("https://a.org/1", "gives a thrust of 144 kgf in total", "2017")]],
+            ["id": "F2", "claim": "Speed record", "value": "137", "unit": "km/h", "label": "CLAIM", "sources": [src("https://b.org/1", "set a record of 137 km/h", "2019")]]]
+        var t = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": rows])))
+        let dated = "<meta name=\"date\" content=\"2020-01-02\">" + page
+        t.checkQuotes(fetcher: TestPages(pages: ["https://a.org/1": dated, "https://b.org/1": "<p>Nothing here.</p>"], fallback: nil))
+        XCTAssertEqual(t.rows[0].sources[0].date, "2020-01-02", "the page's date")
+        XCTAssertTrue(t.downgrades.contains { $0.contains("source date 2017 corrected from the page to 2020-01-02") }, "\(t.downgrades)")
+        XCTAssertEqual(t.rows[1].label, .unknown); XCTAssertTrue(t.rows[1].unconfirmed)
+        XCTAssertFalse(t.promptBlock.contains("Speed record"), "an unconfirmed row is not shown")
+        XCTAssertTrue(t.promptBlock.contains("never call such a fact \"not published\""), t.promptBlock)
+        let e = FactCheck.Evidence.build(table: t, question: "q", report: nil, model: nil)
+        XCTAssertFalse(e.numbers.contains("137"), "an unconfirmed row is no evidence"); XCTAssertTrue(e.numbers.contains("144"))
+
+        // A signed number keeps its word boundary; a spaced dash still folds.
+        XCTAssertTrue(QuoteCheck.found("\u{2212}5 degrees Celsius", in: "<p>It operates at \u{2212}5 degrees Celsius.</p>"))
+        XCTAssertTrue(QuoteCheck.found("the suit - with five engines", in: "<p>the suit -with five engines</p>"))
+        XCTAssertTrue(QuoteCheck.found("\u{2212}5 degrees Celsius", in: "<p>It operates at \u{2212} 5 degrees Celsius.</p>"))
+        XCTAssertFalse(QuoteCheck.found("-5 degrees Celsius", in: "<p>a range of 15-5 degrees Celsius</p>"), "a sign after a digit is a range")
+        // Short parts and gaps inside a word.
+        XCTAssertTrue(QuoteCheck.found("It [\u{2026}] produces 144 kgf of thrust", in: "<p>It produces 144 kgf of thrust.</p>"))
+        XCTAssertTrue(QuoteCheck.found("The engine[s] produce 144 kgf of thrust", in: "<p>The engines produce 144 kgf of thrust.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The engine produce 144 kgf of thrust", in: "<p>The engines produce 144 kgf of thrust.</p>"))
+        XCTAssertFalse(QuoteCheck.found("85 mph [...] 85 mph", in: "<p>85 mph and 85 mph</p>"), "no part of 8 characters")
+        XCTAssertFalse(QuoteCheck.found("of 85 mph", in: "<p>top speed of 185 mph and more</p>"))
+        XCTAssertFalse(QuoteCheck.found("maximum speed [\u{2026}]85 mph", in: "<p>the maximum speed 185 mph</p>"), "a spaced gap protects both sides")
+        XCTAssertTrue(QuoteCheck.found("maximum speed [\u{2026}]85 mph", in: "<p>the maximum speed is listed as 85 mph</p>"))
+        XCTAssertFalse(QuoteCheck.found("maximum speed [\u{2026}]85 mph", in: "<p>the maximum speed is about 85 mph</p>"), "an approximation is kept")
+        XCTAssertFalse(QuoteCheck.found("[\u{2026}]85 mph top speed here", in: "<p>185 mph top speed here</p>"), "a leading gap keeps the outer boundary of a number")
+        XCTAssertTrue(QuoteCheck.found("[T]he engines produce 144 kgf", in: "<p>The engines produce 144 kgf.</p>"))
+        XCTAssertFalse(QuoteCheck.found(".5 litres per minute", in: "<p>it uses 5 litres per minute</p>"), "a decimal point is kept")
+        XCTAssertTrue(QuoteCheck.found(".5 litres per minute", in: "<p>it uses .5 litres per minute</p>"))
+        XCTAssertFalse(QuoteCheck.found("flow [...] .5 litres per minute", in: "<p>flow of 1.5 litres per minute</p>"))
+        // The page's own date: explicit meta first; JSON-LD only from the page's article object, never a nested one.
+        let related = #"<script type="application/json">{"relatedArticles":[{"datePublished":"2017-01-01"}]}</script><meta property="article:published_time" content="2026-11-01">"#
+        XCTAssertEqual(QuoteCheck.pageDate(related), "2026-11-01")
+        XCTAssertNil(QuoteCheck.pageDate(#"<script type="application/json">{"datePublished":"2017-01-01"}</script>"#))
+        XCTAssertEqual(QuoteCheck.pageDate(#"<script type="application/ld+json">{"@graph": [{"@type": "WebPage", "datePublished": "2019-01-01"}, {"@type": "NewsArticle", "datePublished": "2019-07-12T10:00", "mentions": {"@type": "Article", "datePublished": "2001-01-01"}}]}</script>"#), "2019-07-12")
+        // The page's own article: by mainEntity, never a related article; ambiguous gives none.
+        let graph = ##"<script type="application/ld+json">{"@graph": [{"@type": "NewsArticle", "@id": "#rel", "datePublished": "2017-01-01"}, {"@type": "NewsArticle", "@id": "#main", "datePublished": "2026-11-01"}, {"@type": "WebPage", "mainEntity": {"@id": "#main"}}]}</script>"##
+        XCTAssertEqual(QuoteCheck.pageDate(graph), "2026-11-01")
+        XCTAssertEqual(QuoteCheck.pageDate(graph.replacingOccurrences(of: ##""mainEntity": {"@id": "#main"}"##, with: ##""mainEntity": {"@type": "Article", "@id": "#main"}"##)), "2026-11-01", "a typed stub resolves")
+        XCTAssertNil(QuoteCheck.pageDate(#"<script type="application/ld+json">[{"@type": "NewsArticle", "datePublished": "2017-01-01"}, {"@type": "NewsArticle"}]</script>"#), "two articles, no owner named")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<script type="application/ld+json">[{"@type": "NewsArticle", "datePublished": "2017-01-01"}, {"@type": "Article", "mainEntityOfPage": "https://a.org/x", "datePublished": "2021-03-03"}]</script>"#), "2021-03-03")
+        XCTAssertNil(QuoteCheck.pageDate(#"<script type="application/ld+json">{"@type": "CollectionPage", "mainEntity": [{"@type": "Article", "datePublished": "2017-01-01"}, {"@type": "Article", "datePublished": "2018-01-01"}]}</script>"#), "two named articles")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<script>var t = '<meta name="date" content="2017-01-01">';</script><meta name="date" content="2024-04-04">"#), "2024-04-04", "a script's text is not metadata")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<meta property = "article:published_time" content = "2026-11-01">"#), "2026-11-01")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<script type=" application/ld+json ">{"@type": "Article", "datePublished": "2022-02-03"}</script>"#), "2022-02-03")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<script type = "application/ld+json">{"@type": "Article", "datePublished": "2022-02-02"}</script>"#), "2022-02-02")
+        XCTAssertNil(QuoteCheck.pageDate(#"<template><script type="application/ld+json">{"@type": "Article", "datePublished": "2017-01-01"}</script></template>"#))
+        // A commented-out tag is not metadata.
+        XCTAssertEqual(QuoteCheck.pageDate(#"<!-- <meta name="date" content="2017-01-01"> --><script type="application/ld+json">{"@type": "Article", "datePublished": "2026-11-01"}</script>"#), "2026-11-01")
+        XCTAssertNil(QuoteCheck.pageDate(#"<time datetime="2015-05-05">May</time>"#), "an unmarked time is not the publication date")
+        XCTAssertNil(QuoteCheck.pageDate(#"<time itemprop="datePublished" datetime="2016-06-06">June</time>"#), "microdata has no known owner")
+        let comment = #"<script type="application/ld+json">{"@type": "Article", "datePublished": "2020-01-02"}</script><div itemscope itemtype="https://schema.org/Comment"><meta itemprop="datePublished" content="2025-06-07"></div>"#
+        XCTAssertEqual(QuoteCheck.pageDate(comment), "2020-01-02", "a comment's date is not the page's")
+        // Numbers are whole tokens: not inside a decimal or a thousands group.
+        XCTAssertFalse(QuoteCheck.found("fuel consumption [\u{2026}] 5 litres per hour", in: "<p>fuel consumption is 1.5 litres per hour</p>"))
+        XCTAssertFalse(QuoteCheck.found("maximum thrust [\u{2026}] 144 kgf", in: "<p>maximum thrust of 1,144 kgf</p>"))
+        XCTAssertFalse(QuoteCheck.found("a maximum thrust of 144", in: "<p>a maximum thrust of 144.5 kgf</p>"))
+        XCTAssertTrue(QuoteCheck.found("a maximum thrust of 144", in: "<p>a maximum thrust of 144. Then it stops.</p>"))
+        XCTAssertTrue(QuoteCheck.found("maximum thrust [\u{2026}] 144 kgf", in: "<p>maximum thrust, 144 kgf, at sea level</p>"))
+        XCTAssertFalse(QuoteCheck.found("Fuel consumption [\u{2026}] 5 litres per hour", in: "<p>Fuel consumption is .5 litres per hour</p>"))
+        XCTAssertFalse(QuoteCheck.found("Minimum temperature [\u{2026}] 5 degrees Celsius", in: "<p>Minimum temperature \u{2212}5 degrees Celsius</p>"))
+        XCTAssertFalse(QuoteCheck.found("Minimum temperature [\u{2026}] 5 degrees Celsius", in: "<p>Minimum temperature: -5 degrees Celsius</p>"))
+        XCTAssertFalse(QuoteCheck.found("Maximum thrust [\u{2026}] 144 kgf", in: "<p>Maximum thrust is 1\u{202F}144 kgf</p>"))
+        XCTAssertFalse(QuoteCheck.found("Maximum thrust [\u{2026}] 144 kgf", in: "<p>Maximum thrust is 1&nbsp;144 kgf</p>"))
+        XCTAssertTrue(QuoteCheck.found("Maximum thrust is 1 144 kgf", in: "<p>Maximum thrust is 1\u{202F}144 kgf</p>"))
+        XCTAssertTrue(QuoteCheck.found("Maximum thrust is 1,144 kgf", in: "<p>Maximum thrust is 1\u{2009}144 kgf</p>"))
+        XCTAssertTrue(QuoteCheck.found("it was built in 2019 by a team of 144", in: "<p>it was built in 2019 by a team of 144 people</p>"))
+        XCTAssertFalse(QuoteCheck.found("Maximum thrust [\u{2026}] 144 kgf", in: "<p>Maximum thrust is 1 144 kgf</p>"), "a plain grouping space on the page")
+        // Superscripts are never joined to the number before them; a reference mark leaves nothing.
+        XCTAssertFalse(QuoteCheck.found("Maximum thrust is 1441 kgf in total", in: "<p>Maximum thrust is 144<sup>1</sup> kgf in total</p>"))
+        XCTAssertFalse(QuoteCheck.found("The power density is 103 W/kg", in: "<p>The power density is 10<sup>3</sup> W/kg</p>"))
+        XCTAssertFalse(QuoteCheck.found("The power density is 103 W/kg", in: "<p>The power density is 10\u{00B3} W/kg</p>"))
+        XCTAssertTrue(QuoteCheck.found("The power density is 10\u{00B3} W/kg", in: "<p>The power density is 10<sup>3</sup> W/kg</p>"))
+        XCTAssertTrue(QuoteCheck.found("Maximum thrust is 144 kgf in total", in: ##"<p>Maximum thrust is 144 kgf<sup class="reference"><a href="#c1">[1]</a></sup> in total</p>"##))
+        // Fractions and exponents keep their structure: no match on a part of them.
+        XCTAssertFalse(QuoteCheck.found("2 inches in diameter", in: "<p>The shaft measures 1\u{00BD} inches in diameter</p>"))
+        XCTAssertFalse(QuoteCheck.found("shaft measures 1 inches in diameter", in: "<p>The shaft measures 1\u{00BD} inches in diameter</p>"))
+        XCTAssertFalse(QuoteCheck.found("The shaft measures [...] 1/2 inches", in: "<p>The shaft measures 1\u{00BD} inches</p>"))
+        XCTAssertTrue(QuoteCheck.found("The shaft measures 1\u{00BD} inches in diameter", in: "<p>The shaft measures 1\u{00BD} inches in diameter</p>"))
+        XCTAssertFalse(QuoteCheck.found("Power density [...] 3 watts per kilogram", in: "<p>Power density is 10\u{00B3} watts per kilogram</p>"))
+        XCTAssertFalse(QuoteCheck.found("Power density is 10 watts per kilogram", in: "<p>Power density is 10\u{00B3} watts per kilogram</p>"))
+        XCTAssertFalse(QuoteCheck.found("a gear ratio of 3", in: "<p>a gear ratio of 3/4 at the output</p>"))
+        XCTAssertFalse(QuoteCheck.found("-3 volts under load", in: "<p>The output is 2e-3 volts under load.</p>"))
+        XCTAssertFalse(QuoteCheck.found("-3 volts under load", in: "<p>The output is 2E-3 volts under load.</p>"))
+        XCTAssertTrue(QuoteCheck.found("the bath is kept at -3 degrees", in: "<p>The bath is kept at -3 degrees</p>"))
+        XCTAssertFalse(QuoteCheck.found("1/2 inches in diameter", in: "<p>The shaft measures 1 \u{00BD} inches in diameter.</p>"))
+        XCTAssertFalse(QuoteCheck.found("1/2 inches in diameter", in: "<p>The shaft measures 1 1/2 inches in diameter.</p>"))
+        XCTAssertTrue(QuoteCheck.found("The shaft measures 1 1/2 inches", in: "<p>The shaft measures 1\u{00BD} inches.</p>"))
+        XCTAssertTrue(QuoteCheck.found("the shaft is 1/2 inches in diameter", in: "<p>The shaft is 1/2 inches in diameter.</p>"))
+        XCTAssertFalse(QuoteCheck.found("-3 seconds under nominal load", in: "<p>Response time is 10\u{207B}\u{00B3} seconds under nominal load.</p>"))
+        XCTAssertFalse(QuoteCheck.found("Response time is 10 seconds", in: "<p>Response time is 10\u{207B}\u{00B3} seconds</p>"))
+        XCTAssertFalse(QuoteCheck.found("The output is 10", in: "<p>The output is 10\u{207A}\u{2076} watts</p>"))
+        XCTAssertFalse(QuoteCheck.found("Response time is 10^-3 [...] -3 seconds", in: "<p>Response time is 10^-3 and 10^-3 seconds</p>"))
+        XCTAssertTrue(QuoteCheck.found("Response time is 10\u{207B}\u{00B3} seconds", in: "<p>Response time is 10<sup>-3</sup> seconds</p>"))
+        XCTAssertFalse(QuoteCheck.found("a gear ratio of [...] 4 at the output", in: "<p>a gear ratio of 3/4 at the output</p>"))
+        // Whole number expressions (round 12 sweep): ranges, tolerances, bounds, times, ratios, factors, units with
+        // powers or denominators, percent, currency, degrees, primes, named entities.
+        XCTAssertFalse(QuoteCheck.found("5 degrees Celsius under load", in: "<p>&minus;5 degrees Celsius under load</p>"), "5 degrees Celsius under load")
+        XCTAssertFalse(QuoteCheck.found("144 kgf is the maximum thrust", in: "<p>1&thinsp;144 kgf is the maximum thrust</p>"), "144 kgf is the maximum thrust")
+        XCTAssertFalse(QuoteCheck.found("The measured power is 10", in: "<p>The measured power is 10&sup3; watts</p>"), "The measured power is 10")
+        XCTAssertFalse(QuoteCheck.found("The measured length is 1", in: "<p>The measured length is 1&frac12; inches</p>"), "The measured length is 1")
+        XCTAssertFalse(QuoteCheck.found("The measured height was 511", in: "<p>The measured height was 5′11″</p>"), "The measured height was 511")
+        XCTAssertFalse(QuoteCheck.found("The measured height was 511", in: "<p>The measured height was 5'11\" tall</p>"), "The measured height was 511")
+        XCTAssertFalse(QuoteCheck.found("The measured area is 10m", in: "<p>The measured area is 10m²</p>"), "The measured area is 10m")
+        XCTAssertFalse(QuoteCheck.found("The flow rate measures 10 m", in: "<p>The flow rate measures 10 m/s</p>"), "The flow rate measures 10 m")
+        XCTAssertFalse(QuoteCheck.found("The flow rate measures 10 m", in: "<p>The flow rate measures 10 m / s</p>"), "The flow rate measures 10 m")
+        XCTAssertFalse(QuoteCheck.found("The operating pressure is 10", in: "<p>The operating pressure is 10–20 bar</p>"), "The operating pressure is 10")
+        XCTAssertFalse(QuoteCheck.found("The operating pressure is 10", in: "<p>The operating pressure is 10 – 20 bar</p>"), "The operating pressure is 10")
+        XCTAssertFalse(QuoteCheck.found("2 bar is the operating pressure", in: "<p>10±2 bar is the operating pressure</p>"), "2 bar is the operating pressure")
+        XCTAssertFalse(QuoteCheck.found("2 bar is the operating pressure", in: "<p>10 ± 2 bar is the operating pressure</p>"), "2 bar is the operating pressure")
+        XCTAssertFalse(QuoteCheck.found("10 bar is the operating pressure", in: "<p>≥10 bar is the operating pressure</p>"), "10 bar is the operating pressure")
+        XCTAssertFalse(QuoteCheck.found("10 bar is the operating pressure", in: "<p>&ge; 10 bar is the operating pressure</p>"), "10 bar is the operating pressure")
+        XCTAssertFalse(QuoteCheck.found("30 hours of video were recorded", in: "<p>1:30 hours of video were recorded</p>"), "30 hours of video were recorded")
+        XCTAssertFalse(QuoteCheck.found("9 is the measured aspect ratio", in: "<p>16:9 is the measured aspect ratio</p>"), "9 is the measured aspect ratio")
+        XCTAssertFalse(QuoteCheck.found("10^6 units were sold worldwide", in: "<p>1.5 × 10^6 units were sold worldwide</p>"), "10^6 units were sold worldwide")
+        XCTAssertFalse(QuoteCheck.found("20 cm is the overall size", in: "<p>10×20 cm is the overall size</p>"), "20 cm is the overall size")
+        XCTAssertFalse(QuoteCheck.found("20 cm is the overall size", in: "<p>10 x 20 cm is the overall size</p>"), "20 cm is the overall size")
+        XCTAssertFalse(QuoteCheck.found("4 kilograms were measured", in: "<p>3 / 4 kilograms were measured</p>"), "4 kilograms were measured")
+        XCTAssertFalse(QuoteCheck.found("The total sales reached 10", in: "<p>The total sales reached 10 ^ 3 units</p>"), "The total sales reached 10")
+        XCTAssertFalse(QuoteCheck.found("10 [...] of annual revenue", in: "<p>10% of annual revenue</p>"), "10 [...] of annual revenue")
+        XCTAssertFalse(QuoteCheck.found("10 [...] of annual revenue", in: "<p>10 % of annual revenue</p>"), "10 [...] of annual revenue")
+        XCTAssertFalse(QuoteCheck.found("500 million were raised today", in: "<p>€500 million were raised today</p>"), "500 million were raised today")
+        XCTAssertFalse(QuoteCheck.found("The slope is 30 at the top", in: "<p>The slope is 30° at the top</p>"), "The slope is 30 at the top")
+        XCTAssertTrue(QuoteCheck.found("The pressure is 10–20 bar", in: "<p>The pressure is 10 – 20 bar</p>"), "The pressure is 10–20 bar")
+        XCTAssertTrue(QuoteCheck.found("10 ± 2 bar is the operating pressure", in: "<p>10±2 bar is the operating pressure</p>"), "10 ± 2 bar is the operating pressure")
+        XCTAssertTrue(QuoteCheck.found("1.5 x 10^6 units were sold", in: "<p>1.5 × 10^6 units were sold</p>"), "1.5 x 10^6 units were sold")
+        XCTAssertTrue(QuoteCheck.found("10% of annual revenue", in: "<p>10 % of annual revenue</p>"), "10% of annual revenue")
+        XCTAssertTrue(QuoteCheck.found("€500 million were raised", in: "<p>&euro;500 million were raised</p>"), "€500 million were raised")
+        XCTAssertTrue(QuoteCheck.found("The measured height was 5′11″", in: "<p>The measured height was 5'11\" tall</p>"), "The measured height was 5′11″")
+        XCTAssertTrue(QuoteCheck.found("The flow rate measures 10 m/s", in: "<p>The flow rate measures 10 m / s</p>"), "The flow rate measures 10 m/s")
+        XCTAssertTrue(QuoteCheck.found("It ran at 10: then it stopped", in: "<p>It ran at 10: then it stopped</p>"), "It ran at 10: then it stopped")
+        XCTAssertTrue(QuoteCheck.found("Maximum thrust is 144 kgf in total", in: "<p>Maximum thrust is 144 kgf<sup>[1]</sup> in total</p>"), "Maximum thrust is 144 kgf in total")
+        XCTAssertFalse(QuoteCheck.found("10 bar is required for operation", in: "<p>&gt;= 10 bar is required for operation.</p>"))
+        XCTAssertFalse(QuoteCheck.found("10 bar is required for operation", in: "<p>=< 10 bar is required for operation.</p>"))
+        XCTAssertFalse(QuoteCheck.found(".5 inches in cross section", in: "<p>The stock is 2 x .5 inches in cross section.</p>"))
+        XCTAssertFalse(QuoteCheck.found(".5 inches in cross section", in: "<p>The stock is 2 \u{00D7} .5 inches in cross section.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The processor has 4", in: "<p>The processor has 4 + 4 cores.</p>"))
+        XCTAssertFalse(QuoteCheck.found("1/2 inch thick plate", in: "<p>A 1 + 1/2 inch thick plate</p>"))
+        XCTAssertTrue(QuoteCheck.found("The rating was 10", in: "<p>The rating was \u{201C}10\u{201D} on this scale.</p>"))
+        XCTAssertTrue(QuoteCheck.found("The rating was 10 on this scale", in: "<p>The rating was \"10\" on this scale.</p>"))
+        XCTAssertTrue(QuoteCheck.found("x >= 10 bar is required", in: "<p>x &ge; 10 bar is required</p>"))
+        XCTAssertFalse(QuoteCheck.found("10^6 pascals of pressure", in: "<p>It holds 1.5\u{00B7}10^6 pascals of pressure.</p>"))
+        XCTAssertFalse(QuoteCheck.found("10^6 pascals of pressure", in: "<p>It holds 1.5 \u{22C5} 10^6 pascals of pressure.</p>"))
+        XCTAssertFalse(QuoteCheck.found("10^6 pascals of pressure", in: "<p>It holds 1.5&middot;10^6 pascals of pressure.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The measured height was 511", in: "<p>The measured height was 5\u{2019}11\u{201D} tall.</p>"))
+        XCTAssertTrue(QuoteCheck.found("The measured height was 5'11\"", in: "<p>The measured height was 5\u{2019}11\u{201D} tall.</p>"))
+        XCTAssertFalse(QuoteCheck.found(".5 bar is required for operation", in: "<p>&ge; .5 bar is required for operation.</p>"))
+        XCTAssertFalse(QuoteCheck.found(".5 mm is the allowed tolerance", in: "<p>\u{00B1} .5 mm is the allowed tolerance</p>"))
+        XCTAssertTrue(QuoteCheck.found("The rating was -5 on this scale", in: "<p>The rating was \"-5\" on this scale</p>"))
+        XCTAssertTrue(QuoteCheck.found("The rating was 1 144 on this scale", in: "<p>The rating was \u{201C}1 144\u{201D} on this scale</p>"))
+        // Round 15: whole number expressions under the token matcher.
+        XCTAssertFalse(QuoteCheck.found("$500 million in cash flow", in: "<p>−$500 million in cash flow</p>"), "$500 million in cash flow | −$500 million in cash flow")
+        XCTAssertFalse(QuoteCheck.found("+5 degrees Celsius under load", in: "<p>≥ +5 degrees Celsius under load</p>"), "+5 degrees Celsius under load | ≥ +5 degrees Celsius under load")
+        XCTAssertFalse(QuoteCheck.found("-.5 volts under nominal load", in: "<p>≥ -.5 volts under nominal load</p>"), "-.5 volts under nominal load | ≥ -.5 volts under nominal load")
+        XCTAssertFalse(QuoteCheck.found("Numerical value 6.674", in: "<p>Numerical value 6.674 30 x 10<sup>-11</sup> m<sup>3</sup> kg<sup>-1</sup> s<sup>-2</sup></p>"), "Numerical value 6.674 | Numerical value 6.674 30 x 10<sup>-11</sup> m<sup>3</sup> kg<sup>-1</sup> s<sup>-2</sup>")
+        XCTAssertFalse(QuoteCheck.found("Numerical value [...] 30 x 10^-11 m^3 kg^-1 s^-2", in: "<p>Numerical value 6.674 30 x 10<sup>-11</sup> m<sup>3</sup> kg<sup>-1</sup> s<sup>-2</sup></p>"), "Numerical value [...] 30 x 10^-11 m^3 kg^-1 s^-2 | Numerical value 6.674 30 x 10<sup>-11</sup> m<sup>3</sup> kg<sup>-1</sup> s<sup>-2</sup>")
+        XCTAssertFalse(QuoteCheck.found("Concise form 6.674 30", in: "<p>Concise form 6.674 30(15) x 10<sup>-11</sup> m<sup>3</sup></p>"), "Concise form 6.674 30 | Concise form 6.674 30(15) x 10<sup>-11</sup> m<sup>3</sup>")
+        XCTAssertFalse(QuoteCheck.found("Operating cash flow [...] 500 in the year", in: "<p><table><tr><td>Operating cash flow</td><td>(500) in the year</td></tr></table></p>"), "Operating cash flow [...] 500 in the year | <table><tr><td>Operating cash flow</td><td>(500) in the year</td></tr></table>")
+        XCTAssertFalse(QuoteCheck.found("the part measures 10 mm", in: "<p>the part measures 10 mm ± 2 mm</p>"), "the part measures 10 mm | the part measures 10 mm ± 2 mm")
+        XCTAssertFalse(QuoteCheck.found("the sheet is 35 cm", in: "<p>the sheet is 35 cm × 48 cm</p>"), "the sheet is 35 cm | the sheet is 35 cm × 48 cm")
+        XCTAssertFalse(QuoteCheck.found("operating range is -40", in: "<p>operating range is −40 to +85 °C</p>"), "operating range is -40 | operating range is −40 to +85 °C")
+        XCTAssertFalse(QuoteCheck.found("The speed of sound is about 344 m", in: "<p>The speed of sound is about 344 m·s<sup>-1</sup></p>"), "The speed of sound is about 344 m | The speed of sound is about 344 m·s<sup>-1</sup>")
+        XCTAssertFalse(QuoteCheck.found("a conductivity of 10 W", in: "<p>a conductivity of 10 W/(m·K)</p>"), "a conductivity of 10 W | a conductivity of 10 W/(m·K)")
+        XCTAssertFalse(QuoteCheck.found("a diffusivity of 10 m²", in: "<p>a diffusivity of 10 m²/s</p>"), "a diffusivity of 10 m² | a diffusivity of 10 m²/s")
+        XCTAssertFalse(QuoteCheck.found("a turn rate of 10°", in: "<p>a turn rate of 10°/s</p>"), "a turn rate of 10° | a turn rate of 10°/s")
+        XCTAssertFalse(QuoteCheck.found("a density of 10 m", in: "<p>a density of 10 m ^ -2</p>"), "a density of 10 m | a density of 10 m ^ -2")
+        XCTAssertFalse(QuoteCheck.found("2 times the supply voltage", in: "<p>√2 times the supply voltage</p>"), "2 times the supply voltage | √2 times the supply voltage")
+        XCTAssertFalse(QuoteCheck.found("the value is 10", in: "<p>the value is 10**3 here</p>"), "the value is 10 | the value is 10**3 here")
+        XCTAssertFalse(QuoteCheck.found("the factor is 10", in: "<p>the factor is 10 * 3 here</p>"), "the factor is 10 | the factor is 10 * 3 here")
+        XCTAssertFalse(QuoteCheck.found("the share is 10", in: "<p>the share is 10 ÷ 3 here</p>"), "the share is 10 | the share is 10 ÷ 3 here")
+        XCTAssertFalse(QuoteCheck.found("the window is 10", in: "<p>the window is 10~20 minutes</p>"), "the window is 10 | the window is 10~20 minutes")
+        XCTAssertFalse(QuoteCheck.found("5 volts under nominal load", in: "<p>≠ 5 volts under nominal load</p>"), "5 volts under nominal load | ≠ 5 volts under nominal load")
+        XCTAssertFalse(QuoteCheck.found("5 volts under nominal load", in: "<p>≲ 5 volts under nominal load</p>"), "5 volts under nominal load | ≲ 5 volts under nominal load")
+        XCTAssertFalse(QuoteCheck.found("5 volts under nominal load", in: "<p>∓ 5 volts under nominal load</p>"), "5 volts under nominal load | ∓ 5 volts under nominal load")
+        XCTAssertFalse(QuoteCheck.found("500 million were raised today", in: "<p>₹500 million were raised today</p>"), "500 million were raised today | ₹500 million were raised today")
+        XCTAssertFalse(QuoteCheck.found("the ticket price is 500", in: "<p>the ticket price is 500€ in total</p>"), "the ticket price is 500 | the ticket price is 500€ in total")
+        XCTAssertFalse(QuoteCheck.found("5 volts under nominal load", in: "<p>&leq; 5 volts under nominal load</p>"), "5 volts under nominal load | &leq; 5 volts under nominal load")
+        XCTAssertFalse(QuoteCheck.found("5 volts under nominal load", in: "<p>&approx; 5 volts under nominal load</p>"), "5 volts under nominal load | &approx; 5 volts under nominal load")
+        XCTAssertFalse(QuoteCheck.found("10^6 pascals of pressure", in: "<p>1.5 &sdot; 10^6 pascals of pressure</p>"), "10^6 pascals of pressure | 1.5 &sdot; 10^6 pascals of pressure")
+        XCTAssertFalse(QuoteCheck.found("5 volts under nominal load", in: "<p>&lsim; 5 volts under nominal load</p>"), "5 volts under nominal load | &lsim; 5 volts under nominal load")
+        XCTAssertFalse(QuoteCheck.found("the power is 10", in: "<p>the power is <math><msup><mn>10</mn><mn>3</mn></msup></math> watts</p>"), "the power is 10 | the power is <math><msup><mn>10</mn><mn>3</mn></msup></math> watts")
+        XCTAssertFalse(QuoteCheck.found("2 of the total", in: "<p><math><mfrac><mn>1</mn><mn>2</mn></mfrac></math> of the total</p>"), "2 of the total | <math><mfrac><mn>1</mn><mn>2</mn></mfrac></math> of the total")
+        XCTAssertFalse(QuoteCheck.found("the code is 1012", in: "<p>the code is 101<sub>2</sub> here</p>"), "the code is 1012 | the code is 101<sub>2</sub> here")
+        XCTAssertFalse(QuoteCheck.found("11″ tall at full extension", in: "<p>5′ 11″ tall at full extension</p>"), "11″ tall at full extension | 5′ 11″ tall at full extension")
+        XCTAssertFalse(QuoteCheck.found("The measured height was 511", in: "<p>The measured height was \"5'11\"\" tall</p>"), "The measured height was 511 | The measured height was \"5'11\"\" tall")
+        XCTAssertFalse(QuoteCheck.found("The flow rate is 10 m[...] maximum", in: "<p>The flow rate is 10 mph maximum</p>"), "The flow rate is 10 m[...] maximum | The flow rate is 10 mph maximum")
+        XCTAssertFalse(QuoteCheck.found("240 bytes of buffer space", in: "<p>10_240 bytes of buffer space</p>"), "240 bytes of buffer space | 10_240 bytes of buffer space")
+        XCTAssertTrue(QuoteCheck.found("The suit gives 1,050 bhp", in: "<p>The suit gives &lsquo;1,050&nbsp;bhp&rsquo; — the company claims it.</p>"), "The suit gives 1,050 bhp | The suit gives &lsquo;1,050&nbsp;bhp&rsquo; — the company claims it.")
+        XCTAssertTrue(QuoteCheck.found("operating range is -40 to +85 °C", in: "<p>operating range is −40 to +85 °C</p>"), "operating range is -40 to +85 °C | operating range is −40 to +85 °C")
+        XCTAssertTrue(QuoteCheck.found("the part measures 10 mm ± 2 mm", in: "<p>the part measures 10 mm ± 2 mm</p>"), "the part measures 10 mm ± 2 mm | the part measures 10 mm ± 2 mm")
+        XCTAssertTrue(QuoteCheck.found("Concise form 6.674 30(15) x 10^-11", in: "<p>Concise form 6.674 30(15) × 10<sup>−11</sup></p>"), "Concise form 6.674 30(15) x 10^-11 | Concise form 6.674 30(15) × 10<sup>−11</sup>")
+        XCTAssertTrue(QuoteCheck.found("values of 5, 10 and 20 were used", in: "<p>values of 5, 10 and 20 were used</p>"), "values of 5, 10 and 20 were used | values of 5, 10 and 20 were used")
+        XCTAssertTrue(QuoteCheck.found("The rating was -5 on this scale", in: "<p>The rating was “−5” on this scale</p>"), "The rating was -5 on this scale | The rating was “−5” on this scale")
+        XCTAssertTrue(QuoteCheck.found("the engines produce 144 kgf of thrust", in: "<p><p>the engines produce 144 kgf of thrust.</p><table><tr><td>5</td></tr></table></p>"), "the engines produce 144 kgf of thrust | <p>the engines produce 144 kgf of thrust.</p><table><tr><td>5</td></tr></table>")
+        XCTAssertTrue(QuoteCheck.found("rose from 5 to 10 percent", in: "<p>rose from 5 to 10 percent</p>"), "rose from 5 to 10 percent | rose from 5 to 10 percent")
+        // Round 16: number edges hold at glued gaps; ranges in words at both ends; quotations close.
+        XCTAssertFalse(QuoteCheck.found("Minimum temperature […]5 degrees Celsius", in: "<p>Minimum temperature is −5 degrees Celsius</p>"), "Minimum temperature […]5 degrees Celsius | Minimum temperature is −5 degrees Celsius")
+        XCTAssertFalse(QuoteCheck.found("The operating pressure is 10... under load", in: "<p>The operating pressure is 10–20 bar under load</p>"), "The operating pressure is 10... under load | The operating pressure is 10–20 bar under load")
+        XCTAssertFalse(QuoteCheck.found("The part measures 10 mm[…]", in: "<p>The part measures 10 mm ± 2 mm</p>"), "The part measures 10 mm[…] | The part measures 10 mm ± 2 mm")
+        XCTAssertFalse(QuoteCheck.found("20 bar is the operating pressure", in: "<p>10 to 20 bar is the operating pressure</p>"), "20 bar is the operating pressure | 10 to 20 bar is the operating pressure")
+        XCTAssertFalse(QuoteCheck.found("Operating pressure […] 20 bar", in: "<p>Operating pressure is 10 to 20 bar</p>"), "Operating pressure […] 20 bar | Operating pressure is 10 to 20 bar")
+        XCTAssertFalse(QuoteCheck.found("20 bar is the operating pressure", in: "<p>10 bar to 20 bar is the operating pressure</p>"), "20 bar is the operating pressure | 10 bar to 20 bar is the operating pressure")
+        XCTAssertTrue(QuoteCheck.found("a 10-speed hub in the rear", in: "<p>Features — a 10-speed hub in the rear.</p>"), "a 10-speed hub in the rear | Features — a 10-speed hub in the rear.")
+        XCTAssertTrue(QuoteCheck.found("The turbine produces 144", in: "<p>She said, “The turbine produces 144” and left.</p>"), "The turbine produces 144 | She said, “The turbine produces 144” and left.")
+        XCTAssertTrue(QuoteCheck.found("The turbine produces 144 kgf", in: "<p>She said, \"The turbine produces 144 kgf\" and left.</p>"), "The turbine produces 144 kgf | She said, \"The turbine produces 144 kgf\" and left.")
+        XCTAssertTrue(QuoteCheck.found("The engine[s] produce 144 kgf of thrust", in: "<p>The engines produce 144 kgf of thrust.</p>"), "The engine[s] produce 144 kgf of thrust | The engines produce 144 kgf of thrust.")
+        XCTAssertTrue(QuoteCheck.found("it went from the dock to 20 metres out", in: "<p>it went from the dock to 20 metres out</p>"), "it went from the dock to 20 metres out | it went from the dock to 20 metres out")
+        // Round 17: quotation pairing by context; between-and ranges; em dashes are punctuation.
+        XCTAssertFalse(QuoteCheck.found("The compact model stands 511\" tall", in: "<p>The 'compact' model stands 5'11\" tall.</p>"), "The compact model stands 511\" tall | The 'compact' model stands 5'11\" tall.")
+        XCTAssertFalse(QuoteCheck.found("The compact model stands 511\" tall", in: "<p>The &lsquo;compact&rsquo; model stands 5'11\" tall.</p>"), "The compact model stands 511\" tall | The &lsquo;compact&rsquo; model stands 5'11\" tall.")
+        XCTAssertFalse(QuoteCheck.found("The model from the 90s stands 511 tall", in: "<p>The model from the '90s stands 5'11\" tall.</p>"), "The model from the 90s stands 511 tall | The model from the '90s stands 5'11\" tall.")
+        XCTAssertFalse(QuoteCheck.found("Operating pressure […] 20 bar", in: "<p>Operating pressure is between 10 and 20 bar.</p>"), "Operating pressure […] 20 bar | Operating pressure is between 10 and 20 bar.")
+        XCTAssertFalse(QuoteCheck.found("The pressure is between 10", in: "<p>The pressure is between 10 and 20 bar.</p>"), "The pressure is between 10 | The pressure is between 10 and 20 bar.")
+        XCTAssertFalse(QuoteCheck.found("The pressure is between 10 bar", in: "<p>The pressure is between 10 bar and 20 bar.</p>"), "The pressure is between 10 bar | The pressure is between 10 bar and 20 bar.")
+        XCTAssertFalse(QuoteCheck.found("The pressure is […] -5", in: "<p>The pressure is between −10 and −5 bar.</p>"), "The pressure is […] -5 | The pressure is between −10 and −5 bar.")
+        XCTAssertTrue(QuoteCheck.found("The motor produces 144 kgf", in: "<p>The motor produces 144 kgf — 2024 testing confirmed this.</p>"), "The motor produces 144 kgf | The motor produces 144 kgf — 2024 testing confirmed this.")
+        XCTAssertTrue(QuoteCheck.found("The suit - with five engines - gives a thrust", in: "<p>The suit—with five engines—gives a thrust</p>"), "The suit - with five engines - gives a thrust | The suit—with five engines—gives a thrust")
+        XCTAssertTrue(QuoteCheck.found("a five-engine suit with 144 kgf", in: "<p>a five-engine suit with 144 kgf of thrust</p>"), "a five-engine suit with 144 kgf | a five-engine suit with 144 kgf of thrust")
+        XCTAssertTrue(QuoteCheck.found("The compact model stands 5'11\" tall", in: "<p>The 'compact' model stands 5'11\" tall.</p>"), "The compact model stands 5'11\" tall | The 'compact' model stands 5'11\" tall.")
+        XCTAssertTrue(QuoteCheck.found("The pressure is between 10 and 20 bar", in: "<p>The pressure is between 10 and 20 bar.</p>"), "The pressure is between 10 and 20 bar | The pressure is between 10 and 20 bar.")
+        XCTAssertTrue(QuoteCheck.found("it has 3 engines and 2 fans", in: "<p>it has 3 engines and 2 fans</p>"), "it has 3 engines and 2 fans | it has 3 engines and 2 fans")
+        XCTAssertTrue(QuoteCheck.found("It's rated at 144 kgf", in: "<p>It's rated at 144 kgf.</p>"), "It's rated at 144 kgf | It's rated at 144 kgf.")
+        // Round 18: compound units after a number; multiword units at range ends; quoted numbers.
+        XCTAssertFalse(QuoteCheck.found("The rated torque is 10 N", in: "<p>The rated torque is 10 N-m at the shaft.</p>"), "The rated torque is 10 N | The rated torque is 10 N-m at the shaft.")
+        XCTAssertFalse(QuoteCheck.found("The rated torque is 10 ft", in: "<p>The rated torque is 10 ft-lb at the shaft.</p>"), "The rated torque is 10 ft | The rated torque is 10 ft-lb at the shaft.")
+        XCTAssertFalse(QuoteCheck.found("The pack holds 10 amp", in: "<p>The pack holds 10 amp-hours of charge.</p>"), "The pack holds 10 amp | The pack holds 10 amp-hours of charge.")
+        XCTAssertFalse(QuoteCheck.found("20 degrees Celsius during operation", in: "<p>The temperature stays between 10 degrees Celsius and 20 degrees Celsius during operation.</p>"), "20 degrees Celsius during operation | The temperature stays between 10 degrees Celsius and 20 degrees Celsius during operation.")
+        XCTAssertFalse(QuoteCheck.found("The temperature stays between 10 degrees Celsius", in: "<p>The temperature stays between 10 degrees Celsius and 20 degrees Celsius during operation.</p>"), "The temperature stays between 10 degrees Celsius | The temperature stays between 10 degrees Celsius and 20 degrees Celsius during operation.")
+        XCTAssertFalse(QuoteCheck.found("20 degrees is the upper limit", in: "<p>10 degrees to 20 degrees is the upper limit</p>"), "20 degrees is the upper limit | 10 degrees to 20 degrees is the upper limit")
+        XCTAssertFalse(QuoteCheck.found("The temperature stays at 10 degrees Celsius", in: "<p>The temperature stays at 10 degrees Celsius ± 2 degrees.</p>"), "The temperature stays at 10 degrees Celsius | The temperature stays at 10 degrees Celsius ± 2 degrees.")
+        XCTAssertTrue(QuoteCheck.found("The rated torque is 10 N-m at the shaft", in: "<p>The rated torque is 10 N-m at the shaft.</p>"), "The rated torque is 10 N-m at the shaft | The rated torque is 10 N-m at the shaft.")
+        XCTAssertTrue(QuoteCheck.found("The pack holds 10 amp-hours of charge", in: "<p>The pack holds 10 amp-hours of charge.</p>"), "The pack holds 10 amp-hours of charge | The pack holds 10 amp-hours of charge.")
+        XCTAssertTrue(QuoteCheck.found("a five engine suit", in: "<p>a five-engine suit</p>"), "a five engine suit | a five-engine suit")
+        XCTAssertTrue(QuoteCheck.found("a five-engine suit", in: "<p>a five engine suit</p>"), "a five-engine suit | a five engine suit")
+        XCTAssertTrue(QuoteCheck.found("The sensor displays 10 when ready", in: "<p>The sensor displays '10' when ready.</p>"), "The sensor displays 10 when ready | The sensor displays '10' when ready.")
+        XCTAssertTrue(QuoteCheck.found("The sensor displays 10 when ready", in: "<p>The sensor displays ‘10’ when ready.</p>"), "The sensor displays 10 when ready | The sensor displays ‘10’ when ready.")
+        XCTAssertTrue(QuoteCheck.found("The model from the 90s stands tall", in: "<p>The model from the '90s stands tall</p>"), "The model from the 90s stands tall | The model from the '90s stands tall")
+        XCTAssertTrue(QuoteCheck.found("It stays at 10 degrees Celsius during operation", in: "<p>It stays at 10 degrees Celsius during operation.</p>"), "It stays at 10 degrees Celsius during operation | It stays at 10 degrees Celsius during operation.")
+        // Round 19: compound units in ranges and tolerances; unit continuations; signed quoted numbers.
+        XCTAssertFalse(QuoteCheck.found("The rated torque is 10 N-m", in: "<p>The rated torque is 10 N-m to 20 N-m.</p>"), "The rated torque is 10 N-m | The rated torque is 10 N-m to 20 N-m.")
+        XCTAssertFalse(QuoteCheck.found("The rated torque is 10 N-m", in: "<p>The rated torque is 10 N-m ± 2 N-m.</p>"), "The rated torque is 10 N-m | The rated torque is 10 N-m ± 2 N-m.")
+        XCTAssertFalse(QuoteCheck.found("20 N-m is the operating torque", in: "<p>10 N-m to 20 N-m is the operating torque.</p>"), "20 N-m is the operating torque | 10 N-m to 20 N-m is the operating torque.")
+        XCTAssertFalse(QuoteCheck.found("The flow velocity is 10 m/s", in: "<p>The flow velocity is 10 m/s ± 2 m/s.</p>"), "The flow velocity is 10 m/s | The flow velocity is 10 m/s ± 2 m/s.")
+        XCTAssertFalse(QuoteCheck.found("The flow velocity is 10 m", in: "<p>The flow velocity is 10 m s⁻¹ at the outlet.</p>"), "The flow velocity is 10 m | The flow velocity is 10 m s⁻¹ at the outlet.")
+        XCTAssertFalse(QuoteCheck.found("The measured speed is 10 metres", in: "<p>The measured speed is 10 metres per second.</p>"), "The measured speed is 10 metres | The measured speed is 10 metres per second.")
+        XCTAssertTrue(QuoteCheck.found("The rated torque is 10 N-m to 20 N-m", in: "<p>The rated torque is 10 N-m to 20 N-m.</p>"), "The rated torque is 10 N-m to 20 N-m | The rated torque is 10 N-m to 20 N-m.")
+        XCTAssertTrue(QuoteCheck.found("The flow velocity is 10 m s⁻¹ at the outlet", in: "<p>The flow velocity is 10 m s⁻¹ at the outlet.</p>"), "The flow velocity is 10 m s⁻¹ at the outlet | The flow velocity is 10 m s⁻¹ at the outlet.")
+        XCTAssertTrue(QuoteCheck.found("The sensor displays -10 when ready", in: "<p>The sensor displays '-10' when ready.</p>"), "The sensor displays -10 when ready | The sensor displays '-10' when ready.")
+        XCTAssertTrue(QuoteCheck.found("The sensor displays .5 when ready", in: "<p>The sensor displays '.5' when ready.</p>"), "The sensor displays .5 when ready | The sensor displays '.5' when ready.")
+        XCTAssertTrue(QuoteCheck.found("It runs 10 metres a day on the track", in: "<p>It runs 10 metres a day on the track.</p>"), "It runs 10 metres a day on the track | It runs 10 metres a day on the track.")
+        XCTAssertTrue(QuoteCheck.found("The suit flew 10 km over the lake", in: "<p>The suit flew 10 km over the lake.</p>"), "The suit flew 10 km over the lake | The suit flew 10 km over the lake.")
+        // Round 20: unit abbreviation periods, magnitudes, rates, unit products, ASCII x after a unit.
+        XCTAssertFalse(QuoteCheck.found("The length is 10 in.", in: "<p>The length is 10 in. to 20 in.</p>"), "The length is 10 in. | The length is 10 in. to 20 in.")
+        XCTAssertFalse(QuoteCheck.found("The length is 10 in.", in: "<p>The length is 10 in. ± 2 in.</p>"), "The length is 10 in. | The length is 10 in. ± 2 in.")
+        XCTAssertFalse(QuoteCheck.found("Annual revenue reached $10", in: "<p>Annual revenue reached $10 million.</p>"), "Annual revenue reached $10 | Annual revenue reached $10 million.")
+        XCTAssertFalse(QuoteCheck.found("Annual revenue reached $10", in: "<p>Annual revenue reached $10 bn last year.</p>"), "Annual revenue reached $10 | Annual revenue reached $10 bn last year.")
+        XCTAssertFalse(QuoteCheck.found("The measured speed is 10 metres", in: "<p>The measured speed is 10 metres a second.</p>"), "The measured speed is 10 metres | The measured speed is 10 metres a second.")
+        XCTAssertFalse(QuoteCheck.found("The battery stores 10 kW", in: "<p>The battery stores 10 kW h of energy.</p>"), "The battery stores 10 kW | The battery stores 10 kW h of energy.")
+        XCTAssertFalse(QuoteCheck.found("The plate measures 10 cm", in: "<p>The plate measures 10 cm x 20 cm.</p>"), "The plate measures 10 cm | The plate measures 10 cm x 20 cm.")
+        XCTAssertTrue(QuoteCheck.found("The plate measures 10 cm x 20 cm", in: "<p>The plate measures 10 cm × 20 cm.</p>"), "The plate measures 10 cm x 20 cm | The plate measures 10 cm × 20 cm.")
+        XCTAssertTrue(QuoteCheck.found("Annual revenue reached $10 million", in: "<p>Annual revenue reached $10 million.</p>"), "Annual revenue reached $10 million | Annual revenue reached $10 million.")
+        XCTAssertTrue(QuoteCheck.found("The suit weighs 27 kg", in: "<p>The suit weighs 27 kg. It flies.</p>"), "The suit weighs 27 kg | The suit weighs 27 kg. It flies.")
+        XCTAssertTrue(QuoteCheck.found("It covers 10 metres a day on the track", in: "<p>It covers 10 metres a day on the track.</p>"), "It covers 10 metres a day on the track | It covers 10 metres a day on the track.")
+        XCTAssertTrue(QuoteCheck.found("The sensor displays -.5 when ready", in: "<p>The sensor displays '-.5' when ready.</p>"), "The sensor displays -.5 when ready | The sensor displays '-.5' when ready.")
+        XCTAssertTrue(QuoteCheck.found("The length is 10 in. and the width", in: "<p>The length is 10 in. and the width is 4 in.</p>"), "The length is 10 in. and the width | The length is 10 in. and the width is 4 in.")
+        XCTAssertTrue(QuoteCheck.found("it flew 10 km in a test run", in: "<p>it flew 10 km in a test run</p>"), "it flew 10 km in a test run | it flew 10 km in a test run")
+        // Round 21: quantified rates; SI-prefixed spaced unit products.
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres every 30 seconds.</p>"), "The pump delivers 10 litres | The pump delivers 10 litres every 30 seconds.")
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres every two hours.</p>"), "The pump delivers 10 litres | The pump delivers 10 litres every two hours.")
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres a minute.</p>"), "The pump delivers 10 litres | The pump delivers 10 litres a minute.")
+        XCTAssertFalse(QuoteCheck.found("The rated torque is 10 N", in: "<p>The rated torque is 10 N cm at the shaft.</p>"), "The rated torque is 10 N | The rated torque is 10 N cm at the shaft.")
+        XCTAssertFalse(QuoteCheck.found("The emitted energy is 10 W", in: "<p>The emitted energy is 10 W ms per pulse.</p>"), "The emitted energy is 10 W | The emitted energy is 10 W ms per pulse.")
+        XCTAssertFalse(QuoteCheck.found("The cell holds 10 m", in: "<p>The cell holds 10 mA h of charge.</p>"), "The cell holds 10 m | The cell holds 10 mA h of charge.")
+        XCTAssertTrue(QuoteCheck.found("The pump delivers 10 litres every 30 seconds", in: "<p>The pump delivers 10 litres every 30 seconds.</p>"), "The pump delivers 10 litres every 30 seconds | The pump delivers 10 litres every 30 seconds.")
+        XCTAssertTrue(QuoteCheck.found("The rated torque is 10 N cm at the shaft", in: "<p>The rated torque is 10 N cm at the shaft.</p>"), "The rated torque is 10 N cm at the shaft | The rated torque is 10 N cm at the shaft.")
+        XCTAssertTrue(QuoteCheck.found("It weighs 10 kg at sea level", in: "<p>It weighs 10 kg at sea level.</p>"), "It weighs 10 kg at sea level | It weighs 10 kg at sea level.")
+        XCTAssertTrue(QuoteCheck.found("It weighs 10 kg in total", in: "<p>It weighs 10 kg in total.</p>"), "It weighs 10 kg in total | It weighs 10 kg in total.")
+        XCTAssertTrue(QuoteCheck.found("It holds 10 litres of fuel", in: "<p>It holds 10 litres of fuel.</p>"), "It holds 10 litres of fuel | It holds 10 litres of fuel.")
+        XCTAssertTrue(QuoteCheck.found("The suit flew 10 km on the day", in: "<p>The suit flew 10 km on the day.</p>"), "The suit flew 10 km on the day | The suit flew 10 km on the day.")
+        XCTAssertTrue(QuoteCheck.found("It holds 10 litres a day later", in: "<p>It holds 10 litres a day later.</p>"), "It holds 10 litres a day later | It holds 10 litres a day later.")
+        // Round 22: after a quantity with a unit only prose words follow; per after any number; s. ends a sentence.
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres every fifteen minutes.</p>"), "The pump delivers 10 litres | The pump delivers 10 litres every fifteen minutes.")
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres every other minute.</p>"), "The pump delivers 10 litres | The pump delivers 10 litres every other minute.")
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10L", in: "<p>The pump delivers 10L per minute.</p>"), "The pump delivers 10L | The pump delivers 10L per minute.")
+        XCTAssertFalse(QuoteCheck.found("The advertised return is 10%", in: "<p>The advertised return is 10% per month.</p>"), "The advertised return is 10% | The advertised return is 10% per month.")
+        XCTAssertFalse(QuoteCheck.found("The battery is rated at 100 amp", in: "<p>The battery is rated at 100 amp hours.</p>"), "The battery is rated at 100 amp | The battery is rated at 100 amp hours.")
+        XCTAssertFalse(QuoteCheck.found("The transformer is rated at 100 V", in: "<p>The transformer is rated at 100 V A.</p>"), "The transformer is rated at 100 V | The transformer is rated at 100 V A.")
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10", in: "<p>The pump delivers 10 per minute.</p>"), "The pump delivers 10 | The pump delivers 10 per minute.")
+        XCTAssertFalse(QuoteCheck.found("The run took 10 s.", in: "<p>The run took 10 s. A second trial was planned.</p>"), "a conservative miss: after a unit abbreviation's period only prose words follow")
+        XCTAssertTrue(QuoteCheck.found("The battery is rated at 100 amp hours", in: "<p>The battery is rated at 100 amp hours.</p>"), "The battery is rated at 100 amp hours | The battery is rated at 100 amp hours.")
+        XCTAssertTrue(QuoteCheck.found("It weighs 10 kg and flies", in: "<p>It weighs 10 kg and flies.</p>"), "It weighs 10 kg and flies | It weighs 10 kg and flies.")
+        XCTAssertTrue(QuoteCheck.found("It stands 2 m tall", in: "<p>It stands 2 m tall.</p>"), "It stands 2 m tall | It stands 2 m tall.")
+        XCTAssertTrue(QuoteCheck.found("It was built in 2019 by a team of 144", in: "<p>It was built in 2019 by a team of 144 people.</p>"), "It was built in 2019 by a team of 144 | It was built in 2019 by a team of 144 people.")
+        // Round 23: connectors into quantities; abbreviation periods; units after bare numbers; written bounds.
+        XCTAssertFalse(QuoteCheck.found("The panel measures 10 cm", in: "<p>The panel measures 10 cm by 20 cm.</p>"), "The panel measures 10 cm | The panel measures 10 cm by 20 cm.")
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres in 30 seconds.</p>"), "The pump delivers 10 litres | The pump delivers 10 litres in 30 seconds.")
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres over 2 hours.</p>"), "The pump delivers 10 litres | The pump delivers 10 litres over 2 hours.")
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 gal.", in: "<p>The pump delivers 10 gal. per minute.</p>"), "The pump delivers 10 gal. | The pump delivers 10 gal. per minute.")
+        XCTAssertFalse(QuoteCheck.found("The tank holds 10 cu.", in: "<p>The tank holds 10 cu. ft. of gas.</p>"), "The tank holds 10 cu. | The tank holds 10 cu. ft. of gas.")
+        XCTAssertFalse(QuoteCheck.found("The advertised return is 10", in: "<p>The advertised return is 10 percent per month.</p>"), "The advertised return is 10 | The advertised return is 10 percent per month.")
+        XCTAssertFalse(QuoteCheck.found("The battery stores 100", in: "<p>The battery stores 100 watt hours of energy.</p>"), "The battery stores 100 | The battery stores 100 watt hours of energy.")
+        XCTAssertFalse(QuoteCheck.found("The battery stores 100", in: "<p>The battery stores 100 kilowatt hours of energy.</p>"), "The battery stores 100 | The battery stores 100 kilowatt hours of energy.")
+        XCTAssertFalse(QuoteCheck.found("10 litres per minute can be delivered", in: "<p>Up to 10 litres per minute can be delivered.</p>"), "10 litres per minute can be delivered | Up to 10 litres per minute can be delivered.")
+        XCTAssertFalse(QuoteCheck.found("10 kg is required for operation", in: "<p>At least 10 kg is required for operation.</p>"), "10 kg is required for operation | At least 10 kg is required for operation.")
+        XCTAssertFalse(QuoteCheck.found("10 kg is required for operation", in: "<p>Less than 10 kg is required for operation.</p>"), "10 kg is required for operation | Less than 10 kg is required for operation.")
+        XCTAssertFalse(QuoteCheck.found("10 kg is required for operation", in: "<p>About 10 kg is required for operation.</p>"), "10 kg is required for operation | About 10 kg is required for operation.")
+        XCTAssertTrue(QuoteCheck.found("It weighs 10 kg in total", in: "<p>It weighs 10 kg in total.</p>"), "It weighs 10 kg in total | It weighs 10 kg in total.")
+        XCTAssertTrue(QuoteCheck.found("It flew at 85 mph over the lake", in: "<p>It flew at 85 mph over the lake.</p>"), "It flew at 85 mph over the lake | It flew at 85 mph over the lake.")
+        XCTAssertTrue(QuoteCheck.found("It was built in 2019 by a team of 144", in: "<p>It was built in 2019 by a team of 144 people.</p>"), "It was built in 2019 by a team of 144 | It was built in 2019 by a team of 144 people.")
+        XCTAssertTrue(QuoteCheck.found("The suit weighs 27 kg. It flies", in: "<p>The suit weighs 27 kg. It flies.</p>"), "The suit weighs 27 kg. It flies | The suit weighs 27 kg. It flies.")
+        XCTAssertTrue(QuoteCheck.found("10 kg is required for operation", in: "<p>Exactly 10 kg is required for operation.</p>"), "10 kg is required for operation | Exactly 10 kg is required for operation.")
+        XCTAssertTrue(QuoteCheck.found("Up to 10 litres per minute can be delivered", in: "<p>Up to 10 litres per minute can be delivered.</p>"), "Up to 10 litres per minute can be delivered | Up to 10 litres per minute can be delivered.")
+        XCTAssertTrue(QuoteCheck.found("The panel measures 10 cm by 20 cm", in: "<p>The panel measures 10 cm by 20 cm.</p>"), "The panel measures 10 cm by 20 cm | The panel measures 10 cm by 20 cm.")
+        // Round 24: abbreviated bounds, trailing bounds, modifiers before a quantity, cubic/square and data units.
+        XCTAssertFalse(QuoteCheck.found("10 kg is required for operation", in: "<p>Approx. 10 kg is required for operation.</p>"), "10 kg is required for operation | Approx. 10 kg is required for operation.")
+        XCTAssertFalse(QuoteCheck.found("10 kg is required for operation", in: "<p>Max. 10 kg is required for operation.</p>"), "10 kg is required for operation | Max. 10 kg is required for operation.")
+        XCTAssertFalse(QuoteCheck.found("The electric motor weighs 10 kg", in: "<p>The electric motor weighs 10 kg or less.</p>"), "The electric motor weighs 10 kg | The electric motor weighs 10 kg or less.")
+        XCTAssertFalse(QuoteCheck.found("The power output is 10 kW", in: "<p>The power output is 10 kW or more.</p>"), "The power output is 10 kW | The power output is 10 kW or more.")
+        XCTAssertFalse(QuoteCheck.found("The power output is 10 kW", in: "<p>The power output is 10 kW max.</p>"), "The power output is 10 kW | The power output is 10 kW max.")
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres in just 30 seconds.</p>"), "The pump delivers 10 litres | The pump delivers 10 litres in just 30 seconds.")
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres in approximately 30 seconds.</p>"), "The pump delivers 10 litres | The pump delivers 10 litres in approximately 30 seconds.")
+        XCTAssertFalse(QuoteCheck.found("The panel measures 10 cm", in: "<p>The panel measures 10 cm by about 20 cm.</p>"), "The panel measures 10 cm | The panel measures 10 cm by about 20 cm.")
+        XCTAssertFalse(QuoteCheck.found("The capacity is 100", in: "<p>The capacity is 100 cubic metres.</p>"), "The capacity is 100 | The capacity is 100 cubic metres.")
+        XCTAssertFalse(QuoteCheck.found("The drive stores 100", in: "<p>The drive stores 100 gigabytes of data.</p>"), "The drive stores 100 | The drive stores 100 gigabytes of data.")
+        XCTAssertFalse(QuoteCheck.found("The drive stores 100", in: "<p>The drive stores 100 GB of data.</p>"), "The drive stores 100 | The drive stores 100 GB of data.")
+        XCTAssertTrue(QuoteCheck.found("The electric motor weighs 10 kg or less", in: "<p>The electric motor weighs 10 kg or less.</p>"), "The electric motor weighs 10 kg or less | The electric motor weighs 10 kg or less.")
+        XCTAssertTrue(QuoteCheck.found("Approx. 10 kg is required for operation", in: "<p>Approx. 10 kg is required for operation.</p>"), "Approx. 10 kg is required for operation | Approx. 10 kg is required for operation.")
+        XCTAssertTrue(QuoteCheck.found("It weighs 10 kg and flies well", in: "<p>It weighs 10 kg and flies well.</p>"), "It weighs 10 kg and flies well | It weighs 10 kg and flies well.")
+        XCTAssertTrue(QuoteCheck.found("The capacity is 100 cubic metres", in: "<p>The capacity is 100 cubic metres.</p>"), "The capacity is 100 cubic metres | The capacity is 100 cubic metres.")
+        // Table cells are separate; inline markup joins.
+        let specs = "<p>Maximum thrust of the rig</p><table><tr><th>Motors</th><td>1</td><td>144 kgf</td></tr></table>"
+        XCTAssertFalse(QuoteCheck.found("Maximum thrust [\u{2026}] 1,144 kgf", in: specs))
+        XCTAssertTrue(QuoteCheck.found("Maximum thrust of the rig", in: specs))
+        XCTAssertFalse(QuoteCheck.found("flow [\u{2026}] .5 litres per minute", in: "<p>flow <span>1</span><span>.5</span> litres per minute</p>"))
+        XCTAssertTrue(QuoteCheck.found("flow 1.5 litres per minute", in: "<p>flow <span>1</span><span>.5</span> litres per minute</p>"))
+        XCTAssertTrue(QuoteCheck.found("the suit is fast. It flies", in: "<p>the suit is fast.</p><p>It flies</p>"), "a quote across paragraphs")
+        XCTAssertTrue(QuoteCheck.found("Maximum thrust is 1 144 kgf", in: "<p>Maximum thrust is 1 144 kgf</p>"))
+        XCTAssertFalse(QuoteCheck.found("Minimum temperature [\u{2026}] .5 degrees Celsius", in: "<p>Minimum temperature is \u{2212}.5 degrees Celsius</p>"))
+        XCTAssertTrue(QuoteCheck.found("Minimum temperature is \u{2212}.5 degrees Celsius", in: "<p>Minimum temperature is \u{2212}.5 degrees Celsius</p>"))
+        XCTAssertEqual(QuoteCheck.groupedThousands("in 2019 144 people, 12 500 000 units"), "in 2019 144 people, 12,500,000 units")
+        // Date metadata in either attribute order, with any of the names, in single or double quotes.
+        XCTAssertEqual(QuoteCheck.pageDate(#"<meta content="2020-01-02" name="citation_publication_date">"#), "2020-01-02")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<meta content='2021-02-03T00:00' property='og:published_time'>"#), "2021-02-03")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<meta name='dc.date' content='2018/04/05'>"#), "2018-04-05")
+        // A source's date comes only from its page: a matched quote on an undated page loses the model's date.
+        var t3 = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [
+            ["id": "F1", "claim": "Thrust", "value": "144", "label": "CLAIM", "sources": [src("https://a.org/1", "gives a thrust of 144 kgf in total", "2099")]]]])))
+        t3.checkQuotes(fetcher: TestPages(pages: ["https://a.org/1": page], fallback: nil))
+        XCTAssertEqual(t3.rows[0].sources[0].check, "quote found"); XCTAssertEqual(t3.rows[0].sources[0].date, "")
+        XCTAssertTrue(t3.downgrades.contains { $0.contains("source date 2099 removed") }, "\(t3.downgrades)")
+        XCTAssertFalse(FactCheck.Evidence.build(table: t3, question: "q", report: nil, model: nil).numbers.contains("2099"))
+        // A row whose sources were all rejected (UNKNOWN from the parse) is unconfirmed, never "not published"; a row
+        // the model gave as UNKNOWN without sources stays a researched absence.
+        let rejected: [[String: Any]] = [
+            ["id": "F1", "claim": "Thrust of 155 kgf", "value": "155", "label": "CLAIM", "sources": [src("https://x.pages.dev/1", "thrust of 155 kgf", "2020")]],
+            ["id": "F2", "claim": "Peak thrust", "label": "UNKNOWN", "sources": []]]
+        var t2 = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": rejected])))
+        XCTAssertEqual(t2.rows[0].label, .unknown)
+        t2.checkQuotes(fetcher: TestPages(pages: [:], fallback: nil))
+        XCTAssertTrue(t2.rows[0].unconfirmed); XCTAssertFalse(t2.rows[1].unconfirmed)
+        XCTAssertFalse(t2.promptBlock.contains("155"), t2.promptBlock)
+        XCTAssertTrue(t2.promptBlock.contains("Peak thrust"))
+        XCTAssertFalse(FactCheck.Evidence.build(table: t2, question: "q", report: nil, model: nil).numbers.contains("155"))
+    }
+
+    /// ROW lines: repeated ids replace, identical rows are skipped, at most `FactTable.maxRows` are kept.
+    func testPartialRowsDeduplicated() {
+        var rows: [Any] = []
+        ClaudeCLIAdapter.addRow(["id": "F1", "claim": "a"], to: &rows)
+        ClaudeCLIAdapter.addRow(["id": "F1", "claim": "b"], to: &rows)
+        ClaudeCLIAdapter.addRow(["claim": "c"], to: &rows)
+        ClaudeCLIAdapter.addRow(["claim": "c"], to: &rows)
+        XCTAssertEqual(rows.count, 2); XCTAssertEqual((rows[0] as? [String: Any])?["claim"] as? String, "b")
+        for n in 2...30 { ClaudeCLIAdapter.addRow(["id": "F\(n)", "claim": "x"], to: &rows) }
+        XCTAssertEqual(rows.count, FactTable.maxRows)
+        XCTAssertEqual(ClaudeCLIAdapter.withoutRowLines("ROW {\"id\": \"F1\"}\n{\"rows\": []}"), "{\"rows\": []}")
+    }
+
+    /// Research stopped at its limit: the rows written so far make a partial table, warned about in the receipt and
+    /// the plan; with none, there is no table and the same warning.
+    func testPartialResearch() throws {
+        let row = #"{"id": "F1", "claim": "Wheel teeth", "value": "36", "label": "CLAIM", "sources": [{"url": "https://example.org/a", "publisher": "E", "date": "2020", "quote": "the wheel has 36 teeth"}]}"#
+        let plan = #"{"components": ["spurPair"], "primitives": []}"#
+        let good = #"{"document": \#(Self.spurReduction)}"#
+        let partial = ResearchStub(replies: [plan, good], research: #"{"needed": true, "rows": ["# + row + "]}", meta: ["partial": true])
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: partial, out: out, options: .init()).run(question: "q")
+        let block = try XCTUnwrap(r["research"] as? [String: Any])
+        XCTAssertEqual(block["partial"] as? Bool, true); XCTAssertNotNil(block["warning"])
+        XCTAssertTrue(partial.inner.prompts[0].user.contains("This table is PARTIAL"), partial.inner.prompts[0].user)
+        let none = ResearchStub(replies: [plan, good], research: nil, error: AdapterError(reason: "adapter.research.turns", detail: "x"))
+        let out2 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out2) }
+        let r2 = try MartyLoop(model: none, out: out2, options: .init()).run(question: "q")
+        XCTAssertNotNil((r2["research"] as? [String: Any])?["warning"])
+        XCTAssertTrue(none.inner.prompts[0].user.contains("Research stopped before it confirmed a fact"), none.inner.prompts[0].user)
+        XCTAssertEqual((r2["research"] as? [String: Any])?["warning"] as? String, "research stopped at its tool limit before it confirmed a fact; there is no fact table")
+        // A timeout before any row: the same, with its cause.
+        let hung = ResearchStub(replies: [plan, good], research: nil, error: AdapterError(reason: "adapter.timeout", detail: "x"))
+        let out3 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out3) }
+        let r3 = try MartyLoop(model: hung, out: out3, options: .init()).run(question: "q")
+        XCTAssertEqual((r3["research"] as? [String: Any])?["warning"] as? String, "research stopped at a timeout before it confirmed a fact; there is no fact table")
+        XCTAssertTrue(hung.inner.prompts[0].user.contains("Research stopped before it confirmed a fact"))
     }
 
     /// The research call streams its events: Marty counts each web tool use and stops the child past the limit.
@@ -1814,6 +2258,37 @@ final class ClaudeAdapterProcessTests: XCTestCase {
         XCTAssertThrowsError(try ClaudeCLIAdapter(model: "m", executable: eofOver, timeout: 30).research(system: "s", user: "u", limits: ResearchLimits(maxTurns: 2))) {
             XCTAssertEqual(($0 as? AdapterError)?.reason, "adapter.research.turns", "a tool use on the last unterminated line counts toward the limit")
         }
+        // Past the limit with ROW lines written: a partial table from them.
+        let rowText = #"{"type":"assistant","message":{"content":[{"type":"text","text":"ROW {\"id\": \"F1\", \"claim\": \"c\", \"label\": \"CLAIM\"}"}]}}"#
+        let withRows = try fake("cat >/dev/null; echo '\(rowText)'; for i in 1 2 3 4; do echo '\(use)'; done; sleep 20; echo '\(result)'")
+        let p = try ClaudeCLIAdapter(model: "m", executable: withRows, timeout: 30).research(system: "s", user: "u", limits: ResearchLimits(maxTurns: 3))
+        XCTAssertEqual(p.meta["partial"] as? Bool, true)
+        XCTAssertEqual(FactTable.parse(p.text)?.rows.first?.claim, "c")
+        // The CLI's own turn limit: the rows so far, or a limit failure without rows.
+        let maxTurns = #"{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":3}"#
+        let cliLimit = try fake("cat >/dev/null; echo '\(rowText)'; echo '\(maxTurns)'")
+        let c = try ClaudeCLIAdapter(model: "m", executable: cliLimit, timeout: 30).research(system: "s", user: "u", limits: ResearchLimits(maxTurns: 5))
+        XCTAssertEqual(c.meta["partial"] as? Bool, true); XCTAssertEqual(FactTable.parse(c.text)?.rows.count, 1)
+        let cliNone = try fake("cat >/dev/null; echo '\(maxTurns)'")
+        XCTAssertThrowsError(try ClaudeCLIAdapter(model: "m", executable: cliNone, timeout: 30).research(system: "s", user: "u", limits: ResearchLimits(maxTurns: 5))) {
+            XCTAssertEqual(($0 as? AdapterError)?.reason, "adapter.research.turns")
+        }
+        // A final reply with its last ROW line before the table: the table is parsed without it.
+        let mixed = #"{"type":"result","result":"ROW {\"id\": \"F1\", \"claim\": \"c\"}\n{\"needed\": true, \"rows\": [{\"id\": \"F1\", \"claim\": \"c\", \"label\": \"CLAIM\"}, {\"id\": \"F2\", \"claim\": \"d\", \"label\": \"CLAIM\"}]}","is_error":false}"#
+        let mixedExe = try fake("cat >/dev/null; echo '\(rowText)'; printf '%s\\n' '\(mixed)'")
+        let m = try ClaudeCLIAdapter(model: "m", executable: mixedExe, timeout: 30).research(system: "s", user: "u", limits: ResearchLimits(maxTurns: 5))
+        XCTAssertNil(m.meta["partial"]); XCTAssertEqual(FactTable.parse(m.text)?.rows.count, 2, m.text)
+        // A bare row as the final reply is no table: the streamed rows are used.
+        let bare = #"{"type":"result","result":"{\"id\": \"F9\", \"claim\": \"x\"}","is_error":false}"#
+        let bareExe = try fake("cat >/dev/null; echo '\(rowText)'; echo '\(bare)'")
+        let b = try ClaudeCLIAdapter(model: "m", executable: bareExe, timeout: 30).research(system: "s", user: "u", limits: ResearchLimits(maxTurns: 5))
+        XCTAssertEqual(b.meta["partialCause"] as? String, "final table unreadable"); XCTAssertEqual(FactTable.parse(b.text)?.rows.first?.claim, "c")
+        XCTAssertNil(FactTable.parse(#"{"id": "F1", "claim": "Wheel teeth", "value": "36"}"#))
+        // No result event (a crash), and a hang: the rows written so far.
+        let crash = try fake("cat >/dev/null; echo '\(rowText)'; exit 1")
+        XCTAssertEqual(try ClaudeCLIAdapter(model: "m", executable: crash, timeout: 30).research(system: "s", user: "u", limits: ResearchLimits(maxTurns: 5)).meta["partialCause"] as? String, "no result event")
+        let hang = try fake("cat >/dev/null; echo '\(rowText)'; sleep 30")
+        XCTAssertEqual(try ClaudeCLIAdapter(model: "m", executable: hang, timeout: 2).research(system: "s", user: "u", limits: ResearchLimits(maxTurns: 5)).meta["partialCause"] as? String, "timeout")
         let many = try fake("cat >/dev/null; for i in 1 2 3 4 5 6; do echo '\(use)'; done; sleep 20; echo '\(result)'")
         XCTAssertThrowsError(try ClaudeCLIAdapter(model: "m", executable: many, timeout: 30).research(system: "s", user: "u", limits: ResearchLimits(maxTurns: 3))) {
             XCTAssertEqual(($0 as? AdapterError)?.reason, "adapter.research.turns")

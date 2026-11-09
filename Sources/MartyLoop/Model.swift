@@ -125,6 +125,38 @@ public struct ClaudeCLIAdapter: ModelAdapter {
         return webToolUses(o)
     }
 
+    /// The "ROW {...}" lines in an assistant event's text blocks, as row objects.
+    static func rowLines(_ o: [String: Any]) -> [Any] {
+        guard o["type"] as? String == "assistant",
+              let content = (o["message"] as? [String: Any])?["content"] as? [[String: Any]] else { return [] }
+        var out: [Any] = []
+        for c in content where c["type"] as? String == "text" {
+            for line in (c["text"] as? String ?? "").split(separator: "\n") {
+                let t = line.trimmingCharacters(in: .whitespaces)
+                guard t.hasPrefix("ROW "), let row = try? JSONSerialization.jsonObject(with: Data(t.dropFirst(4).utf8)) as? [String: Any] else { continue }
+                out.append(row)
+            }
+        }
+        return out
+    }
+
+    /// Adds a ROW to the partial table: a row with the id of an earlier one replaces it, an identical row is skipped,
+    /// and at most `FactTable.maxRows` distinct rows are kept.
+    static func addRow(_ row: Any, to rows: inout [Any]) {
+        let id = (row as? [String: Any])?["id"] as? String
+        if let id, let n = rows.firstIndex(where: { ($0 as? [String: Any])?["id"] as? String == id }) { rows[n] = row; return }
+        func data(_ o: Any) -> Data? { try? JSONSerialization.data(withJSONObject: o, options: [.sortedKeys]) }
+        let d = data(row)
+        if rows.contains(where: { data($0) == d }) { return }
+        if rows.count < FactTable.maxRows { rows.append(row) }
+    }
+
+    /// The text without its ROW lines (the final table is parsed from the rest).
+    static func withoutRowLines(_ text: String) -> String {
+        text.split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("ROW ") }.joined(separator: "\n")
+    }
+
     static func webToolUses(_ o: [String: Any]) -> [String: Int] {
         guard o["type"] as? String == "assistant",
               let content = (o["message"] as? [String: Any])?["content"] as? [[String: Any]] else { return [:] }
@@ -166,6 +198,8 @@ public struct ClaudeCLIAdapter: ModelAdapter {
             /// A research call's stream, parsed from every byte (not only the kept output): the unfinished line, the
             /// counts per tool, and the last "result" event.
             var line = Data(), lineTooLong = false, counts: [String: Int] = [:], result: Data? = nil
+            /// Rows the model wrote as "ROW {...}" lines in its text while researching (at most 20).
+            var rows: [Any] = []
         }
         let box = Box()
         let group = DispatchGroup()     // the two pipe readers
@@ -193,6 +227,7 @@ public struct ClaudeCLIAdapter: ModelAdapter {
             guard let o = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { return }
             for (k, v) in Self.webToolUses(o) { box.counts[k, default: 0] += v; box.toolUses += v }
             if o["type"] as? String == "result" { box.result = line }
+            for row in Self.rowLines(o) { Self.addRow(row, to: &box.rows) }
             if box.toolUses > limit, !box.overBudget { box.overBudget = true; if p.isRunning { p.terminate() } }
         }
         let observe: ((Data) -> Void)? = toolLimit.map { limit in { d in
@@ -228,14 +263,29 @@ public struct ClaudeCLIAdapter: ModelAdapter {
         // After a normal exit, give the pipes a short grace, then use what was read (a grandchild may hold them open).
         if !timedOut { _ = group.wait(timeout: .now() + Self.drainGrace) }
         try? fm.removeItem(at: work); try? fm.removeItem(at: ctx)
-        if timedOut { throw AdapterError(reason: "adapter.timeout", detail: "no answer in \(Int(timeout)) s") }
         let seconds = Date().timeIntervalSince(t0)
         lock.lock()
         // A last line without a newline.
         if let limit = toolLimit, !box.line.isEmpty, !box.lineTooLong { handle(box.line, limit: limit) }
-        let out = box.out, err = box.err, overBudget = box.overBudget, streamCounts = box.counts, streamResult = box.result
+        let out = box.out, err = box.err, overBudget = box.overBudget, streamCounts = box.counts, streamResult = box.result, streamRows = box.rows
         lock.unlock()
-        if overBudget { throw AdapterError(reason: "adapter.research.turns", detail: "more than \(toolLimit ?? 0) web tool uses") }
+        // The rows the model wrote so far as a partial table (the call hit a limit or its final table is unreadable).
+        func partial(_ why: String) -> ModelReply {
+            let text = String(decoding: (try? JSONSerialization.data(withJSONObject: ["needed": true, "rows": streamRows])) ?? Data(), as: UTF8.self)
+            return ModelReply(text: text, seconds: Date().timeIntervalSince(t0),
+                              meta: ["partial": true, "partialCause": why, "exit": p.isRunning ? -1 : Int(p.terminationStatus),
+                                     "webTools": ["web_search_requests": streamCounts["WebSearch"] ?? 0, "web_fetch_requests": streamCounts["WebFetch"] ?? 0]])
+        }
+        // A research call that hung keeps the rows it wrote; any other timeout is an error.
+        if timedOut {
+            if tools != nil, !streamRows.isEmpty { return partial("timeout") }
+            throw AdapterError(reason: "adapter.timeout", detail: "no answer in \(Int(timeout)) s")
+        }
+        // Stopped at the limit: the rows the model wrote so far make a partial table; with none, the call failed.
+        if overBudget {
+            guard !streamRows.isEmpty else { throw AdapterError(reason: "adapter.research.turns", detail: "more than \(toolLimit ?? 0) web tool uses") }
+            return partial("web tool limit")
+        }
         // A research call's stream: the web tool uses counted from its events, the result from its last "result" event.
         var counted: [String: Int]? = nil
         var envData = out
@@ -244,6 +294,8 @@ public struct ClaudeCLIAdapter: ModelAdapter {
             envData = streamResult ?? Data()
         }
         guard let env = try? JSONSerialization.jsonObject(with: envData) as? [String: Any] else {
+            // A research call that ended without a result event (a crash) keeps the rows it wrote.
+            if tools != nil, !streamRows.isEmpty { return partial("no result event") }
             throw AdapterError(reason: "adapter.output", detail: "exit \(p.terminationStatus): " + String(decoding: err.suffix(400), as: UTF8.self))
         }
         var meta: [String: Any] = ["exit": Int(p.terminationStatus)]
@@ -255,10 +307,26 @@ public struct ClaudeCLIAdapter: ModelAdapter {
             }
         }
         if let counted { meta["webTools"] = ["web_search_requests": counted["WebSearch"] ?? 0, "web_fetch_requests": counted["WebFetch"] ?? 0] }
+        if tools != nil {
+            // The CLI's own turn limit ends a research call like Marty's limit: the rows so far, or a limit failure.
+            let subtype = env["subtype"] as? String ?? ""
+            if subtype == "error_max_turns" {
+                guard !streamRows.isEmpty else { throw AdapterError(reason: "adapter.research.turns", detail: "the CLI turn limit (\(toolLimit ?? 0))") }
+                return partial("turn limit")
+            }
+            if (env["is_error"] as? Bool) == true, !streamRows.isEmpty { return partial("error") }
+        }
         if (env["is_error"] as? Bool) == true {
             throw AdapterError(reason: "adapter.error", detail: String((env["result"] as? String ?? "").prefix(400)))
         }
-        return ModelReply(text: env["result"] as? String ?? "", seconds: seconds, meta: meta)
+        var text = env["result"] as? String ?? ""
+        if tools != nil {
+            // ROW lines before the final table are not part of it; an unreadable final table falls back to the rows.
+            text = Self.withoutRowLines(text)
+            // The final table must be a table ("rows" a list, or "needed": false), not just any JSON object.
+            if !FactTable.isTableShaped(ReplyJSON.object(text)), !streamRows.isEmpty { return partial("final table unreadable") }
+        }
+        return ModelReply(text: text, seconds: seconds, meta: meta)
     }
 }
 

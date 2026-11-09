@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-08. Prompts `marty-prompts/18`. Engine pin as in
+Status: early preview, 2026-11-08. Prompts `marty-prompts/19`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -42,15 +42,81 @@ the MCP server uses), so a run needs no MCP client.
    redirects of its own. Marty reads the final response of curl's header dump
    (informational 1xx blocks skipped; `Location` only from the final block) and
    stops curl itself past its deadline (SIGTERM, then SIGKILL). Marty looks for the source's quote in the page text
-   (scripts, styles and tags removed, entities decoded, case, quote marks,
-   dashes and white space unified; an ellipsis splits the quote into parts
-   that must all be found in order; each part at least 16 characters and
-   matched on word boundaries, so a bare "85 mph" is no evidence and does not
-   match "185 mph"). The site that counts is the one the page finally came
+   by words (`QuoteCheck.match`). The text is normalized on the page and in the
+   quote alike: scripts, styles, comments and reference marks ("[3]", "[edit]")
+   removed; block tags (table cells, paragraphs, line breaks) are hard
+   boundaries and inline tags (`<span>`) join text as it renders; `<sup>` and
+   Unicode superscripts become "^" ("10³" is "10^3"), `<sub>` "_"; named and
+   numeric entities decoded (an unknown one is a symbol); NFKC; zero-width
+   characters and joiners such as U+2060 removed; case, quote marks and dashes
+   folded; a prime after a digit, ASCII or curly, stays a unit mark ("5'11\""
+   is 5′11″, not "511") unless it closes a quotation of its kind that is open
+   in the same block (quotation marks pair by context: an apostrophe inside a
+   word or before a decade, "it's", "'90s", opens nothing, a mark before a
+   digit, "5'11", is always a prime, and a quoted number, "'10'", is a
+   quotation); vulgar and spaced mixed fractions are "+n/d" ("1½" is
+   "1+1/2"); grouping spaces before 3 digits join thousands ("1 144" is
+   "1,144"); number operators bind without spaces ("10 ^ 3", "3 / 4",
+   "10 ± 2", "4 + 4", "10 x 20", "1.5·10^6", "≥ 10", ">= 10", "10 m / s",
+   "10 %"); a dash is a word of its own, except an em dash or a hyphen between
+   two words, which is punctuation (a hard boundary), and a hyphen glued into a
+   compound unit right after a number ("10 N-m", "10 amp-hours"), which stays
+   part of the quantity ("10 N" does not match "10 N-m"). An ellipsis or a bracketed insertion
+   such as "[…]" or "[s]" in the quote is a gap: the quote's parts must all be
+   found in order, all together at least 16 characters and the longest at
+   least 8 (a bare "85 mph" is no evidence). Each part's words must equal the
+   page's words, so "85 mph" never matches "185 mph", "5" never "1.5", ".5",
+   "(5)", "$5" or "5%", and "10 m" never "10 m/s"; only a letters-only word
+   glued to a gap may be completed by it ("engine[s]", "[T]he"; not a unit
+   after a number). A number is a whole expression: a part that starts with a
+   number (or a sign, or a unit after a number) may not follow a page word
+   without letters (an operator, a symbol, another number: "≥ 10", "10 ± 2",
+   "6.674 30", "5′ 11″", "− $500") unless a hard boundary is between them, and
+   a signed part never follows a word with a digit ("2e-3" is not "-3"); a
+   part that ends with a number or a unit after one may not be followed by
+   such a word, nor by "per" or a power or quotient unit ("10 m" is not
+   "10 m s⁻¹", "10 metres" not "10 metres per second" or "10 metres a second",
+   or "10 metres every 30 seconds", "10 kW" not "10 kW h" or any SI-prefixed
+   unit symbol after it, "10 cm" not "10 cm x 20 cm"), nor by a magnitude
+   ("$10" is not "$10 million"), nor by "per"; a quantity with a unit
+   (attached, "10L", "10%", or a unit word after the number) is followed only
+   by a hard boundary or an ordinary prose word ("of", "at", "in", "over",
+   "tall", ...), so any other word, which may continue the unit, a rate or a
+   product ("100 amp hours", "100 V A", "10 litres every fifteen minutes"),
+   leaves the quote unmatched, and an allowed word that leads into another
+   quantity or a time ("10 cm by 20 cm", "10 litres in 30 seconds") does too;
+   a bare number may not be followed by a unit word ("10 percent", "100 watt
+   hours", "10 m"); a unit abbreviation's period after a number ("10 in.",
+   "10 gal.") never ends the quantity; a part that starts with a number may
+   not follow a written bound or approximation ("up to", "at least", "less
+   than", "about", "over", "approx.", "max.", ...), and a quantity may not be
+   followed by one ("or less", "or more", "max", "and up"); modifiers between
+   a connector and a quantity are skipped ("in just 30 seconds"); cubic,
+   square and data units are unit words; a quantity's unit may
+   be a few words with unit symbols ("10 degrees Celsius", "10 N-m", "10 m/s"); a range in words is whole at both ends ("10 to 20 bar" and
+   "between 10 degrees Celsius and 20 degrees Celsius" give neither end); a gap glued to a number keeps these rules
+   ("[…]5 degrees" is not "−5 degrees"); a dash before a word is punctuation
+   ("1,050 bhp — the company").
+   Each source's date comes only from its fetched page: its publication date
+   (HTML comments ignored: its page-level publication meta tag outside
+   scripts, styles and templates, by property or
+   name, in either attribute order and either quote style; else the
+   `datePublished` of the page's own JSON-LD article: the one a page object
+   names as `mainEntity` (two different named articles are ambiguous), else the one article with `mainEntityOfPage`, else
+   the only article, else with no article the only page object; with several
+   candidates the owner is unknown and the date stays empty; never a nested one
+   such as a related article's or a comment's; microdata and `<time>` are not
+   read, since their owner is not known), whether or not the quote was found; a page that
+   states none, or a page that was not fetched, leaves the date empty (the
+   model's date is removed; every change is listed in `downgrades`). The site that counts is the one the page finally came
    from (a redirect to a blocked or free hosting site fails). Each source records its `check` ("quote found", "quote not found",
    "page failed (404)", "not checked (budget)"). A row with no found quote is
-   UNKNOWN (no value; its sources stay as notes), also when every source it gave
-   was dropped; a VERIFIED row needs found quotes on two sites and no found
+   UNKNOWN (no value; its sources stay as notes) and `unconfirmed`: it is left
+   out of the author's table, which says that such rows exist and must never be
+   called "not published", and it is no evidence for `fact.unsourced`; a row is
+   also UNKNOWN and `unconfirmed` when every source it gave was dropped (only a
+   row the model itself gave as UNKNOWN without sources is a researched
+   absence, "not published"); a VERIFIED row needs found quotes on two sites and no found
    quote whose text or page text within 160 characters attributes the figure
    to its maker or one person ("claims", "according to", "the company", ...),
    else it is a CLAIM. The prompt also says that a maker's figure stays a CLAIM when
@@ -60,12 +126,24 @@ the MCP server uses), so a run needs no MCP client.
    removed), and every system prompt says that the table is web data whose
    instructions are never followed. A refused answer gets no table. A failed or unreadable research reply,
    or an adapter without web tools, leaves no table ("Fact table: none"), and
-   the run goes on; this is not an adapter error. The research call streams its
+   the run goes on; this is not an adapter error. Research that was tried and
+   stopped before any row (a limit, a timeout, an error, an unreadable reply)
+   also gets a `warning` with its cause, and the prompts say that a fact not
+   in the table may still be published. The research call streams its
    events (`--output-format stream-json`): Marty parses every line as it arrives
    (also past the 8 MB kept output; the last line without a newline too) as
    JSON, counts each WebSearch and WebFetch use, keeps the last top-level
    result event, and stops the call when it goes over
-   `--research-turns`
+   `--research-turns`. The research prompt asks the model to write each fact
+   as soon as it confirms it, as a line `ROW {...}` (a later row with the same
+   id replaces an earlier one, an identical row is skipped, at most 20 kept);
+   ROW lines in the final reply are not part of its table. When the call is
+   stopped at Marty's limit or the CLI's own turn limit (`error_max_turns`),
+   ends in an error, times out, ends without a result event, or its final
+   reply is not a table (no "rows" list), those rows make a
+   partial table (`partial`, its `partialCause`, a `warning` with the cause in the
+   receipt, and a line in the plan and author prompts that the table is
+   partial); with no row written there is no table and the same warning
    (`adapter.research.turns`; then there is no table). The receipt's `research`
    block records the table with each source's check, `quoteChecks`, the
    downgrades, the counted `webTools`, the CLI's `turns` and the limits.
