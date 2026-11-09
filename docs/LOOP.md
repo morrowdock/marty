@@ -45,7 +45,8 @@ the MCP server uses), so a run needs no MCP client.
    (scripts, styles, tags and the page's reference marks such as "[3]" or
    "[edit]" removed; block tags such as table cells and paragraphs separate
    text, never as a thousands space, and inline tags such as `<span>` join it
-   as it renders; entities decoded, Unicode NFKC, zero-width characters and
+   as it renders; a superscript, `<sup>` or Unicode, is marked "^" and never
+   joins the number before it, so "10³" is not "103"; entities decoded, Unicode NFKC, zero-width characters and
    joiners such as U+2060 removed, case, quote marks, dashes and the spaces
    around them, and white space unified; trailing punctuation ignored; an
    ellipsis or a bracketed insertion such as "[…]" or "[s]" in the quote is a

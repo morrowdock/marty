@@ -189,6 +189,9 @@ public enum QuoteCheck {
             // Block tags (cells, rows, paragraphs, line breaks, list items, headings) separate text with a block mark
             // that is never a thousands space ("<td>1</td><td>144 kgf</td>" is not "1,144 kgf"); inline tags join
             // their text as it renders ("<span>1</span><span>.5</span>" is "1.5"); any other tag is a space.
+            // A superscript is marked, never joined to the number before it ("144<sup>1</sup>" is "144^1", not
+            // "1441"; "10<sup>3</sup>" is "10^3").
+            t = t.replacingOccurrences(of: #"(?is)<sup\b[^>]*>(.*?)</sup\s*>"#, with: "^$1 ", options: .regularExpression)
             t = t.replacingOccurrences(of: #"(?i)</?(?:td|th|tr|thead|tbody|tfoot|table|caption|p|div|br|hr|li|ul|ol|dl|dt|dd|h[1-6]|section|article|header|footer|aside|nav|main|figure|figcaption|blockquote|pre|form|fieldset|legend|details|summary|address)\b[^>]*>"#,
                                        with: "\u{2}", options: .regularExpression)
             t = t.replacingOccurrences(of: #"(?i)</?(?:span|a|b|i|em|strong|sup|sub|small|abbr|code|mark|u|s|q|cite|bdi|bdo|data|dfn|kbd|samp|var|wbr|time|font)\b[^>]*>"#,
@@ -197,7 +200,11 @@ public enum QuoteCheck {
             t = decodeEntities(t)
             // Reference marks of the page ("[3]", "[edit]", "[citation needed]") are not quoted text.
             t = t.replacingOccurrences(of: #"\[(?:\d{1,3}|[a-z]|edit|citation needed|note \d+)\]"#, with: "", options: [.regularExpression, .caseInsensitive])
+            // A superscript mark left with nothing after it (a removed "[1]" reference) is dropped.
+            t = t.replacingOccurrences(of: #"\^(?=[\s.,;:!?)]|$)"#, with: "", options: .regularExpression)
         }
+        // Unicode superscripts likewise ("10³" is "10^3", "10⁻³" is "10^-3"), before NFKC would fold them to digits.
+        t = markedSuperscripts(t)
         // A digit-grouping space (no-break, narrow no-break or thin, before a group of 3 digits: "1 144 kgf") is a
         // thousands separator, so the number stays one token ("144" is not inside it). Before NFKC, which makes
         // these spaces plain.
@@ -232,6 +239,19 @@ public enum QuoteCheck {
         t = t.replacingOccurrences(of: #" ([.,;:!?)\]])(?![0-9])"#, with: "$1", options: .regularExpression)
             .replacingOccurrences(of: #"([(\[]) "#, with: "$1", options: .regularExpression)
         return t.trimmingCharacters(in: .whitespaces)
+    }
+
+    static let superscripts: [Character: Character] = ["\u{2070}": "0", "\u{00B9}": "1", "\u{00B2}": "2", "\u{00B3}": "3", "\u{2074}": "4",
+        "\u{2075}": "5", "\u{2076}": "6", "\u{2077}": "7", "\u{2078}": "8", "\u{2079}": "9", "\u{207A}": "+", "\u{207B}": "-"]
+
+    /// Each run of Unicode superscript digits and signs as "^" and plain characters.
+    static func markedSuperscripts(_ s: String) -> String {
+        var out = "", inRun = false
+        for c in s {
+            if let plain = superscripts[c] { if !inRun { out.append("^") }; out.append(plain); inRun = true }
+            else { out.append(c); inRun = false }
+        }
+        return out
     }
 
     static func decodeEntities(_ s: String) -> String {
@@ -386,12 +406,14 @@ public enum QuoteCheck {
             return ns.substring(with: m.range(at: 1)).replacingOccurrences(of: "/", with: "-")
         }
         let names = #"(?:article:published_time|og:published_time|date|dc\.date|dc\.date\.issued|citation_publication_date|pubdate)"#
-        let attr = #"(?:property|name)=["']"# + names + #"["']"#
+        let attr = #"(?:property|name)\s*=\s*["']"# + names + #"["']"#
         let date = #"(\d{4}[-/]\d{2}[-/]\d{2})"#
-        if let d = first(#"(?i)<meta[^>]+"# + attr + #"[^>]+content=["']"# + date) ?? first(#"(?i)<meta[^>]+content=["']"# + date + #"[^"']*["'][^>]+"# + attr) {
+        if let d = first(#"(?i)<meta[^>]+"# + attr + #"[^>]+content\s*=\s*["']"# + date) ?? first(#"(?i)<meta[^>]+content\s*=\s*["']"# + date + #"[^"']*["'][^>]+"# + attr) {
             return d
         }
-        return jsonLDDate(h, NSRange(location: 0, length: (h as NSString).length))
+        // JSON-LD outside inert templates.
+        let live = h.replacingOccurrences(of: #"(?is)<template\b.*?(</template\s*>|$)"#, with: " ", options: .regularExpression)
+        return jsonLDDate(live, NSRange(location: 0, length: (live as NSString).length))
     }
 
     static let articleTypes: Set<String> = ["Article", "NewsArticle", "BlogPosting", "TechArticle", "ScholarlyArticle", "Report",
