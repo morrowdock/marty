@@ -192,6 +192,8 @@ public enum QuoteCheck {
             // A superscript is marked, never joined to the number before it ("144<sup>1</sup>" is "144^1", not
             // "1441"; "10<sup>3</sup>" is "10^3").
             t = t.replacingOccurrences(of: #"(?is)<sup\b[^>]*>(.*?)</sup\s*>"#, with: "^$1 ", options: .regularExpression)
+            // A subscript likewise ("101<sub>2</sub>" is "101_2", not "1012").
+            t = t.replacingOccurrences(of: #"(?is)<sub\b[^>]*>(.*?)</sub\s*>"#, with: "_$1 ", options: .regularExpression)
             t = t.replacingOccurrences(of: #"(?i)</?(?:td|th|tr|thead|tbody|tfoot|table|caption|p|div|br|hr|li|ul|ol|dl|dt|dd|h[1-6]|section|article|header|footer|aside|nav|main|figure|figcaption|blockquote|pre|form|fieldset|legend|details|summary|address)\b[^>]*>"#,
                                        with: "\u{2}", options: .regularExpression)
             t = t.replacingOccurrences(of: #"(?i)</?(?:span|a|b|i|em|strong|sup|sub|small|abbr|code|mark|u|s|q|cite|bdi|bdo|data|dfn|kbd|samp|var|wbr|time|font)\b[^>]*>"#,
@@ -220,9 +222,10 @@ public enum QuoteCheck {
         // A prime after a digit, ASCII or curly, is a unit mark ("5'11\"" and "5’11”" are 5′11″), kept, never a quote mark
         // (dropping it would make "511"), unless a quote mark opened right before the number ("\"10\"", "“-5”" are
         // quoted numbers).
-        let opened = "(?<!['\"\u{2018}\u{201C}][-+0-9., ]{1,16})"
-        t = t.replacingOccurrences(of: opened + "(?<=[0-9])['\u{2019}]", with: "\u{2032}", options: .regularExpression)
-            .replacingOccurrences(of: opened + "(?<=[0-9])[\"\u{201D}]", with: "\u{2032}\u{2032}", options: .regularExpression)   // as NFKC writes ″
+        // The opening mark must be of the same kind ("\"5'11\"\"" is a quoted 5′11″).
+        let number = "[-+\u{2212}0-9., ]{1,16}"
+        t = t.replacingOccurrences(of: "(?<!['\u{2018}]" + number + ")(?<=[0-9])['\u{2019}]", with: "\u{2032}", options: .regularExpression)
+            .replacingOccurrences(of: "(?<![\"\u{201C}]" + number + ")(?<=[0-9])[\"\u{201D}]", with: "\u{2032}\u{2032}", options: .regularExpression)   // as NFKC writes ″
         for (a, b) in [("\u{2018}", "'"), ("\u{2019}", "'"), ("\u{201A}", "'"), ("\u{201B}", "'"),
                        ("\u{201C}", "\""), ("\u{201D}", "\""), ("\u{201E}", "\""), ("\u{00AB}", "\""), ("\u{00BB}", "\""),
                        ("\u{2010}", "-"), ("\u{2011}", "-"), ("\u{2012}", "-"), ("\u{2013}", "-"), ("\u{2014}", "-"), ("\u{2015}", "-"),
@@ -236,14 +239,13 @@ public enum QuoteCheck {
         // number is one expression however the page spaces it.
         t = t.replacingOccurrences(of: "(?<![<>])>=|=>", with: "\u{2265}", options: .regularExpression)
             .replacingOccurrences(of: "<=(?!>)|=<", with: "\u{2264}", options: .regularExpression)
-        t = t.replacingOccurrences(of: "(?<=[0-9]) ?[x\u{00D7}\u{00B7}\u{22C5}\u{2219}] ?(?=[0-9]|[.-][0-9])", with: "\u{00D7}", options: .regularExpression)
+        t = t.replacingOccurrences(of: "(?<=[0-9)]) ?[x\u{00D7}\u{00B7}\u{22C5}\u{2219}] ?(?=[0-9]|[.-][0-9])", with: "\u{00D7}", options: .regularExpression)
         t = t.replacingOccurrences(of: "(?<=[0-9]) ?([\\^/\u{2044}\u{00B1}:+]) ?(?=[0-9+.-])", with: "$1", options: .regularExpression)
         t = t.replacingOccurrences(of: "([\u{00B1}<>\u{2264}\u{2265}~\u{2248}$\u{20AC}\u{00A3}\u{00A5}]) (?=[0-9]|[.-][0-9])", with: "$1", options: .regularExpression)
         t = t.replacingOccurrences(of: "(?<=[a-z]) ?([\\^/]) ?(?=[a-z0-9])", with: "$1", options: .regularExpression)
         t = t.replacingOccurrences(of: "(?<=[0-9]) (?=[%\u{2030}\u{00B0}\u{2032}\u{2033}])", with: "", options: .regularExpression)
-        // Spaces around a dash vary ("suit—with", "suit - with", "at − 5"): none on either side. A quote part that
-        // starts with a sign ("-5 degrees") is matched after a letter but not after a digit (see `match`).
-        t = t.replacingOccurrences(of: #" ?- ?"#, with: "-", options: .regularExpression)
+        // A dash is its own token, however it is spaced ("suit—with", "suit - with", "at − 5", "10-20"): see `match`.
+        t = t.replacingOccurrences(of: #"\s*-\s*"#, with: " - ", options: .regularExpression)
         // A removed tag leaves a space before punctuation ("derail ."); drop it on both sides.
         t = t.replacingOccurrences(of: #" ([.,;:!?)\]])(?![0-9])"#, with: "$1", options: .regularExpression)
             .replacingOccurrences(of: #"([(\[]) "#, with: "$1", options: .regularExpression)
@@ -253,8 +255,10 @@ public enum QuoteCheck {
         // A spaced mixed fraction ("1 1/2", "1 ½") is one number, as "1½" is: "1+1/2".
         t = t.replacingOccurrences(of: #"(?<![0-9.,/])([0-9]+) ([0-9]+/[0-9]+)(?![0-9/])"#, with: "$1+$2", options: .regularExpression)
         t = groupedThousands(t)
-        t = t.replacingOccurrences(of: "\u{2}", with: " ")
-        t = t.replacingOccurrences(of: #" ?- ?"#, with: "-", options: .regularExpression)
+        // The block mark stays a token of its own (a hard boundary between tokens, see `tokens`).
+        t = t.replacingOccurrences(of: "\u{2}", with: " \u{2} ")
+        t = t.replacingOccurrences(of: #"\s*-\s*"#, with: " - ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
         t = t.replacingOccurrences(of: #" ([.,;:!?)\]])(?![0-9])"#, with: "$1", options: .regularExpression)
             .replacingOccurrences(of: #"([(\[]) "#, with: "$1", options: .regularExpression)
         return t.trimmingCharacters(in: .whitespaces)
@@ -298,9 +302,14 @@ public enum QuoteCheck {
                        ("&sup1;", "\u{00B9}"), ("&sup2;", "\u{00B2}"), ("&sup3;", "\u{00B3}"), ("&frac14;", "\u{00BC}"), ("&frac12;", "\u{00BD}"),
                        ("&frac34;", "\u{00BE}"), ("&frasl;", "\u{2044}"), ("&permil;", "\u{2030}"), ("&euro;", "\u{20AC}"), ("&pound;", "\u{00A3}"),
                        ("&yen;", "\u{00A5}"), ("&cent;", "\u{00A2}"), ("&micro;", "\u{00B5}"), ("&middot;", "\u{00B7}"), ("&shy;", "\u{00AD}"),
-                       ("&zwj;", "\u{200D}"), ("&zwnj;", "\u{200C}"), ("&amp;", "&")] {
+                       ("&zwj;", "\u{200D}"), ("&zwnj;", "\u{200C}"),
+                       ("&leq;", "\u{2264}"), ("&geq;", "\u{2265}"), ("&approx;", "\u{2248}"), ("&sim;", "\u{223C}"), ("&sdot;", "\u{22C5}"),
+                       ("&ne;", "\u{2260}"), ("&radic;", "\u{221A}"), ("&lowast;", "\u{2217}"), ("&infin;", "\u{221E}"), ("&mp;", "\u{2213}"),
+                       ("&amp;", "&")] {
             t = t.replacingOccurrences(of: e, with: c)
         }
+        // Any other named entity is a symbol (never letters, so a number beside it is not a bare number).
+        t = t.replacingOccurrences(of: #"&[a-zA-Z][a-zA-Z0-9]{1,30};"#, with: "\u{FFFC}", options: .regularExpression)
         guard let re = try? NSRegularExpression(pattern: #"&#(x?)([0-9a-fA-F]+);"#) else { return t }
         let ns = t as NSString
         var out = ""
@@ -318,95 +327,124 @@ public enum QuoteCheck {
     /// "85 mph" is not enough context.
     public static let minimumPart = 16
 
-    /// Where `quote` is in `page` (normalized page text and the matched ranges), or nil: every part of the quote
-    /// (split at an ellipsis or a bracketed insertion) in order, all parts together at least `minimumPart`
-    /// characters and the longest at least half that. A part starts and ends on a word boundary ("85 mph" does not
-    /// match inside "185 mph"), except a letter glued to a gap (a word completed in brackets, "engine[s]"). A part that starts with a sign ("-5 degrees") may follow a letter, not a digit.
-    static func match(_ quote: String, in page: String, html: Bool = true) -> (page: String, ranges: [Range<String.Index>])? {
+    /// One word of normalized text: its text without trailing sentence punctuation (and, for a word, without
+    /// enclosing brackets), and whether a hard boundary (punctuation, a block such as a table cell or paragraph, the
+    /// start or end of the text) is on either side.
+    struct Token: Equatable {
+        var text: String
+        var closedBefore: Bool
+        var closedAfter: Bool
+        var hasLetter: Bool { text.contains { $0.isLetter } }
+        var hasDigit: Bool { text.contains { $0.isNumber } }
+    }
+
+    static func tokens(_ normalized: String) -> [Token] {
+        var out: [Token] = []
+        var closed = true
+        func close() { if !out.isEmpty { out[out.count - 1].closedAfter = true }; closed = true }
+        for raw in normalized.split(separator: " ") {
+            if raw == "\u{2}" { close(); continue }
+            var t = String(raw), after = false
+            func trimEnd() { while let c = t.last, ".,;:!?".contains(c) { t.removeLast(); after = true } }
+            trimEnd()
+            if t.contains(where: { $0.isLetter }), !t.contains(where: { $0.isNumber }) {
+                t = t.trimmingCharacters(in: CharacterSet(charactersIn: "()[]{}"))
+                trimEnd()
+            }
+            if t.isEmpty || t == "..." { close(); continue }
+            out.append(Token(text: t, closedBefore: closed, closedAfter: after))
+            closed = after
+        }
+        if !out.isEmpty { out[out.count - 1].closedAfter = true }
+        return out
+    }
+
+    /// Where `quote` is in `page` (the page's tokens and the matched token ranges), or nil. The quote is split at
+    /// an ellipsis or a bracketed insertion into parts; all parts together are at least `minimumPart` characters
+    /// and the longest at least half that. Each part's words must equal the page's words in order (a word ends at a
+    /// space; a dash is a word of its own), except that a letters-only word glued to a gap may be completed by it
+    /// ("engine[s]", "[T]he"; not a unit after a number, "10 m[…]"). A number is a whole expression: a part that
+    /// starts with a number (or a sign, or a unit right after a number) may not follow a page word without letters
+    /// (an operator, a symbol, another number: "≥ 10", "10 ± 2", "6.674 30", "5′ 11″") unless a hard boundary is
+    /// between them, and one that starts with a sign may not follow a word with a digit ("2e - 3"); a part that ends
+    /// with a number or a unit after one may not be followed by such a word, nor by "to" and a number (a range).
+    static func match(_ quote: String, in page: String, html: Bool = true) -> (tokens: [Token], ranges: [Range<Int>])? {
         // In a quote, an ellipsis and any bracketed insertion ("[...]", "[…]", "[s]", "[the suit]") are gaps.
         let gap = "\u{1}"
-        var q = normalized(quote, html: false).replacingOccurrences(of: #"\[[^\]]{0,40}\]"#, with: gap, options: .regularExpression)
+        let q = normalized(quote, html: false).replacingOccurrences(of: #"\[[^\]]{0,40}\]"#, with: gap, options: .regularExpression)
             .replacingOccurrences(of: "...", with: gap)
-        q = trimEdges(q)   // a trailing period the page may not have
-        let p = normalized(page, html: html)
+        let p = tokens(normalized(page, html: html))
         let raw = q.components(separatedBy: gap)
-        // A part needs a word boundary on each side, except where a gap is glued to it (no space or punctuation
-        // between) and the glued character is a letter: a word completed in brackets ("engine[s]", "[T]he"). A
-        // number always needs its boundaries ("[…]85 mph" does not match "185 mph").
-        func glued(_ c: Character?) -> Bool { c.map { !" .,;:!?".contains($0) } ?? false }
-        var parts: [(text: String, before: Bool, after: Bool)] = []
+        // Each part: its words, and whether a gap is glued to its first or last word (no space between).
+        struct Part { var words: [Token]; var gluedBefore: Bool; var gluedAfter: Bool; var text: String }
+        var parts: [Part] = []
         for (n, r) in raw.enumerated() {
-            let t = trimEdges(r)
-            guard !t.isEmpty else { continue }
-            let inWordBefore = n > 0 && glued(r.first) && t.first?.isLetter == true
-            let inWordAfter = n < raw.count - 1 && glued(r.last) && t.last?.isLetter == true
-            parts.append((t, !inWordBefore, !inWordAfter))
+            let words = tokens(r)
+            guard !words.isEmpty else { continue }
+            let gb = n > 0 && r.first.map { !" .,;:!?".contains($0) } == true
+            let ga = n < raw.count - 1 && r.last.map { !" .,;:!?".contains($0) } == true
+            parts.append(Part(words: words, gluedBefore: gb, gluedAfter: ga, text: words.map(\.text).joined(separator: " ")))
         }
-        // All parts together at least 16 characters, the longest at least 8 (a bare value is no evidence).
         guard let longest = parts.map(\.text.count).max(), longest >= minimumPart / 2,
               parts.reduce(0, { $0 + $1.text.count }) >= minimumPart else { return nil }
-        // A number is a whole token: "5" is not inside "1.5", ".5" or "-5", and "144" is not inside "1,144", "1 144"
-        // (a grouping space) or "144.5".
-        // A number is a whole expression: the match may not start or end inside one ("10–20", "10±2", "1:30",
-        // "1.5×10^6", "3/4", "1,144", "-5", "€500", "10%", "10m²"). See `numberStarts`, `numberGoesOn`.
-        func boundary(_ i: String.Index, before: Bool, signed: Bool = false, numeric: Bool = false, unitEnd: Bool = false) -> Bool {
-            if before {
-                guard i != p.startIndex else { return true }
-                let j = p.index(before: i), c = p[j]
-                // A signed or decimal-led part ("-3", ".5") may follow a letter or a space, never a digit or a joiner
-                // ("10^-3" is an exponent, "-.5" another value), nor an exponent marker after a digit ("2e-3").
-                if signed {
-                    if c.isNumber || Self.numberStarts.contains(c) { return false }
-                    if c == "e", j != p.startIndex, p[p.index(before: j)].isNumber { return false }
-                    return true
-                }
-                if c.isLetter || c.isNumber { return false }
-                if numeric, Self.numberStarts.contains(c) { return false }
-                return true
+        func isSign(_ t: Token) -> Bool { t.text == "-" || t.text == "+" }
+        // A number, a sign, or a unit right after a number in the quote.
+        func numeric(_ words: [Token], at i: Int, towardInside step: Int) -> Bool {
+            let w = words[i]
+            if w.hasDigit || isSign(w) { return true }
+            let j = i + step
+            return w.hasLetter && j >= 0 && j < words.count && words[j].hasDigit
+        }
+        func bare(_ t: Token) -> Bool { !t.hasLetter }
+        // A letters-only quote word glued to a gap may be completed by it, unless it is a unit after a number.
+        func completable(_ words: [Token], at i: Int, neighbor j: Int) -> Bool {
+            let w = words[i]
+            guard w.text.allSatisfy({ $0.isLetter }) else { return false }
+            return !(j >= 0 && j < words.count && words[j].hasDigit)
+        }
+        func fits(_ part: Part, at s: Int) -> Bool {
+            let w = part.words, last = w.count - 1
+            guard s + last < p.count else { return false }
+            for j in 0...last {
+                let page = p[s + j].text, mine = w[j].text
+                if page == mine { continue }
+                if j == 0, part.gluedBefore, completable(w, at: 0, neighbor: 1), page.hasSuffix(mine) { continue }
+                if j == last, part.gluedAfter, completable(w, at: last, neighbor: last - 1), page.hasPrefix(mine) { continue }
+                return false
             }
-            guard i != p.endIndex else { return true }
-            let c = p[i]
-            if c.isLetter || c.isNumber { return false }
-            let k = p.index(after: i)
-            let next: Character? = k < p.endIndex ? p[k] : nil
-            if numeric {
-                if Self.numberGoesOn.contains(c) { return false }
-                // A decimal, a group, a range or a fraction goes on with a digit ("144.5", "1,144", "10-20", "3/4").
-                if ".,-/:".contains(c), let n = next, n.isNumber || n == "-" || n == "." { return false }
+            // The start: a number may not continue an expression before it.
+            if !part.gluedBefore, s > 0, !p[s].closedBefore, numeric(w, at: 0, towardInside: 1) {
+                let prev = p[s - 1]
+                if bare(prev) { return false }
+                if isSign(w[0]) || w[0].text.first == "+" || w[0].text.first == "-", prev.hasDigit { return false }
+                if w[0].hasDigit, prev.text.last == "e", prev.text.dropLast().last?.isNumber == true { return false }
             }
-            // A unit goes on with a power or a denominator ("10 m^2", "10 m/s").
-            if unitEnd, "^/".contains(c), let n = next, n.isLetter || n.isNumber || n == "-" { return false }
+            // The end: a number may not go on after it.
+            let e = s + last
+            if !part.gluedAfter, e + 1 < p.count, !p[e].closedAfter, numeric(w, at: last, towardInside: -1) {
+                let next = p[e + 1]
+                // A dash goes on with a number only when a number follows it ("10 - 20"); before a word it is
+                // punctuation ("1,050 bhp - the company").
+                let after = e + 2 < p.count ? p[e + 2] : nil
+                let dashBeforeWord = next.text == "-" && !(after.map { $0.hasDigit || $0.text.first == "." || isSign($0) } ?? false)
+                if bare(next), !dashBeforeWord { return false }
+                if next.text == "to", e + 2 < p.count, p[e + 2].hasDigit || isSign(p[e + 2]) { return false }
+            }
             return true
         }
-        var from = p.startIndex
-        var ranges: [Range<String.Index>] = []
-        for (part, needBefore, needAfter) in parts {
-            var search = from
-            var hit: Range<String.Index>? = nil
-            // A sign ("-5") may follow a letter or a space, never a digit; a leading decimal point (".5") neither a
-            // digit nor a sign ("-.5" is another value).
-            let signed = (part.first == "." || part.first == "," || part.first == "-") && part.dropFirst().first?.isNumber == true
-            while let r = p.range(of: part, range: search..<p.endIndex) {
-                if (!needBefore || boundary(r.lowerBound, before: true, signed: signed, numeric: part.first?.isNumber == true))
-                    && (!needAfter || boundary(r.upperBound, before: false, numeric: part.last?.isNumber == true, unitEnd: part.last?.isLetter == true)) { hit = r; break }
-                search = p.index(after: r.lowerBound)
-            }
-            guard let r = hit else { return nil }
-            ranges.append(r); from = r.upperBound
+        var from = 0
+        var ranges: [Range<Int>] = []
+        for (n, part) in parts.enumerated() {
+            // A part glued after the previous part's completed word may start in that same word.
+            let start = n > 0 && part.gluedBefore && parts[n - 1].gluedAfter ? max(0, from - 1) : from
+            guard let s = (start..<max(start, p.count)).first(where: { fits(part, at: $0) }) else { return nil }
+            ranges.append(s..<(s + part.words.count)); from = s + part.words.count
         }
         return (p, ranges)
     }
 
     public static func found(_ quote: String, in page: String, html: Bool = true) -> Bool { match(quote, in: page, html: html) != nil }
 
-    /// Characters right before a number that make it part of a larger expression or qualify it: a decimal point, a
-    /// separator, a sign or range dash, an exponent mark, a fraction bar, a factor, a tolerance, a ratio or time
-    /// colon, a comparison, a currency sign, a percent, a degree, a prime.
-    static let numberStarts: Set<Character> = [".", ",", "-", "^", "/", "\u{2044}", "+", "\u{00D7}", "\u{00B1}", ":", "<", ">",
-        "\u{2264}", "\u{2265}", "~", "\u{2248}", "$", "\u{20AC}", "\u{00A3}", "\u{00A5}", "%", "\u{2030}", "\u{00B0}", "\u{2032}", "\u{2033}"]
-    /// Characters right after a number that always go on with it: an exponent, a fraction bar, a sum, a factor, a
-    /// tolerance, a percent, a per-mille, a degree, a prime (a colon goes on only with a digit, "1:30").
-    static let numberGoesOn: Set<Character> = ["^", "\u{2044}", "+", "\u{00D7}", "\u{00B1}", "%", "\u{2030}", "\u{00B0}", "\u{2032}", "\u{2033}"]
 
     /// A number written with plain spaces between groups of 3 digits ("1 144", "12 500 000"; the first group 1 to 3
     /// digits) is one number ("1,144"), on the page and in the quote: a page may group with plain spaces, and a model
@@ -423,28 +461,15 @@ public enum QuoteCheck {
         return out + ns.substring(from: last)
     }
 
-    /// Spaces and punctuation trimmed from both ends, except a leading decimal point or comma before a digit (".5
-    /// litres" is not "5 litres").
-    static func trimEdges(_ s: String) -> String {
-        let edge = " .,;:!?"
-        var t = Substring(s)
-        while let c = t.last, edge.contains(c) { t = t.dropLast() }
-        while let c = t.first, edge.contains(c) {
-            if (c == "." || c == ","), t.dropFirst().first?.isNumber == true { break }
-            t = t.dropFirst()
-        }
-        return String(t)
-    }
 
     /// Whether the quote, or the page text within 160 characters around it, attributes the figure to its maker or
     /// one person.
     static func attributed(_ quote: String, in page: String) -> Bool {
         guard let m = match(quote, in: page) else { return false }
-        let p = m.page
+        // The quote and about 160 characters (25 words) on either side.
         return m.ranges.contains { r in
-            let lo = p.index(r.lowerBound, offsetBy: -160, limitedBy: p.startIndex) ?? p.startIndex
-            let hi = p.index(r.upperBound, offsetBy: 160, limitedBy: p.endIndex) ?? p.endIndex
-            return String(p[lo..<hi]).range(of: attribution, options: .regularExpression) != nil
+            let lo = max(0, r.lowerBound - 25), hi = min(m.tokens.count, r.upperBound + 25)
+            return m.tokens[lo..<hi].map(\.text).joined(separator: " ").range(of: attribution, options: .regularExpression) != nil
         }
     }
 

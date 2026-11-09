@@ -42,43 +42,34 @@ the MCP server uses), so a run needs no MCP client.
    redirects of its own. Marty reads the final response of curl's header dump
    (informational 1xx blocks skipped; `Location` only from the final block) and
    stops curl itself past its deadline (SIGTERM, then SIGKILL). Marty looks for the source's quote in the page text
-   (scripts, styles, tags and the page's reference marks such as "[3]" or
-   "[edit]" removed; block tags such as table cells and paragraphs separate
-   text, never as a thousands space, and inline tags such as `<span>` join it
-   as it renders; a superscript, `<sup>` or Unicode, is marked "^" and never
-   joins the number before it, so "10³" is not "103"; a vulgar fraction after
-   a digit, also a spaced mixed fraction ("1 ½", "1 1/2"), is "+n/d", so "1½"
-   is "1+1/2", not "11/2"; a signed part never follows an exponent marker
-   after a digit ("2e-3" is not "-3"); a numeric part never
-   starts or ends inside a number joined by a decimal point, separator, sign,
-   "^", "/" or "+" (a signed part never follows one either), so "2 inches"
-   does not match "1½ inches", nor "3 watts" or "-3 seconds" a power of ten; entities decoded, Unicode NFKC, zero-width characters and
-   joiners such as U+2060 removed, case, quote marks, dashes and the spaces
-   around them, and white space unified; trailing punctuation ignored; an
-   ellipsis or a bracketed insertion such as "[…]" or "[s]" in the quote is a
-   gap, so the quote's parts must all be found in order; all parts together at
-   least 16 characters and the longest at least 8, each part matched on word
-   boundaries except where a gap is glued to a letter (a word completed in
-   brackets, "engine[s]", "[T]he"), so a bare "85 mph" is no evidence and
-   neither "85 mph" nor "[…]85 mph" matches "185 mph"; a number is a whole
-   token, so "5" does not match inside "1.5", ".5" or "-5", nor "144" inside
-   "1,144" or "1 144" (a no-break, narrow, thin or plain space before 3 digits
-   groups thousands, on the page and in the quote alike, when the first group
-   is 1 to 3 digits); a leading decimal point
-   is kept (".5 litres" is not "5 litres"), and a part that starts with a sign
-   or a decimal point, "-5 degrees", may follow a letter but not a digit).
-   A number is a whole expression: number operators bind without spaces
-   ("10 ^ 3", "3 / 4", "1 : 30", "10 ± 2", "± .5", "4 + 4", "10 x 20",
-   "2 x .5", "1.5·10^6", "≥ 10", ">= 10", "10 m / s", "10 %"), and a quote's number may not start right after a joiner or
-   qualifier (sign, range dash, "^", "/", "×", "±", ":", a comparison, a
-   currency sign, "%", a degree, a prime) nor end right before a continuation
-   (a decimal, group, range, fraction or time going on with a digit, "^", "×",
-   "±", "+", "%", a degree, a prime), and a unit may not end before a power or
-   a denominator ("10 m" is not "10 m/s" or "10 m²"); named entities
-   (`&minus;`, `&thinsp;`, `&sup3;`, `&frac12;`, `&plusmn;`, `&ge;`, `&euro;`,
-   ...) are decoded first, and a prime after a digit, ASCII or curly, stays a
-   unit mark ("5'11\"" and "5’11”" are 5′11″, not "511") unless a quote mark
-   opened right before the number ("“-5”" is a quoted -5).
+   by words (`QuoteCheck.match`). The text is normalized on the page and in the
+   quote alike: scripts, styles, comments and reference marks ("[3]", "[edit]")
+   removed; block tags (table cells, paragraphs, line breaks) are hard
+   boundaries and inline tags (`<span>`) join text as it renders; `<sup>` and
+   Unicode superscripts become "^" ("10³" is "10^3"), `<sub>` "_"; named and
+   numeric entities decoded (an unknown one is a symbol); NFKC; zero-width
+   characters and joiners such as U+2060 removed; case, quote marks and dashes
+   folded; a prime after a digit, ASCII or curly, stays a unit mark ("5'11\""
+   is 5′11″, not "511") unless a quote mark of the same kind opened right
+   before the number; vulgar and spaced mixed fractions are "+n/d" ("1½" is
+   "1+1/2"); grouping spaces before 3 digits join thousands ("1 144" is
+   "1,144"); number operators bind without spaces ("10 ^ 3", "3 / 4",
+   "10 ± 2", "4 + 4", "10 x 20", "1.5·10^6", "≥ 10", ">= 10", "10 m / s",
+   "10 %"); a dash is a word of its own. An ellipsis or a bracketed insertion
+   such as "[…]" or "[s]" in the quote is a gap: the quote's parts must all be
+   found in order, all together at least 16 characters and the longest at
+   least 8 (a bare "85 mph" is no evidence). Each part's words must equal the
+   page's words, so "85 mph" never matches "185 mph", "5" never "1.5", ".5",
+   "(5)", "$5" or "5%", and "10 m" never "10 m/s"; only a letters-only word
+   glued to a gap may be completed by it ("engine[s]", "[T]he"; not a unit
+   after a number). A number is a whole expression: a part that starts with a
+   number (or a sign, or a unit after a number) may not follow a page word
+   without letters (an operator, a symbol, another number: "≥ 10", "10 ± 2",
+   "6.674 30", "5′ 11″", "− $500") unless a hard boundary is between them, and
+   a signed part never follows a word with a digit ("2e-3" is not "-3"); a
+   part that ends with a number or a unit after one may not be followed by
+   such a word, nor by "to" and a number (a range, "−40 to +85"); a dash
+   before a word is punctuation ("1,050 bhp — the company").
    Each source's date comes only from its fetched page: its publication date
    (HTML comments ignored: its page-level publication meta tag outside
    scripts, styles and templates, by property or
