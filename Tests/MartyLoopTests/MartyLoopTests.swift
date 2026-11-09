@@ -1313,6 +1313,39 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(t.promptBlock.contains("never call such a fact \"not published\""), t.promptBlock)
         let e = FactCheck.Evidence.build(table: t, question: "q", report: nil, model: nil)
         XCTAssertFalse(e.numbers.contains("137"), "an unconfirmed row is no evidence"); XCTAssertTrue(e.numbers.contains("144"))
+
+        // A signed number keeps its word boundary; a spaced dash still folds.
+        XCTAssertTrue(QuoteCheck.found("\u{2212}5 degrees Celsius", in: "<p>It operates at \u{2212}5 degrees Celsius.</p>"))
+        XCTAssertTrue(QuoteCheck.found("the suit - with five engines", in: "<p>the suit -with five engines</p>"))
+        // Date metadata in either attribute order, with any of the names, in single or double quotes.
+        XCTAssertEqual(QuoteCheck.pageDate(#"<meta content="2020-01-02" name="citation_publication_date">"#), "2020-01-02")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<meta content='2021-02-03T00:00' property='og:published_time'>"#), "2021-02-03")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<meta name='dc.date' content='2018/04/05'>"#), "2018-04-05")
+        // A row whose sources were all rejected (UNKNOWN from the parse) is unconfirmed, never "not published"; a row
+        // the model gave as UNKNOWN without sources stays a researched absence.
+        let rejected: [[String: Any]] = [
+            ["id": "F1", "claim": "Thrust of 155 kgf", "value": "155", "label": "CLAIM", "sources": [src("https://x.pages.dev/1", "thrust of 155 kgf", "2020")]],
+            ["id": "F2", "claim": "Peak thrust", "label": "UNKNOWN", "sources": []]]
+        var t2 = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": rejected])))
+        XCTAssertEqual(t2.rows[0].label, .unknown)
+        t2.checkQuotes(fetcher: TestPages(pages: [:], fallback: nil))
+        XCTAssertTrue(t2.rows[0].unconfirmed); XCTAssertFalse(t2.rows[1].unconfirmed)
+        XCTAssertFalse(t2.promptBlock.contains("155"), t2.promptBlock)
+        XCTAssertTrue(t2.promptBlock.contains("Peak thrust"))
+        XCTAssertFalse(FactCheck.Evidence.build(table: t2, question: "q", report: nil, model: nil).numbers.contains("155"))
+    }
+
+    /// ROW lines: repeated ids replace, identical rows are skipped, at most `FactTable.maxRows` are kept.
+    func testPartialRowsDeduplicated() {
+        var rows: [Any] = []
+        ClaudeCLIAdapter.addRow(["id": "F1", "claim": "a"], to: &rows)
+        ClaudeCLIAdapter.addRow(["id": "F1", "claim": "b"], to: &rows)
+        ClaudeCLIAdapter.addRow(["claim": "c"], to: &rows)
+        ClaudeCLIAdapter.addRow(["claim": "c"], to: &rows)
+        XCTAssertEqual(rows.count, 2); XCTAssertEqual((rows[0] as? [String: Any])?["claim"] as? String, "b")
+        for n in 2...30 { ClaudeCLIAdapter.addRow(["id": "F\(n)", "claim": "x"], to: &rows) }
+        XCTAssertEqual(rows.count, FactTable.maxRows)
+        XCTAssertEqual(ClaudeCLIAdapter.withoutRowLines("ROW {\"id\": \"F1\"}\n{\"rows\": []}"), "{\"rows\": []}")
     }
 
     /// Research stopped at its limit: the rows written so far make a partial table, warned about in the receipt and
@@ -1886,6 +1919,20 @@ final class ClaudeAdapterProcessTests: XCTestCase {
         let p = try ClaudeCLIAdapter(model: "m", executable: withRows, timeout: 30).research(system: "s", user: "u", limits: ResearchLimits(maxTurns: 3))
         XCTAssertEqual(p.meta["partial"] as? Bool, true)
         XCTAssertEqual(FactTable.parse(p.text)?.rows.first?.claim, "c")
+        // The CLI's own turn limit: the rows so far, or a limit failure without rows.
+        let maxTurns = #"{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":3}"#
+        let cliLimit = try fake("cat >/dev/null; echo '\(rowText)'; echo '\(maxTurns)'")
+        let c = try ClaudeCLIAdapter(model: "m", executable: cliLimit, timeout: 30).research(system: "s", user: "u", limits: ResearchLimits(maxTurns: 5))
+        XCTAssertEqual(c.meta["partial"] as? Bool, true); XCTAssertEqual(FactTable.parse(c.text)?.rows.count, 1)
+        let cliNone = try fake("cat >/dev/null; echo '\(maxTurns)'")
+        XCTAssertThrowsError(try ClaudeCLIAdapter(model: "m", executable: cliNone, timeout: 30).research(system: "s", user: "u", limits: ResearchLimits(maxTurns: 5))) {
+            XCTAssertEqual(($0 as? AdapterError)?.reason, "adapter.research.turns")
+        }
+        // A final reply with its last ROW line before the table: the table is parsed without it.
+        let mixed = #"{"type":"result","result":"ROW {\"id\": \"F1\", \"claim\": \"c\"}\n{\"needed\": true, \"rows\": [{\"id\": \"F1\", \"claim\": \"c\", \"label\": \"CLAIM\"}, {\"id\": \"F2\", \"claim\": \"d\", \"label\": \"CLAIM\"}]}","is_error":false}"#
+        let mixedExe = try fake("cat >/dev/null; echo '\(rowText)'; printf '%s\\n' '\(mixed)'")
+        let m = try ClaudeCLIAdapter(model: "m", executable: mixedExe, timeout: 30).research(system: "s", user: "u", limits: ResearchLimits(maxTurns: 5))
+        XCTAssertNil(m.meta["partial"]); XCTAssertEqual(FactTable.parse(m.text)?.rows.count, 2, m.text)
         let many = try fake("cat >/dev/null; for i in 1 2 3 4 5 6; do echo '\(use)'; done; sleep 20; echo '\(result)'")
         XCTAssertThrowsError(try ClaudeCLIAdapter(model: "m", executable: many, timeout: 30).research(system: "s", user: "u", limits: ResearchLimits(maxTurns: 3))) {
             XCTAssertEqual(($0 as? AdapterError)?.reason, "adapter.research.turns")

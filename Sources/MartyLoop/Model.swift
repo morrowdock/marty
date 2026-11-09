@@ -140,6 +140,23 @@ public struct ClaudeCLIAdapter: ModelAdapter {
         return out
     }
 
+    /// Adds a ROW to the partial table: a row with the id of an earlier one replaces it, an identical row is skipped,
+    /// and at most `FactTable.maxRows` distinct rows are kept.
+    static func addRow(_ row: Any, to rows: inout [Any]) {
+        let id = (row as? [String: Any])?["id"] as? String
+        if let id, let n = rows.firstIndex(where: { ($0 as? [String: Any])?["id"] as? String == id }) { rows[n] = row; return }
+        func data(_ o: Any) -> Data? { try? JSONSerialization.data(withJSONObject: o, options: [.sortedKeys]) }
+        let d = data(row)
+        if rows.contains(where: { data($0) == d }) { return }
+        if rows.count < FactTable.maxRows { rows.append(row) }
+    }
+
+    /// The text without its ROW lines (the final table is parsed from the rest).
+    static func withoutRowLines(_ text: String) -> String {
+        text.split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("ROW ") }.joined(separator: "\n")
+    }
+
     static func webToolUses(_ o: [String: Any]) -> [String: Int] {
         guard o["type"] as? String == "assistant",
               let content = (o["message"] as? [String: Any])?["content"] as? [[String: Any]] else { return [:] }
@@ -210,7 +227,7 @@ public struct ClaudeCLIAdapter: ModelAdapter {
             guard let o = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { return }
             for (k, v) in Self.webToolUses(o) { box.counts[k, default: 0] += v; box.toolUses += v }
             if o["type"] as? String == "result" { box.result = line }
-            for row in Self.rowLines(o) where box.rows.count < 20 { box.rows.append(row) }
+            for row in Self.rowLines(o) { Self.addRow(row, to: &box.rows) }
             if box.toolUses > limit, !box.overBudget { box.overBudget = true; if p.isRunning { p.terminate() } }
         }
         let observe: ((Data) -> Void)? = toolLimit.map { limit in { d in
@@ -253,13 +270,17 @@ public struct ClaudeCLIAdapter: ModelAdapter {
         if let limit = toolLimit, !box.line.isEmpty, !box.lineTooLong { handle(box.line, limit: limit) }
         let out = box.out, err = box.err, overBudget = box.overBudget, streamCounts = box.counts, streamResult = box.result, streamRows = box.rows
         lock.unlock()
+        // The rows the model wrote so far as a partial table (the call hit a limit or its final table is unreadable).
+        func partial(_ why: String) -> ModelReply {
+            let text = String(decoding: (try? JSONSerialization.data(withJSONObject: ["needed": true, "rows": streamRows])) ?? Data(), as: UTF8.self)
+            return ModelReply(text: text, seconds: Date().timeIntervalSince(t0),
+                              meta: ["partial": true, "partialCause": why, "exit": Int(p.terminationStatus),
+                                     "webTools": ["web_search_requests": streamCounts["WebSearch"] ?? 0, "web_fetch_requests": streamCounts["WebFetch"] ?? 0]])
+        }
         // Stopped at the limit: the rows the model wrote so far make a partial table; with none, the call failed.
         if overBudget {
             guard !streamRows.isEmpty else { throw AdapterError(reason: "adapter.research.turns", detail: "more than \(toolLimit ?? 0) web tool uses") }
-            let text = String(decoding: (try? JSONSerialization.data(withJSONObject: ["needed": true, "rows": streamRows])) ?? Data(), as: UTF8.self)
-            return ModelReply(text: text, seconds: Date().timeIntervalSince(t0),
-                              meta: ["partial": true, "exit": Int(p.terminationStatus),
-                                     "webTools": ["web_search_requests": streamCounts["WebSearch"] ?? 0, "web_fetch_requests": streamCounts["WebFetch"] ?? 0]])
+            return partial("web tool limit")
         }
         // A research call's stream: the web tool uses counted from its events, the result from its last "result" event.
         var counted: [String: Int]? = nil
@@ -280,10 +301,25 @@ public struct ClaudeCLIAdapter: ModelAdapter {
             }
         }
         if let counted { meta["webTools"] = ["web_search_requests": counted["WebSearch"] ?? 0, "web_fetch_requests": counted["WebFetch"] ?? 0] }
+        if tools != nil {
+            // The CLI's own turn limit ends a research call like Marty's limit: the rows so far, or a limit failure.
+            let subtype = env["subtype"] as? String ?? ""
+            if subtype == "error_max_turns" {
+                guard !streamRows.isEmpty else { throw AdapterError(reason: "adapter.research.turns", detail: "the CLI turn limit (\(toolLimit ?? 0))") }
+                return partial("turn limit")
+            }
+            if (env["is_error"] as? Bool) == true, !streamRows.isEmpty { return partial("error") }
+        }
         if (env["is_error"] as? Bool) == true {
             throw AdapterError(reason: "adapter.error", detail: String((env["result"] as? String ?? "").prefix(400)))
         }
-        return ModelReply(text: env["result"] as? String ?? "", seconds: seconds, meta: meta)
+        var text = env["result"] as? String ?? ""
+        if tools != nil {
+            // ROW lines before the final table are not part of it; an unreadable final table falls back to the rows.
+            text = Self.withoutRowLines(text)
+            if ReplyJSON.object(text) == nil, !streamRows.isEmpty { return partial("final table unreadable") }
+        }
+        return ModelReply(text: text, seconds: seconds, meta: meta)
     }
 }
 

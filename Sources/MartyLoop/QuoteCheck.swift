@@ -206,8 +206,10 @@ public enum QuoteCheck {
         // Quote marks are dropped on both sides: a page that quotes a figure ("'1,050 bhp'") still matches.
         t = t.replacingOccurrences(of: #"['"`]"#, with: "", options: .regularExpression)
         t = t.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-        // Spaces around a dash vary ("suit—with", "suit - with"): none on both sides.
-        t = t.replacingOccurrences(of: #" ?- ?"#, with: "-", options: .regularExpression)
+        // Spaces around a dash vary ("suit—with", "suit - with"): none on both sides; but a sign ("at -5") keeps the
+        // space before it, so the number still starts a word.
+        t = t.replacingOccurrences(of: #" ?- "#, with: "-", options: .regularExpression)
+            .replacingOccurrences(of: #" -(?![0-9])"#, with: "-", options: .regularExpression)
         // A removed tag leaves a space before punctuation ("derail ."); drop it on both sides.
         t = t.replacingOccurrences(of: #" ([.,;:!?)\]])"#, with: "$1", options: .regularExpression)
             .replacingOccurrences(of: #"([(\[]) "#, with: "$1", options: .regularExpression)
@@ -285,10 +287,11 @@ public enum QuoteCheck {
     /// The page's publication date (YYYY-MM-DD) from its metadata: JSON-LD datePublished, the article:published_time
     /// or date meta tags, or the first <time datetime>; nil when the page states none.
     static func pageDate(_ html: String) -> String? {
+        let names = #"(?:article:published_time|og:published_time|date|dc\.date|dc\.date\.issued|citation_publication_date|pubdate)"#
         let patterns = [#""datePublished"\s*:\s*"(\d{4}-\d{2}-\d{2})"#,
-                        #"(?i)<meta[^>]+(?:property|name)="(?:article:published_time|og:published_time|date|dc\.date|citation_publication_date|pubdate)"[^>]+content="(\d{4}[-/]\d{2}[-/]\d{2})"#,
-                        #"(?i)<meta[^>]+content="(\d{4}[-/]\d{2}[-/]\d{2})[^"]*"[^>]+(?:property|name)="(?:article:published_time|date|pubdate)""#,
-                        #"(?i)<time[^>]+datetime="(\d{4}-\d{2}-\d{2})"#]
+                        #"(?i)<meta[^>]+(?:property|name)=["']"# + names + #"["'][^>]+content=["'](\d{4}[-/]\d{2}[-/]\d{2})"#,
+                        #"(?i)<meta[^>]+content=["'](\d{4}[-/]\d{2}[-/]\d{2})[^"']*["'][^>]+(?:property|name)=["']"# + names + #"["']"#,
+                        #"(?i)<time[^>]+datetime=["'](\d{4}-\d{2}-\d{2})"#]
         for p in patterns {
             guard let re = try? NSRegularExpression(pattern: p) else { continue }
             let ns = html as NSString
@@ -346,7 +349,9 @@ extension FactTable {
             // No found quote: UNKNOWN, also when every source was dropped. A row the model gave as PLAUSIBLE with no
             // source at all (a class inference) stays PLAUSIBLE.
             let inference = before == .plausible && rows[n].sources.isEmpty && rows[n].dropped == 0
-            if foundSites.isEmpty, !inference, before != .unknown {
+            // A row whose sources were all rejected (UNKNOWN from the parse) is unconfirmed too, not "not published";
+            // only a row the model itself gave as UNKNOWN with no source rejected is a researched absence.
+            if foundSites.isEmpty, !inference, before != .unknown || rows[n].dropped > 0 || !rows[n].sources.isEmpty {
                 after = .unknown
                 // Not confirmed is not "not published": the row is left out of the author's table.
                 rows[n].unconfirmed = true

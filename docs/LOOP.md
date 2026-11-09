@@ -45,19 +45,23 @@ the MCP server uses), so a run needs no MCP client.
    (scripts, styles, tags and the page's reference marks such as "[3]" or
    "[edit]" removed, entities decoded, Unicode NFKC, zero-width characters and
    joiners such as U+2060 removed, case, quote marks, dashes and the spaces
-   around them, and white space unified; trailing punctuation ignored; an
+   around them (a minus sign keeps the space before it, so "at -5" still
+   starts a word), and white space unified; trailing punctuation ignored; an
    ellipsis or a bracketed insertion such as "[…]" or "[s]" in the quote is a
    gap, so the quote's parts must all be found in order; each part at least 8
    characters and all parts together at least 16, matched on word boundaries,
    so a bare "85 mph" is no evidence and does not match "185 mph"). A found
-   page's publication date (its JSON-LD or meta date, or its first `<time>`)
+   page's publication date (its JSON-LD or meta date in either attribute order
+   and either quote style, or its first `<time>`)
    replaces the model's source date (the change is listed in `downgrades`). The site that counts is the one the page finally came
    from (a redirect to a blocked or free hosting site fails). Each source records its `check` ("quote found", "quote not found",
    "page failed (404)", "not checked (budget)"). A row with no found quote is
    UNKNOWN (no value; its sources stay as notes) and `unconfirmed`: it is left
    out of the author's table, which says that such rows exist and must never be
    called "not published", and it is no evidence for `fact.unsourced`; a row is
-   also UNKNOWN when every source it gave was dropped; a VERIFIED row needs found quotes on two sites and no found
+   also UNKNOWN and `unconfirmed` when every source it gave was dropped (only a
+   row the model itself gave as UNKNOWN without sources is a researched
+   absence, "not published"); a VERIFIED row needs found quotes on two sites and no found
    quote whose text or page text within 160 characters attributes the figure
    to its maker or one person ("claims", "according to", "the company", ...),
    else it is a CLAIM. The prompt also says that a maker's figure stays a CLAIM when
@@ -73,8 +77,12 @@ the MCP server uses), so a run needs no MCP client.
    JSON, counts each WebSearch and WebFetch use, keeps the last top-level
    result event, and stops the call when it goes over
    `--research-turns`. The research prompt asks the model to write each fact
-   as soon as it confirms it, as a line `ROW {...}`; when the call is stopped at
-   the limit, those rows make a partial table (`partial`, a `warning` in the
+   as soon as it confirms it, as a line `ROW {...}` (a later row with the same
+   id replaces an earlier one, an identical row is skipped, at most 20 kept);
+   ROW lines in the final reply are not part of its table. When the call is
+   stopped at Marty's limit or the CLI's own turn limit (`error_max_turns`),
+   ends in an error, or its final table is unreadable, those rows make a
+   partial table (`partial`, a `warning` in the
    receipt, and a line in the plan and author prompts that the table is
    partial); with no row written there is no table and the same warning
    (`adapter.research.turns`; then there is no table). The receipt's `research`
