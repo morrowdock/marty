@@ -410,11 +410,11 @@ public enum QuoteCheck {
         return inOrder ? ordered : Array(Set(ordered + MartyLoop.numbers(quote)))
     }
 
-    /// Whether `quote` states the count `headline` of the row's counted thing (`entities`: the words of its value
-    /// and claim) in words that are no cardinal: an ordinal ("a fifth engine" is 5), or for 1 an article, "single"
-    /// or "sole" ("a rear jet engine"), for 2 "both", "either", "pair" or "twin" ("either side"). The word must come
-    /// within three words before one of the row's words ("a housing with five rotors" states no 1 rotor; "first
-    /// flight" no count of engines).
+    /// Whether `quote` states the count `headline` of the row's counted thing (`entities`, see `countedWords`) in
+    /// words that are no cardinal: an ordinal ("a fifth engine" is 5), or for 1 an article, "single" or "sole" ("a
+    /// rear jet engine"), for 2 "both", "either", "pair" or "twin" ("either side"). The cue must come within three
+    /// words before the counted noun, with no number between ("a five-engine suit" states no 1; "a housing with five
+    /// rotors" no 1 rotor; "first flight" no count of engines).
     static func statesCountWord(_ headline: String, _ quote: String, entities: Set<String>) -> Bool {
         let cue: Set<String>
         switch headline {
@@ -422,21 +422,36 @@ public enum QuoteCheck {
         case "2": cue = ["both", "either", "pair", "twin"]
         default: cue = []
         }
-        func stem(_ w: String) -> String { w.count > 3 && w.hasSuffix("s") ? String(w.dropLast()) : w }
-        let words = quote.lowercased().split { !$0.isLetter }.map(String.init)
-        let wanted = Set(entities.map(stem))
+        let words = quote.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
+        let wanted = Set(entities.map(singular))
         guard !wanted.isEmpty else { return false }
         for (i, w) in words.enumerated() where cue.contains(w) || ordinals[w] == headline {
             if i > 0, words[i - 1] == "one", w != "a" { continue }   // "one of five" is no count
-            if words[(i + 1)..<min(words.count, i + 4)].contains(where: { wanted.contains(stem($0)) }) { return true }
+            for j in (i + 1)..<min(words.count, i + 4) {
+                let x = words[j]
+                if x.first?.isNumber == true || numberWords[x] != nil || ordinals[x] != nil { break }   // another count first
+                if wanted.contains(singular(x)) { return true }
+            }
         }
         return false
     }
 
-    /// The words that name a row's counted thing: the letters words of its value and claim, without filler.
+    /// A plural noun as its singular ("batteries" battery, "boxes" box, "engines" engine).
+    static func singular(_ w: String) -> String {
+        if w.count > 4, w.hasSuffix("ies") { return String(w.dropLast(3)) + "y" }
+        if w.count > 4, ["sses", "xes", "ches", "shes", "zes"].contains(where: { w.hasSuffix($0) }) { return String(w.dropLast(2)) }
+        if w.count > 3, w.hasSuffix("s"), !w.hasSuffix("ss") { return String(w.dropLast()) }
+        return w
+    }
+
+    /// The row's counted noun: the words of its value after the number ("1 rear engine": rear, engine), or else the
+    /// first content word of its claim ("Engine count for the jet suit": engine), never the product or context words.
     static func countedWords(value: String, claim: String) -> Set<String> {
-        let filler: Set<String> = ["the", "and", "with", "for", "per", "its", "of", "on", "in", "a", "an", "number", "count", "total", "each"]
-        return Set((value + " " + claim).lowercased().split { !$0.isLetter }.map(String.init).filter { $0.count >= 3 && !filler.contains($0) })
+        let filler: Set<String> = ["the", "and", "with", "for", "per", "its", "of", "on", "in", "a", "an", "number", "count", "total", "each",
+                                   "how", "many", "there", "are", "is"]
+        let valueWords = value.lowercased().split { !$0.isLetter }.map(String.init).filter { $0.count >= 3 && !filler.contains($0) }
+        if !valueWords.isEmpty { return Set(valueWords) }
+        return Set(claim.lowercased().split { !$0.isLetter }.map(String.init).filter { $0.count >= 3 && !filler.contains($0) }.prefix(1))
     }
 
     /// The value of a Roman numeral (i to mmmcmxcix), or nil.

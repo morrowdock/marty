@@ -217,7 +217,7 @@ public final class MartyLoop {
     static let denials = #"(?i)\b(?:does not|doesn't|do not|don't|cannot|can't|can not|is not|isn't|not)\s+(?:\w+\s+){0,2}(?:show|shown|depict|depicted|model|modelled|modeled|animate|animated)\b|\bnot a (?:steering|turning|moving|tilting)\b|\bheld still\b|\bonly (?:shows|models) the hover\b|\bshows the hover, not\b"#
     /// Motion words: a denial counts only when it is about a motion ("does not show steering"), not about scale,
     /// airflow or the board.
-    static let motionWords = #"(?i)\b(steer\w*|turn\w*|tilt\w*|mov\w*|motion|raise\w*|rais\w*|lift\w* (?:an|one|the|its) arm|pose\w*|rotat\w*|arm|arms|lean\w*|swivel\w*|pivot\w*|bank\w*|yaw\w*|roll\w*|pitch\w*)\b|\bheld still\b"#
+    static let motionWords = #"(?i)\b(steer\w*|turning|turns|turned|tilt\w*|moving|moves|moved|movement|motion|rais(?:e|es|ed|ing)|lift(?:s|ed|ing)? (?:an|one|the|its|his|her) arm|pos(?:e|es|ed|ing)|rotat\w*|lean(?:s|ed|ing)?|swivel\w*|pivot\w*|bank(?:s|ed|ing)|yaw\w*)\b|\bheld still\b"#
 
     /// The document with every non-integer number in a board table's cells written as text, so the engine shows it
     /// with every published digit (85.06, not its rounded 85.1).
@@ -985,11 +985,13 @@ extension MartyLoop {
         guard var answer = first?.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
         // A beat or step number that names a view of the model ("beat 4 shows this") is no fact.
         func withoutViewRefs(_ t: String) -> String {
-            guard views > 0, let re = try? NSRegularExpression(pattern: #"(?i)\b(beats?|steps?)\s+(\d+)\b"#) else { return t }
+            // ("beat 4", "beats 2 and 3", "steps 2-4", "beats 1, 2 and 5")
+            guard views > 0, let re = try? NSRegularExpression(pattern: #"(?i)\b(beats?|steps?)\s+(\d+(?:\s*(?:,|and|or|to|-|\x{2013})\s*\d+)*)\b"#) else { return t }
             let ns = t as NSString
             var out = t
             for m in re.matches(in: t, range: NSRange(location: 0, length: ns.length)).reversed() {
-                if let n = Int(ns.substring(with: m.range(at: 2))), (1...views).contains(n) {
+                let nums = Self.numbers(ns.substring(with: m.range(at: 2))).compactMap { Int($0) }
+                if !nums.isEmpty, nums.allSatisfy({ (1...views).contains($0) }) {
                     out = (out as NSString).replacingCharacters(in: m.range, with: ns.substring(with: m.range(at: 1)))
                 }
             }
@@ -1003,9 +1005,17 @@ extension MartyLoop {
             return (c, (Self.unsourcedSentences(text, sources: sources) + d).filter { !c.contains($0) })
         }
         // An answer may not deny a motion that a posed view of the model shows: one repair with the posed views.
+        // A denial counts when a motion action is in its own clause ("does not show steering"; not "the arm
+        // engines' airflow is not modelled").
         func denials(_ text: String) -> [String] {
-            posed.isEmpty ? [] : Self.sentences(text).filter {
-                $0.range(of: Self.denials, options: .regularExpression) != nil && $0.range(of: Self.motionWords, options: .regularExpression) != nil
+            guard !posed.isEmpty, let dre = try? NSRegularExpression(pattern: Self.denials) else { return [] }
+            return Self.sentences(text).filter { sentence in
+                for clause in sentence.components(separatedBy: CharacterSet(charactersIn: ",;:")) {
+                    let cns = clause as NSString
+                    if dre.firstMatch(in: clause, range: NSRange(location: 0, length: cns.length)) != nil,
+                       clause.range(of: Self.motionWords, options: .regularExpression) != nil { return true }
+                }
+                return false
             }
         }
         let denied = denials(answer)

@@ -1372,6 +1372,11 @@ final class MartyLoopTests: XCTestCase {
             .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &honest)
         XCTAssertEqual(honestAnswer, "The real suit is not shown to scale, and the engine does not model airflow. Beat 2 shows this.")
         XCTAssertNil(honest["answerPosedLint"]); XCTAssertNil(honest["answerLint"])
+        var airflow: [String: Any] = [:]
+        _ = try MartyLoop(model: ScriptedAdapter(replies: ["The arm engines' airflow is not modelled. The turn mechanism's airflow is not modelled either. Beats 1 and 2 show the suit."]),
+                          out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &airflow)
+        XCTAssertNil(airflow["answerPosedLint"]); XCTAssertNil(airflow["answerLint"])
 
         // Short quotes; counts written as ordinals, articles and pairs.
         var rows = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [
@@ -1387,6 +1392,10 @@ final class MartyLoopTests: XCTestCase {
             ["id": "F2", "claim": "Rotors", "value": "1", "label": "CLAIM", "sources": [["url": "https://a.org/8", "publisher": "A", "date": "2021", "quote": "It completed its first flight in 2017"]]]]])))
         loose.checkQuotes(fetcher: TestPages(pages: ["https://a.org/8": "<p>The product uses a housing with five rotors. It completed its first flight in 2017.</p>"], fallback: nil))
         XCTAssertTrue(loose.rows[0].unconfirmed); XCTAssertTrue(loose.rows[1].unconfirmed)
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "It is a five-engine jet suit designed for flight", entities: QuoteCheck.countedWords(value: "1", claim: "Engine count")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "a jet suit powered by five miniature engines", entities: QuoteCheck.countedWords(value: "1", claim: "Engine count for the jet suit")))
+        XCTAssertTrue(QuoteCheck.statesCountWord("2", "Both battery packs are mounted at the rear", entities: QuoteCheck.countedWords(value: "2", claim: "Batteries")))
+        XCTAssertTrue(QuoteCheck.statesCountWord("1", "it has a rear jet engine", entities: QuoteCheck.countedWords(value: "1 rear engine", claim: "Rear engine")))
         XCTAssertEqual(rows.rows[3].sources[0].check, "quote too short to check")
     }
 
