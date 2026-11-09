@@ -235,6 +235,8 @@ public enum QuoteCheck {
         // Plain-space thousands groups ("1 144") are one number on the page and in the quote alike; a block mark
         // with its spaces is one mark, never a grouping space, then a space.
         t = t.replacingOccurrences(of: "[ \u{2}]*\u{2}[ \u{2}]*", with: "\u{2}", options: .regularExpression)
+        // A spaced mixed fraction ("1 1/2", "1 ½") is one number, as "1½" is: "1+1/2".
+        t = t.replacingOccurrences(of: #"(?<![0-9.,/])([0-9]+) ([0-9]+/[0-9]+)(?![0-9/])"#, with: "$1+$2", options: .regularExpression)
         t = groupedThousands(t)
         t = t.replacingOccurrences(of: "\u{2}", with: " ")
         t = t.replacingOccurrences(of: #" ?- ?"#, with: "-", options: .regularExpression)
@@ -328,7 +330,12 @@ public enum QuoteCheck {
                 let j = p.index(before: i), c = p[j]
                 // A signed or decimal-led part ("-3", ".5") may follow a letter or a space, never a digit or another
                 // joiner ("10^-3" is an exponent, "-.5" another value).
-                if signed { return !c.isNumber && !Self.numberJoiners.contains(c) }
+                if signed {
+                    if c.isNumber || Self.numberJoiners.contains(c) { return false }
+                    // Nor an exponent marker after a digit ("2e-3" is 0.002).
+                    if c == "e", j != p.startIndex, p[p.index(before: j)].isNumber { return false }
+                    return true
+                }
                 if c.isLetter || c.isNumber { return false }
                 // A sign, a decimal point, a separator, an exponent mark or a fraction bar right before a number is
                 // part of it ("-5", ".5", "1,144", "10^3", "1+1/2", "3/4"): a quote without it is a different value.
@@ -476,9 +483,10 @@ public enum QuoteCheck {
         for page in pages {
             guard let me = page["mainEntity"] else { continue }
             for e in (me as? [Any]) ?? [me] {
-                if let inline = e as? [String: Any], isArticle(inline) { named.append(inline); continue }
+                // A reference (also a typed stub with an @id) resolves to the graph's object first.
                 let ref = (e as? String) ?? ((e as? [String: Any])?["@id"] as? String)
-                if let ref, let a = articles.first(where: { $0["@id"] as? String == ref }) { named.append(a) }
+                if let ref, let a = articles.first(where: { $0["@id"] as? String == ref }) { named.append(a); continue }
+                if let inline = e as? [String: Any], isArticle(inline) { named.append(inline) }
             }
         }
         // The same article named twice (by @id, or the same inline object) is one.

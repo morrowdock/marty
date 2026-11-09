@@ -47,7 +47,9 @@ the MCP server uses), so a run needs no MCP client.
    text, never as a thousands space, and inline tags such as `<span>` join it
    as it renders; a superscript, `<sup>` or Unicode, is marked "^" and never
    joins the number before it, so "10³" is not "103"; a vulgar fraction after
-   a digit is "+n/d", so "1½" is "1+1/2", not "11/2"; a numeric part never
+   a digit, also a spaced mixed fraction ("1 ½", "1 1/2"), is "+n/d", so "1½"
+   is "1+1/2", not "11/2"; a signed part never follows an exponent marker
+   after a digit ("2e-3" is not "-3"); a numeric part never
    starts or ends inside a number joined by a decimal point, separator, sign,
    "^", "/" or "+" (a signed part never follows one either), so "2 inches"
    does not match "1½ inches", nor "3 watts" or "-3 seconds" a power of ten; entities decoded, Unicode NFKC, zero-width characters and

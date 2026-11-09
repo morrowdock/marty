@@ -1344,6 +1344,7 @@ final class MartyLoopTests: XCTestCase {
         // The page's own article: by mainEntity, never a related article; ambiguous gives none.
         let graph = ##"<script type="application/ld+json">{"@graph": [{"@type": "NewsArticle", "@id": "#rel", "datePublished": "2017-01-01"}, {"@type": "NewsArticle", "@id": "#main", "datePublished": "2026-11-01"}, {"@type": "WebPage", "mainEntity": {"@id": "#main"}}]}</script>"##
         XCTAssertEqual(QuoteCheck.pageDate(graph), "2026-11-01")
+        XCTAssertEqual(QuoteCheck.pageDate(graph.replacingOccurrences(of: ##""mainEntity": {"@id": "#main"}"##, with: ##""mainEntity": {"@type": "Article", "@id": "#main"}"##)), "2026-11-01", "a typed stub resolves")
         XCTAssertNil(QuoteCheck.pageDate(#"<script type="application/ld+json">[{"@type": "NewsArticle", "datePublished": "2017-01-01"}, {"@type": "NewsArticle"}]</script>"#), "two articles, no owner named")
         XCTAssertEqual(QuoteCheck.pageDate(#"<script type="application/ld+json">[{"@type": "NewsArticle", "datePublished": "2017-01-01"}, {"@type": "Article", "mainEntityOfPage": "https://a.org/x", "datePublished": "2021-03-03"}]</script>"#), "2021-03-03")
         XCTAssertNil(QuoteCheck.pageDate(#"<script type="application/ld+json">{"@type": "CollectionPage", "mainEntity": [{"@type": "Article", "datePublished": "2017-01-01"}, {"@type": "Article", "datePublished": "2018-01-01"}]}</script>"#), "two named articles")
@@ -1387,6 +1388,13 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertFalse(QuoteCheck.found("Power density [...] 3 watts per kilogram", in: "<p>Power density is 10\u{00B3} watts per kilogram</p>"))
         XCTAssertFalse(QuoteCheck.found("Power density is 10 watts per kilogram", in: "<p>Power density is 10\u{00B3} watts per kilogram</p>"))
         XCTAssertFalse(QuoteCheck.found("a gear ratio of 3", in: "<p>a gear ratio of 3/4 at the output</p>"))
+        XCTAssertFalse(QuoteCheck.found("-3 volts under load", in: "<p>The output is 2e-3 volts under load.</p>"))
+        XCTAssertFalse(QuoteCheck.found("-3 volts under load", in: "<p>The output is 2E-3 volts under load.</p>"))
+        XCTAssertTrue(QuoteCheck.found("the bath is kept at -3 degrees", in: "<p>The bath is kept at -3 degrees</p>"))
+        XCTAssertFalse(QuoteCheck.found("1/2 inches in diameter", in: "<p>The shaft measures 1 \u{00BD} inches in diameter.</p>"))
+        XCTAssertFalse(QuoteCheck.found("1/2 inches in diameter", in: "<p>The shaft measures 1 1/2 inches in diameter.</p>"))
+        XCTAssertTrue(QuoteCheck.found("The shaft measures 1 1/2 inches", in: "<p>The shaft measures 1\u{00BD} inches.</p>"))
+        XCTAssertTrue(QuoteCheck.found("the shaft is 1/2 inches in diameter", in: "<p>The shaft is 1/2 inches in diameter.</p>"))
         XCTAssertFalse(QuoteCheck.found("-3 seconds under nominal load", in: "<p>Response time is 10\u{207B}\u{00B3} seconds under nominal load.</p>"))
         XCTAssertFalse(QuoteCheck.found("Response time is 10 seconds", in: "<p>Response time is 10\u{207B}\u{00B3} seconds</p>"))
         XCTAssertFalse(QuoteCheck.found("The output is 10", in: "<p>The output is 10\u{207A}\u{2076} watts</p>"))
