@@ -206,10 +206,9 @@ public enum QuoteCheck {
         // Quote marks are dropped on both sides: a page that quotes a figure ("'1,050 bhp'") still matches.
         t = t.replacingOccurrences(of: #"['"`]"#, with: "", options: .regularExpression)
         t = t.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-        // Spaces around a dash vary ("suit—with", "suit - with"): none on both sides; but a sign ("at -5") keeps the
-        // space before it, so the number still starts a word.
-        t = t.replacingOccurrences(of: #" ?- "#, with: "-", options: .regularExpression)
-            .replacingOccurrences(of: #" -(?![0-9])"#, with: "-", options: .regularExpression)
+        // Spaces around a dash vary ("suit—with", "suit - with", "at − 5"): none on either side. A quote part that
+        // starts with a sign ("-5 degrees") is matched after a letter but not after a digit (see `match`).
+        t = t.replacingOccurrences(of: #" ?- ?"#, with: "-", options: .regularExpression)
         // A removed tag leaves a space before punctuation ("derail ."); drop it on both sides.
         t = t.replacingOccurrences(of: #" ([.,;:!?)\]])"#, with: "$1", options: .regularExpression)
             .replacingOccurrences(of: #"([(\[]) "#, with: "$1", options: .regularExpression)
@@ -241,27 +240,47 @@ public enum QuoteCheck {
     public static let minimumPart = 16
 
     /// Where `quote` is in `page` (normalized page text and the matched ranges), or nil: every part of the quote
-    /// (split at an ellipsis), each at least `minimumPart` characters, in order, each starting and ending on a word
-    /// boundary ("85 mph" does not match inside "185 mph").
+    /// (split at an ellipsis or a bracketed insertion) in order, all parts together at least `minimumPart`
+    /// characters and the longest at least half that. A part starts and ends on a word boundary ("85 mph" does not
+    /// match inside "185 mph") at the quote's outer edges and at a gap with a space beside it; a gap inside a word
+    /// ("engine[s]") needs none. A part that starts with a sign ("-5 degrees") may follow a letter, not a digit.
     static func match(_ quote: String, in page: String, html: Bool = true) -> (page: String, ranges: [Range<String.Index>])? {
         // In a quote, an ellipsis and any bracketed insertion ("[...]", "[…]", "[s]", "[the suit]") are gaps.
-        var q = normalized(quote, html: false).replacingOccurrences(of: #"\[[^\]]{0,40}\]"#, with: "...", options: .regularExpression)
+        let gap = "\u{1}"
+        var q = normalized(quote, html: false).replacingOccurrences(of: #"\[[^\]]{0,40}\]"#, with: gap, options: .regularExpression)
+            .replacingOccurrences(of: "...", with: gap)
         q = q.trimmingCharacters(in: CharacterSet(charactersIn: " .,;:!?"))   // a trailing period the page may not have
         let p = normalized(page, html: html)
-        let parts = q.components(separatedBy: "...").map { $0.trimmingCharacters(in: CharacterSet(charactersIn: " .,;:!?")) }.filter { !$0.isEmpty }
-        // Each part is at least 8 characters and all parts together at least 16 (a bare value is no evidence).
-        guard !parts.isEmpty, parts.allSatisfy({ $0.count >= minimumPart / 2 }), parts.reduce(0, { $0 + $1.count }) >= minimumPart else { return nil }
-        func boundary(_ i: String.Index, before: Bool) -> Bool {
-            if before { return i == p.startIndex || !(p[p.index(before: i)].isLetter || p[p.index(before: i)].isNumber) }
+        let edge = CharacterSet(charactersIn: " .,;:!?")
+        let raw = q.components(separatedBy: gap)
+        // Each part with whether it needs a word boundary before and after it.
+        var parts: [(text: String, before: Bool, after: Bool)] = []
+        for (n, r) in raw.enumerated() {
+            let t = r.trimmingCharacters(in: edge)
+            guard !t.isEmpty else { continue }
+            let spacedBefore = n == 0 || r.first.map { $0 == " " } ?? true
+            let spacedAfter = n == raw.count - 1 || r.last.map { $0 == " " } ?? true
+            parts.append((t, spacedBefore, spacedAfter))
+        }
+        // All parts together at least 16 characters, the longest at least 8 (a bare value is no evidence).
+        guard let longest = parts.map(\.text.count).max(), longest >= minimumPart / 2,
+              parts.reduce(0, { $0 + $1.text.count }) >= minimumPart else { return nil }
+        func boundary(_ i: String.Index, before: Bool, signed: Bool = false) -> Bool {
+            if before {
+                guard i != p.startIndex else { return true }
+                let c = p[p.index(before: i)]
+                return signed ? !c.isNumber : !(c.isLetter || c.isNumber)
+            }
             return i == p.endIndex || !(p[i].isLetter || p[i].isNumber)
         }
         var from = p.startIndex
         var ranges: [Range<String.Index>] = []
-        for part in parts {
+        for (part, needBefore, needAfter) in parts {
             var search = from
             var hit: Range<String.Index>? = nil
+            let signed = part.first == "-" && part.dropFirst().first?.isNumber == true
             while let r = p.range(of: part, range: search..<p.endIndex) {
-                if boundary(r.lowerBound, before: true) && boundary(r.upperBound, before: false) { hit = r; break }
+                if (!needBefore || boundary(r.lowerBound, before: true, signed: signed)) && (!needAfter || boundary(r.upperBound, before: false)) { hit = r; break }
                 search = p.index(after: r.lowerBound)
             }
             guard let r = hit else { return nil }
@@ -319,6 +338,16 @@ extension FactTable {
             var attributed = false
             for k in rows[n].sources.indices {
                 let src = rows[n].sources[k]
+                // A source's date comes only from its page: the page's publication date when the page states one,
+                // else none (the model's date is removed; every change is listed).
+                var dateOnPage: String? = nil
+                defer {
+                    let d = dateOnPage ?? ""
+                    rows[n].sources[k].date = d
+                    if !src.date.isEmpty, src.date != d {
+                        downgrades.append("\(rows[n].id): source date \(src.date) " + (d.isEmpty ? "removed (not stated on the page)" : "corrected from the page to \(d)"))
+                    }
+                }
                 guard !src.quote.isEmpty else { rows[n].sources[k].check = "no quote"; continue }
                 guard let url = URL(string: src.url) else { rows[n].sources[k].check = "bad url"; continue }
                 let page: (status: Int, body: String?, final: URL?)
@@ -331,15 +360,11 @@ extension FactTable {
                 if (blocked + FactTable.mirrorHosts).contains(where: { finalHost == $0 || finalHost.hasSuffix("." + $0) }) {
                     rows[n].sources[k].check = "redirected to a blocked site (\(finalHost))"; continue
                 }
+                dateOnPage = QuoteCheck.pageDate(body)
                 if QuoteCheck.found(src.quote, in: body) {
                     rows[n].sources[k].check = "quote found"
                     foundSites.insert(FactTable.site(finalHost))
                     if QuoteCheck.attributed(src.quote, in: body) { attributed = true }
-                    // The source date comes from the page when it states one (its publication date).
-                    if let d = QuoteCheck.pageDate(body), d != src.date {
-                        if !src.date.isEmpty { downgrades.append("\(rows[n].id): source date \(src.date) corrected from the page to \(d)") }
-                        rows[n].sources[k].date = d
-                    }
                 } else {
                     rows[n].sources[k].check = "quote not found"
                 }

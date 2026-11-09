@@ -26,10 +26,14 @@ struct TestPages: PageFetcher {
     var pages: [String: String] = [:]
     var fallback: String? = "It gives a thrust of 150 kgf in total. The wheel has 36 teeth. It gives a thrust of 144 kgf in total. The rated speed is 3000 rpm."
     var finals: [String: String] = [:]
+    /// The publication date the fallback page states (a source's date comes only from its page).
+    var fallbackDates: [String: String] = ["https://example.org/shaft": "2024-01-01"]
+    var fallbackDate = "2020-01-01"
     func fetch(_ url: URL) -> (status: Int, body: String?, final: URL?) {
         let final = finals[url.absoluteString].flatMap(URL.init(string:)) ?? url
         if let p = pages[url.absoluteString] { return (200, p, final) }
-        return fallback.map { (200, $0, final) } ?? (404, nil, nil)
+        let date = fallbackDates[url.absoluteString] ?? fallbackDate
+        return fallback.map { (200, "<meta name=\"date\" content=\"\(date)\">" + $0, final) } ?? (404, nil, nil)
     }
 }
 
@@ -1317,10 +1321,25 @@ final class MartyLoopTests: XCTestCase {
         // A signed number keeps its word boundary; a spaced dash still folds.
         XCTAssertTrue(QuoteCheck.found("\u{2212}5 degrees Celsius", in: "<p>It operates at \u{2212}5 degrees Celsius.</p>"))
         XCTAssertTrue(QuoteCheck.found("the suit - with five engines", in: "<p>the suit -with five engines</p>"))
+        XCTAssertTrue(QuoteCheck.found("\u{2212}5 degrees Celsius", in: "<p>It operates at \u{2212} 5 degrees Celsius.</p>"))
+        XCTAssertFalse(QuoteCheck.found("-5 degrees Celsius", in: "<p>a range of 15-5 degrees Celsius</p>"), "a sign after a digit is a range")
+        // Short parts and gaps inside a word.
+        XCTAssertTrue(QuoteCheck.found("It [\u{2026}] produces 144 kgf of thrust", in: "<p>It produces 144 kgf of thrust.</p>"))
+        XCTAssertTrue(QuoteCheck.found("The engine[s] produce 144 kgf of thrust", in: "<p>The engines produce 144 kgf of thrust.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The engine produce 144 kgf of thrust", in: "<p>The engines produce 144 kgf of thrust.</p>"))
+        XCTAssertFalse(QuoteCheck.found("85 mph [...] 85 mph", in: "<p>85 mph and 85 mph</p>"), "no part of 8 characters")
+        XCTAssertFalse(QuoteCheck.found("of 85 mph", in: "<p>top speed of 185 mph and more</p>"))
         // Date metadata in either attribute order, with any of the names, in single or double quotes.
         XCTAssertEqual(QuoteCheck.pageDate(#"<meta content="2020-01-02" name="citation_publication_date">"#), "2020-01-02")
         XCTAssertEqual(QuoteCheck.pageDate(#"<meta content='2021-02-03T00:00' property='og:published_time'>"#), "2021-02-03")
         XCTAssertEqual(QuoteCheck.pageDate(#"<meta name='dc.date' content='2018/04/05'>"#), "2018-04-05")
+        // A source's date comes only from its page: a matched quote on an undated page loses the model's date.
+        var t3 = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [
+            ["id": "F1", "claim": "Thrust", "value": "144", "label": "CLAIM", "sources": [src("https://a.org/1", "gives a thrust of 144 kgf in total", "2099")]]]])))
+        t3.checkQuotes(fetcher: TestPages(pages: ["https://a.org/1": page], fallback: nil))
+        XCTAssertEqual(t3.rows[0].sources[0].check, "quote found"); XCTAssertEqual(t3.rows[0].sources[0].date, "")
+        XCTAssertTrue(t3.downgrades.contains { $0.contains("source date 2099 removed") }, "\(t3.downgrades)")
+        XCTAssertFalse(FactCheck.Evidence.build(table: t3, question: "q", report: nil, model: nil).numbers.contains("2099"))
         // A row whose sources were all rejected (UNKNOWN from the parse) is unconfirmed, never "not published"; a row
         // the model gave as UNKNOWN without sources stays a researched absence.
         let rejected: [[String: Any]] = [

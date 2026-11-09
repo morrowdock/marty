@@ -45,15 +45,19 @@ the MCP server uses), so a run needs no MCP client.
    (scripts, styles, tags and the page's reference marks such as "[3]" or
    "[edit]" removed, entities decoded, Unicode NFKC, zero-width characters and
    joiners such as U+2060 removed, case, quote marks, dashes and the spaces
-   around them (a minus sign keeps the space before it, so "at -5" still
-   starts a word), and white space unified; trailing punctuation ignored; an
+   around them, and white space unified; trailing punctuation ignored; an
    ellipsis or a bracketed insertion such as "[…]" or "[s]" in the quote is a
-   gap, so the quote's parts must all be found in order; each part at least 8
-   characters and all parts together at least 16, matched on word boundaries,
-   so a bare "85 mph" is no evidence and does not match "185 mph"). A found
-   page's publication date (its JSON-LD or meta date in either attribute order
-   and either quote style, or its first `<time>`)
-   replaces the model's source date (the change is listed in `downgrades`). The site that counts is the one the page finally came
+   gap, so the quote's parts must all be found in order; all parts together at
+   least 16 characters and the longest at least 8, matched on word boundaries
+   at the quote's edges and at a gap with a space beside it (a gap inside a
+   word, "engine[s]", needs none), so a bare "85 mph" is no evidence and does
+   not match "185 mph"; a part that starts with a sign, "-5 degrees", may
+   follow a letter but not a digit). A found
+   Each source's date comes only from its fetched page: its publication date
+   (its JSON-LD or meta date in either attribute order and either quote style,
+   or its first `<time>`), whether or not the quote was found; a page that
+   states none, or a page that was not fetched, leaves the date empty (the
+   model's date is removed; every change is listed in `downgrades`). The site that counts is the one the page finally came
    from (a redirect to a blocked or free hosting site fails). Each source records its `check` ("quote found", "quote not found",
    "page failed (404)", "not checked (budget)"). A row with no found quote is
    UNKNOWN (no value; its sources stay as notes) and `unconfirmed`: it is left
