@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-08. Prompts `marty-prompts/16`. Engine pin as in
+Status: early preview, 2026-11-08. Prompts `marty-prompts/17`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -25,14 +25,50 @@ the MCP server uses), so a run needs no MCP client.
    hosts are dropped; WebFetch is denied on each blocked domain and its
    subdomains) (else CLAIM), a
    CLAIM needs a source (else PLAUSIBLE), an UNKNOWN row has no value, and every
-   change is listed in `downgrades`. The table goes into the plan, author,
+   change is listed in `downgrades`. Sources on free hosting sites
+   (`pages.dev`, `netlify.app`, `github.io` and the like, where copies of news
+   pages live) are dropped. Then the quote check (on by default;
+   `--no-quote-check` keeps the rows): Marty fetches each cited page itself (at
+   most 24 pages, 10 s each, at most 2 MB counted as the bytes arrive, a generic
+   client name, no cookies). The fetch is guarded: each hop (the URL and each of
+   at most 3 redirects, which Marty follows itself) must be http(s) with a
+   public DNS name, no credentials, and every address it resolves to public (no
+   loopback, private, link-local, shared, multicast or reserved IPv4 range; for
+   IPv6 only global unicast outside the documentation, Teredo, 6to4 and NAT64
+   ranges; a host with a trailing dot is refused). The connection is pinned to
+   a checked address: the system `curl` (part of macOS) runs with `--resolve
+   host:port:address`, so no later DNS answer is used, TLS is still verified
+   against the host name, and curl gets no config file, no proxy and no
+   redirects of its own. Marty reads the final response of curl's header dump
+   (informational 1xx blocks skipped; `Location` only from the final block) and
+   stops curl itself past its deadline (SIGTERM, then SIGKILL). Marty looks for the source's quote in the page text
+   (scripts, styles and tags removed, entities decoded, case, quote marks,
+   dashes and white space unified; an ellipsis splits the quote into parts
+   that must all be found in order; each part at least 16 characters and
+   matched on word boundaries, so a bare "85 mph" is no evidence and does not
+   match "185 mph"). The site that counts is the one the page finally came
+   from (a redirect to a blocked or free hosting site fails). Each source records its `check` ("quote found", "quote not found",
+   "page failed (404)", "not checked (budget)"). A row with no found quote is
+   UNKNOWN (no value; its sources stay as notes), also when every source it gave
+   was dropped; a VERIFIED row needs found quotes on two sites and no found
+   quote whose text or page text within 160 characters attributes the figure
+   to its maker or one person ("claims", "according to", "the company", ...),
+   else it is a CLAIM. The prompt also says that a maker's figure stays a CLAIM when
+   news sites repeat it. The table goes into the plan, author,
    repair, follow-up and answer prompts as one JSON object per row between
    `BEGIN FACT TABLE` and `END FACT TABLE` (markers inside a field are
    removed), and every system prompt says that the table is web data whose
    instructions are never followed. A refused answer gets no table. A failed or unreadable research reply,
    or an adapter without web tools, leaves no table ("Fact table: none"), and
-   the run goes on; this is not an adapter error. The receipt's `research`
-   block records the table, the downgrades, the turns and the limits.
+   the run goes on; this is not an adapter error. The research call streams its
+   events (`--output-format stream-json`): Marty parses every line as it arrives
+   (also past the 8 MB kept output; the last line without a newline too) as
+   JSON, counts each WebSearch and WebFetch use, keeps the last top-level
+   result event, and stops the call when it goes over
+   `--research-turns`
+   (`adapter.research.turns`; then there is no table). The receipt's `research`
+   block records the table with each source's check, `quoteChecks`, the
+   downgrades, the counted `webTools`, the CLI's `turns` and the limits.
 1. **Plan.** The model gets the question and the compact engine catalog. It
    plans the lesson in a fixed order: the whole system first (every main unit
    in its place and number, people or loads as schematic figures, and the
