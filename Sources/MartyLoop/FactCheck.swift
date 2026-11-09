@@ -10,14 +10,36 @@ import MartyEngine
     public struct Finding: Equatable {
         public let field: String
         public let token: String
-        public var line: String { "\(field): \"\(token)\" is not in the fact table, the question or the model" }
+        /// "unsourced" (a number, year or version without evidence) or "notPublished" (an absence stated as fact).
+        public var kind = "unsourced"
+        public init(field: String, token: String, kind: String = "unsourced") { self.field = field; self.token = token; self.kind = kind }
+        public var line: String {
+            kind == "notPublished"
+                ? "\(field): says \"\(token)\", but a search that did not find a fact does not show it is unpublished; write \"not found in this search\" or leave it out"
+                : "\(field): \"\(token)\" is not in the fact table, the question or the model"
+        }
+    }
+
+    /// "Not published" and its forms: an absence stated as a fact.
+    static let absence = #"(?i)\b(?:not|never)\s+(?:been\s+|yet\s+|publicly\s+|officially\s+|made\s+)*(?:published|disclosed|released(?:\s+publicly)?|public)\b|\bnot\s+(?:been\s+)?publicly\s+available\b|\bnot\s+made\s+(?:[a-z]+\s+){0,3}public\b|\bunpublished\b|\bundisclosed\b"#
+
+    /// The first absence claim in `text` ("not published", "hasn't been published", "not publicly released", "not
+    /// made public", "unpublished"), with negative contractions read as "not".
+    static func absenceClaim(_ text: String) -> String? {
+        let t = text.replacingOccurrences(of: #"(?i)n['\x{2019}]t\b"#, with: " not", options: .regularExpression)
+        return t.range(of: absence, options: .regularExpression).map { String(t[$0]) }
     }
 
     /// The evidence tokens: numbers (normalized as in `MartyLoop.numbers`) and lower-case version tokens.
     public struct Evidence {
         public var numbers: Set<String>
         public var versions: Set<String>
-        public init(numbers: Set<String> = [], versions: Set<String> = []) { self.numbers = numbers; self.versions = versions }
+        /// Rows whose confirmed found quote itself says a fact is not published: a lesson text may say so only for
+        /// such a row, citing its id (in the text or its "unchecked" note).
+        public var absenceRows: Set<String> = []
+        public init(numbers: Set<String> = [], versions: Set<String> = [], absenceRows: Set<String> = []) {
+            self.numbers = numbers; self.versions = versions; self.absenceRows = absenceRows
+        }
 
         @MainActor public static func build(table: FactTable, question: String, report: [String: Any]?, model: Any?, extra: [String] = []) -> Evidence {
             var texts = [question] + extra
@@ -35,7 +57,10 @@ import MartyEngine
                 nums.formUnion(MartyLoop.numbers(MartyLoop.trimmedDecimal(String(format: "%.2f", 1 / abs(v)))))
             }
             nums.formUnion(sizes(model).flatMap(MartyLoop.numbers))
-            return Evidence(numbers: nums, versions: Set(texts.flatMap(FactCheck.versions)))
+            let absence = Set(table.rows.filter { r in
+                !r.unconfirmed && r.sources.contains { $0.check == "quote found" && FactCheck.absenceClaim($0.quote) != nil }
+            }.map(\.id))
+            return Evidence(numbers: nums, versions: Set(texts.flatMap(FactCheck.versions)), absenceRows: absence)
         }
     }
 
@@ -109,6 +134,11 @@ import MartyEngine
         let versionNumbers = Set(versions(t).compactMap { $0.split(separator: " ").last.map(String.init) })
         for n in tokens where !e.numbers.contains(n) && !versionNumbers.contains(n) {
             out.append(Finding(field: field, token: n))
+        }
+        // "Not published" is a claim about the whole world; a search that missed a fact cannot support it. Only a
+        // confirmed source that itself says so does.
+        if let claim = absenceClaim(text), !citesAbsenceRow(text, e) {
+            out.append(Finding(field: field, token: claim, kind: "notPublished"))
         }
         return out
     }
@@ -207,13 +237,63 @@ import MartyEngine
         let f0 = (format as? [String: Any]) ?? d
         let filled = !(f0["v"] as? Int == 1 && f0["kind"] as? String == "assembly")
         var out: [Finding] = []
-        for f in fields(d) {
-            for x in check(f.field, f.text, evidence, namesOnly: f.namesOnly, placeholders: filled && !f.literal) where !out.contains(x) { out.append(x) }
+        let all = fields(d)
+        for f in all {
+            for x in check(f.field, f.text, evidence, namesOnly: f.namesOnly, placeholders: filled && !f.literal) where !out.contains(x) {
+                // An absence may cite its row in the field's own note (see `noteFields`).
+                if x.kind == "notPublished", all.contains(where: { noteFields(f.field).contains($0.field) && citesAbsenceRow($0.text, evidence) }) { continue }
+                out.append(x)
+            }
             if out.count >= limit { break }
+        }
+        // An "assumed example" label is exempt from the number check, not from the absence rule.
+        for (field, text, note) in exampleTexts(d) where !citesAbsenceRow(text, evidence) && !citesAbsenceRow(note, evidence) {
+            for (f, t) in [(field, text), (field + ".unchecked", note)] {
+                if let claim = absenceClaim(t) {
+                    let x = Finding(field: f, token: claim, kind: "notPublished")
+                    if !out.contains(x) { out.append(x) }
+                }
+            }
         }
         return Array(out.prefix(limit))
     }
 
+    /// The fields that hold the note of field `f`: an annotation's "unchecked", a step's or beat's "unchecked" for its
+    /// say, and a board item's note ("note.<item id>.basis" or ".unchecked") for its cells and texts.
+    static func noteFields(_ f: String) -> Set<String> {
+        var out: Set<String> = [f + ".unchecked"]
+        if f.hasSuffix(".say") { out.insert(String(f.dropLast(4)) + ".unchecked") }
+        if let r = f.range(of: #"([A-Za-z0-9_\-]+)\.(?:r[0-9]+c[0-9]+|text|label|xl|yl|bars|unit|vals|ptrs|xr|yr)(?:[\[.].*)?$"#, options: .regularExpression) {
+            let id = String(f[r].split(separator: ".").first ?? "")
+            out.formUnion(["note.\(id).basis", "note.\(id).unchecked"])
+        }
+        return out
+    }
+
+    /// The texts and notes of "assumed example" annotations (exempt from the number check).
+    static func exampleTexts(_ d: [String: Any]) -> [(String, String, String)] {
+        var out: [(String, String, String)] = []
+        let solid = d["kind"] as? String == "explainer" ? d["solid"] as? [String: Any] ?? [:] : d
+        let ann = solid["annotations"] as? [String: Any] ?? [:]
+        for key in ["labels", "arrows", "dimensions"] {
+            for x in ann[key] as? [[String: Any]] ?? [] {
+                let note = x["unchecked"] as? String ?? ""
+                guard note.lowercased().hasPrefix("assumed example") else { continue }
+                out.append(("annotation.\(x["id"] as? String ?? "?")", x["text"] as? String ?? "", note))
+            }
+        }
+        return out
+    }
+
+    /// Whether `text` cites a row whose confirmed quote says the fact is unpublished ("F3 ...").
+    static func citesAbsenceRow(_ text: String, _ e: Evidence) -> Bool {
+        guard !e.absenceRows.isEmpty, let re = try? NSRegularExpression(pattern: #"\bF[0-9]{1,2}b*\b"#) else { return false }
+        let ns = text as NSString
+        return re.matches(in: text, range: NSRange(location: 0, length: ns.length)).contains { e.absenceRows.contains(ns.substring(with: $0.range)) }
+    }
+
     /// The reason for a refusal: `fact.unsourced.<field>` of the first finding.
-    public static func reason(_ f: [Finding]) -> String? { f.first.map { "fact.unsourced.\($0.field)" } }
+    public static func reason(_ f: [Finding]) -> String? {
+        f.first.map { $0.kind == "notPublished" ? "fact.notPublished.\($0.field)" : "fact.unsourced.\($0.field)" }
+    }
 }

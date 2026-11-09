@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-09. Prompts `marty-prompts/20`. Engine pin as in
+Status: early preview, 2026-11-09. Prompts `marty-prompts/21`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -98,15 +98,24 @@ the MCP server uses), so a run needs no MCP client.
    ("[…]5 degrees" is not "−5 degrees"); a dash before a word is punctuation
    ("1,050 bhp — the company").
    Each source's date comes only from its fetched page: its publication date
-   (HTML comments ignored: its page-level publication meta tag outside
+   (HTML comments ignored: its page-level publication meta
+   tag, also `dcterms.*` and other common names, with a day-first date such as
+   "13-10-2020" read only when the order is unambiguous and impossible dates
+   ignored, outside
    scripts, styles and templates, by property or
    name, in either attribute order and either quote style; else the
    `datePublished` of the page's own JSON-LD article: the one a page object
    names as `mainEntity` (two different named articles are ambiguous), else the one article with `mainEntityOfPage`, else
    the only article, else with no article the only page object; with several
    candidates the owner is unknown and the date stays empty; never a nested one
-   such as a related article's or a comment's; microdata and `<time>` are not
-   read, since their owner is not known), whether or not the quote was found; a page that
+   such as a related article's or a comment's; microdata is not read, since its
+   owner is not known; with no usable metadata, the date the page shows in its
+   dateline under the title: the first `<time>` element's text, or an element
+   marked as a date, dateline, byline or publication line, that holds a date
+   and is not an "updated", "modified" or "related" one (by its attributes, its
+   text, the words right before it or a container around it), within the
+   markup after the first `<h1>` ("October 8, 2020",
+   "09 Apr 2020"; body prose is never read for a date), whether or not the quote was found; a page that
    states none, or a page that was not fetched, leaves the date empty (the
    model's date is removed; every change is listed in `downgrades`). The site that counts is the one the page finally came
    from (a redirect to a blocked or free hosting site fails). Each source records its `check` ("quote found", "quote not found",
@@ -116,7 +125,11 @@ the MCP server uses), so a run needs no MCP client.
    called "not published", and it is no evidence for `fact.unsourced`; a row is
    also UNKNOWN and `unconfirmed` when every source it gave was dropped (only a
    row the model itself gave as UNKNOWN without sources is a researched
-   absence, "not published"); a VERIFIED row needs found quotes on two sites and no found
+   absence, "not found in this search"); a row whose value's first number is in
+   none of its found quotes (number words such as "five" or "twenty-four", as
+   one number, and Roman version numerals such as "Mk IV" count as stated) (a value computed from other figures, such as a
+   ratio of two rows) is also `unconfirmed` and left out; a VERIFIED row needs
+   found quotes on two sites and no found
    quote whose text or page text within 160 characters attributes the figure
    to its maker or one person ("claims", "according to", "the company", ...),
    else it is a CLAIM. The prompt also says that a maker's figure stays a CLAIM when
@@ -158,7 +171,8 @@ the MCP server uses), so a run needs no MCP client.
    question asks how a vehicle, aircraft or flying device flies, lifts or
    hovers, `given` holds its thrust and the weight it lifts. Each entry is in
    the row's wording: VERIFIED plainly, CLAIM as "claimed by <publisher>",
-   PLAUSIBLE as "likely" or "example", UNKNOWN as "not published"; rows are
+   PLAUSIBLE as "likely" or "example", UNKNOWN as "not found in this search"
+   or left out (never "not published"); rows are
    never merged into a range, and the product version and years come from the
    table. When a flight question (a flight word such as fly or hover, or
    lift with a flight context such as jet, drone or wing; "a hydraulic lift" is
@@ -199,7 +213,18 @@ the MCP server uses), so a run needs no MCP client.
    and no share or comparison without a row, a `{fact}` or a hedge. Each inside
    label is anchored on the named inner part, not on the casing or body, and an
    inside whose real parts are not public is labelled "<class>-style <kind>
-   (example)" with "Not confirmed <brand> hardware". Free text (a figure, a
+   (example)" with "Not confirmed <brand> hardware". Each unit the lesson names
+   is shown once in a view that faces it (a back unit: a three-quarter-back or
+   back view); a force in pounds is "lbf"; a follow-up step or beat gives text
+   to at most two arrows. Board table numbers keep every published digit:
+   Marty writes every non-integer cell as text before the check, in a table, a
+   board override or a beat op that sets "cells" (85.06 is not shown as 85.1). The generic repair hints for anchor and arrow refusals
+   point to the issue's own suggestion and alternatives and never advise
+   ghosting the part in the way (a part a label or pointer sits on must not be
+   ghosted). The research prompt asks for the maker's own website for the
+   current version and model, interviews with the maker or inventor for how it
+   works and how parts share the load, ratios only as a source states them,
+   and dates exactly as the page shows them. Free text (a figure, a
    note) is a label on a `{"world": [x, y, z]}` anchor beside the model, not on
    a part. The same general honesty rules apply to
    every subject: a load share is quoted with its source, never invented; no
@@ -261,7 +286,14 @@ the MCP server uses), so a run needs no MCP client.
    and "2D"/"3D" are not facts; a part name is
    checked for years and versions only ("Jet 2" counts units); a label whose
    `unchecked` text starts with "assumed example" is exempt. A finding is a
-   refusal like an engine refusal (attempt reason `fact.unsourced.<field>` of
+   refusal like an engine refusal. A text that says a fact is "not published"
+   (also "unpublished", "never published", "undisclosed") is refused the same way
+   (`fact.notPublished.<field>`) unless the text, or its own note (an
+   annotation's or step's or beat's `unchecked`, a table's note), cites a row
+   whose confirmed found quote itself says so; "assumed example" labels are not
+   exempt from this:
+   a search that did not find a fact does not show it is unpublished; the
+   answer's check flags such a sentence too (attempt reason `fact.unsourced.<field>` of
    the first finding, `engineOk` true, `unsourced` lists up to 12 findings) and
    gets a normal repair with the findings and the table; with no repair left the
    document is not accepted. Follow-up changes are checked the same way (a
