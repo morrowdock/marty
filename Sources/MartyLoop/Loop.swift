@@ -99,9 +99,7 @@ public final class MartyLoop {
             } else { fields[k] = v }
         }
         if !fields.isEmpty { lines.append("Engine detail: " + MartyJSON.string(fields)) }
-        var facts: [String: String] = [:]
-        for (k, v) in r["facts"] as? [String: Any] ?? [:] { if let t = (v as? [String: Any])?["text"] as? String { facts[k] = t } }
-        let long = document.map { TextBudget.issues($0, facts: facts) } ?? []
+        let long = document.map { TextBudget.issues($0) } ?? []
         if !long.isEmpty { lines.append("Texts over their length limit:\n" + long.prefix(8).map { "- \($0.line)" }.joined(separator: "\n")) }
         return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
@@ -522,7 +520,15 @@ public final class MartyLoop {
             var o = Self.outcome(r)
             if !patchCut.isEmpty { o["trimmed"] = patchCut }
             note(i, o); attempts.append(o)
-            if (r["ok"] as? Bool) == true { after = r; acceptedPatch = merged; acceptedStep = stepReply; acceptedPush = stepPush; break }
+            if (r["ok"] as? Bool) == true {
+                after = r; acceptedPatch = merged; acceptedPush = stepPush
+                // The accepted step as checked (after trimming): from the patched steps at its place.
+                if stepReply != nil, let steps = (merged as? [String: Any])?["steps"] as? [Any] {
+                    let n = (reply["replace"] as? NSNumber).map { $0.intValue - 1 } ?? steps.count - 1
+                    acceptedStep = (n >= 0 && n < steps.count ? steps[n] : steps.last) as? [String: Any]
+                }
+                break
+            }
             let reason = r["reason"] as? String ?? "unknown"
             // Facts of the changed model: the same patch with steps cleared and a plain title, plain profile.
             var facts: String? = nil

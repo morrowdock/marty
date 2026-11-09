@@ -113,10 +113,15 @@ the MCP server uses), so a run needs no MCP client.
 3. **Check.** Before the check, Marty applies the length budget: every text
    over the engine's limit (title 80, step say 240, part name 60, label and
    arrow text 60 after placeholders are filled, unchecked 60; explainer title
-   80, beat say 200, note 60; the guide states them) is cut at the last word
-   that fits, never inside a placeholder and only when at least 60 % of the
-   text stays (the attempt lists the cut paths in `trimmed`). Follow-up patches
-   and changed explainers are trimmed the same way. The engine checks the
+   80, beat say 200, note 60; the guide states them; a label also has an
+   authored cap of 240 and an explainer title of 320) is cut at the last word
+   that fits, but only a text without placeholders (its length is exact) and
+   only when at least 60 % of it stays (the attempt lists the cut paths in
+   `trimmed`). A text with placeholders is never cut; its repair states the
+   authored length exactly, and for a filled cap a certain lower bound (each
+   placeholder at least 1 character). Follow-up patches (also their part-name
+   maps) and changed explainers are trimmed the same way; the accepted
+   follow-up step in the receipt is the trimmed one that was checked. The engine checks the
    document in its strict profile (also
    refuses idle joints and turn axes that miss their part). An accepted
    document gets a `ref`. Then Marty checks its facts (`fact.unsourced.<field>`):

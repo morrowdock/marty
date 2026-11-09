@@ -2,53 +2,68 @@
 import Foundation
 import MartyEngine
 
-/// The length budget of a document's texts (the engine's limits, `MartyTextLimits`): which fields are over their
-/// limit, by how much, and a trimmed copy for the engine check. A field that counts after `{fact}` placeholders are
-/// filled (labels, arrow texts, explainer titles) is measured with each placeholder as its engine text when the
-/// facts are known, else as 8 characters.
+/// The length budget of a document's texts (the engine's limits at the pin, `MartyTextLimits`). A text has an
+/// authored cap (as written) and, where the engine fills `{fact}` placeholders, a filled cap. Marty only states what
+/// is certain: the authored length exactly, and for a filled cap a lower bound (each placeholder at least 1
+/// character). It cuts only texts without placeholders, whose length is exact; a text with placeholders is left for
+/// the repair.
 @MainActor public enum TextBudget {
     public struct Issue: Equatable {
         public let path: String, limit: Int, actual: Int
-        public var line: String { "\(path): \(actual) characters, the limit is \(limit)" }
+        /// true: `actual` is a lower bound of the filled length.
+        public let atLeast: Bool
+        public var line: String {
+            atLeast ? "\(path): at least \(actual) characters once placeholders are filled, the limit is \(limit)"
+                : "\(path): \(actual) characters, the limit is \(limit)"
+        }
     }
 
-    /// A text field: its path, its key path in the document, its limit, and whether placeholders are filled.
-    struct Field { let path: String; let keys: [Any]; let limit: Int; let filled: Bool }
+    /// A text field: its path, its key path in the document, its authored cap and its filled cap (nil when the
+    /// engine does not fill placeholders there).
+    struct Field { let path: String; let keys: [Any]; let authored: Int; let filled: Int? }
 
     static func fields(_ d: [String: Any]) -> [Field] {
         typealias L = MartyTextLimits
         var out: [Field] = []
         let explainer = d["kind"] as? String == "explainer"
-        out.append(Field(path: "title", keys: ["title"], limit: explainer ? L.explainerTitle : L.title, filled: explainer))
+        let v2 = explainer || (d["v"] as? Int ?? 2) >= 2
+        if explainer { out.append(Field(path: "title", keys: ["title"], authored: L.explainerTitleRaw, filled: L.explainerTitle)) }
+        else { out.append(Field(path: "title", keys: ["title"], authored: L.title, filled: v2 ? L.title : nil)) }
         func solid(_ s: [String: Any], _ prefix: String, _ base: [Any]) {
-            for (n, p) in (s["parts"] as? [[String: Any]] ?? []).enumerated() where p["name"] != nil {
-                out.append(Field(path: "\(prefix)parts[\(p["id"] as? String ?? "\(n)")].name", keys: base + ["parts", n, "name"], limit: L.partName, filled: false))
+            if let list = s["parts"] as? [[String: Any]] {
+                for (n, p) in list.enumerated() where p["name"] != nil {
+                    out.append(Field(path: "\(prefix)parts[\(p["id"] as? String ?? "\(n)")].name", keys: base + ["parts", n, "name"], authored: L.partName, filled: nil))
+                }
+            } else if let map = s["parts"] as? [String: Any] {   // a follow-up patch: {"<id>": {fields}}
+                for (id, p) in map where (p as? [String: Any])?["name"] != nil {
+                    out.append(Field(path: "\(prefix)parts[\(id)].name", keys: base + ["parts", id, "name"], authored: L.partName, filled: nil))
+                }
             }
             let ann = s["annotations"] as? [String: Any] ?? [:]
             for key in ["labels", "arrows", "dimensions"] {
                 for (n, a) in (ann[key] as? [[String: Any]] ?? []).enumerated() {
                     let id = a["id"] as? String ?? "\(n)"
-                    if a["text"] != nil { out.append(Field(path: "\(prefix)\(key)[\(id)].text", keys: base + ["annotations", key, n, "text"], limit: L.annotationText, filled: true)) }
-                    if a["unchecked"] != nil { out.append(Field(path: "\(prefix)\(key)[\(id)].unchecked", keys: base + ["annotations", key, n, "unchecked"], limit: L.unchecked, filled: false)) }
+                    if a["text"] != nil { out.append(Field(path: "\(prefix)\(key)[\(id)].text", keys: base + ["annotations", key, n, "text"], authored: L.annotationRaw, filled: L.annotationText)) }
+                    if a["unchecked"] != nil { out.append(Field(path: "\(prefix)\(key)[\(id)].unchecked", keys: base + ["annotations", key, n, "unchecked"], authored: L.unchecked, filled: nil)) }
                 }
             }
         }
         if explainer {
             if let s = d["solid"] as? [String: Any] { solid(s, "solid.", ["solid"]) }
             for (n, b) in (d["beats"] as? [[String: Any]] ?? []).enumerated() {
-                if b["say"] != nil { out.append(Field(path: "beats[\(n + 1)].say", keys: ["beats", n, "say"], limit: L.beatSay, filled: false)) }
-                if b["unchecked"] != nil { out.append(Field(path: "beats[\(n + 1)].unchecked", keys: ["beats", n, "unchecked"], limit: L.unchecked, filled: false)) }
+                if b["say"] != nil { out.append(Field(path: "beats[\(n + 1)].say", keys: ["beats", n, "say"], authored: L.beatSay, filled: nil)) }
+                if b["unchecked"] != nil { out.append(Field(path: "beats[\(n + 1)].unchecked", keys: ["beats", n, "unchecked"], authored: L.unchecked, filled: nil)) }
             }
             for (id, note) in d["notes"] as? [String: Any] ?? [:] {
                 for k in ["basis", "unchecked"] where (note as? [String: Any])?[k] != nil {
-                    out.append(Field(path: "notes[\(id)].\(k)", keys: ["notes", id, k], limit: L.note, filled: false))
+                    out.append(Field(path: "notes[\(id)].\(k)", keys: ["notes", id, k], authored: L.note, filled: nil))
                 }
             }
         } else {
             solid(d, "", [])
             for (n, s) in (d["steps"] as? [[String: Any]] ?? []).enumerated() {
-                if s["say"] != nil { out.append(Field(path: "steps[\(n + 1)].say", keys: ["steps", n, "say"], limit: L.stepSay, filled: false)) }
-                if s["unchecked"] != nil { out.append(Field(path: "steps[\(n + 1)].unchecked", keys: ["steps", n, "unchecked"], limit: L.unchecked, filled: false)) }
+                if s["say"] != nil { out.append(Field(path: "steps[\(n + 1)].say", keys: ["steps", n, "say"], authored: L.stepSay, filled: v2 ? L.stepSay : nil)) }
+                if s["unchecked"] != nil { out.append(Field(path: "steps[\(n + 1)].unchecked", keys: ["steps", n, "unchecked"], authored: L.unchecked, filled: nil)) }
             }
         }
         return out
@@ -72,58 +87,62 @@ import MartyEngine
         }
     }
 
-    /// The length of `text` as the engine counts it: Unicode scalars, with placeholders filled from `facts` (name: text)
-    /// or counted as 8 characters when `filled` and the fact is unknown.
-    static func length(_ text: String, filled: Bool, facts: [String: String]) -> Int {
-        guard filled else { return text.unicodeScalars.count }
-        guard let re = try? NSRegularExpression(pattern: #"\{([A-Za-z_][A-Za-z0-9_.]*)(?:\|[a-z]+)*\}"#) else { return text.unicodeScalars.count }
-        let ns = text as NSString
-        var n = text.unicodeScalars.count
-        for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
-            let whole = ns.substring(with: m.range), name = ns.substring(with: m.range(at: 1))
-            n += (facts[name]?.unicodeScalars.count ?? 8) - whole.unicodeScalars.count
-        }
-        return n
+    static let placeholder = #"\{[A-Za-z_][A-Za-z0-9_.]*(?:\|[a-z]+)*\}"#
+    static func hasPlaceholder(_ t: String) -> Bool { t.range(of: placeholder, options: .regularExpression) != nil }
+
+    /// The smallest filled length: each placeholder at least 1 character.
+    static func filledAtLeast(_ t: String) -> Int {
+        t.replacingOccurrences(of: placeholder, with: "x", options: .regularExpression).unicodeScalars.count
     }
 
-    /// The fields over their limit.
-    public static func issues(_ document: Any, facts: [String: String] = [:]) -> [Issue] {
+    /// The fields certainly over a limit: the authored length over the authored cap, or (filled fields with
+    /// placeholders) the lower bound over the filled cap; a field without placeholders is exact against both.
+    public static func issues(_ document: Any) -> [Issue] {
         guard let d = document as? [String: Any] else { return [] }
         return fields(d).compactMap { f in
             guard let t = get(d, f.keys) as? String else { return nil }
-            let n = length(t, filled: f.filled, facts: facts)
-            return n > f.limit ? Issue(path: f.path, limit: f.limit, actual: n) : nil
+            let n = t.unicodeScalars.count
+            if n > f.authored { return Issue(path: f.path, limit: f.authored, actual: n, atLeast: false) }
+            if let cap = f.filled {
+                if !hasPlaceholder(t) { return n > cap ? Issue(path: f.path, limit: cap, actual: n, atLeast: false) : nil }
+                let low = filledAtLeast(t)
+                return low > cap ? Issue(path: f.path, limit: cap, actual: low, atLeast: true) : nil
+            }
+            return nil
         }
     }
 
-    /// A copy with each over-long field cut at the last word boundary that fits (never inside a placeholder), when the
-    /// cut keeps at least 60 % of the text; the paths it cut. A field that would lose more is left for the repair.
-    public static func trimmed(_ document: Any, facts: [String: String] = [:]) -> (document: Any, trimmed: [String]) {
+    /// A copy with each over-long text that has no placeholder cut at the last word that fits, when at least 60 % of
+    /// it stays; the paths it cut. Texts with placeholders, and cuts that would lose more, are left for the repair.
+    public static func trimmed(_ document: Any) -> (document: Any, trimmed: [String]) {
         guard let d = document as? [String: Any] else { return (document, []) }
         var out: Any = d
         var cut: [String] = []
         for f in fields(d) {
-            guard let t = get(d, f.keys) as? String, length(t, filled: f.filled, facts: facts) > f.limit else { continue }
-            let words = t.split(separator: " ", omittingEmptySubsequences: false).map(String.init)
-            var kept: [String] = []
-            for w in words {
-                let next = (kept + [w]).joined(separator: " ")
-                if length(next, filled: f.filled, facts: facts) > f.limit { break }
-                kept.append(w)
-            }
-            var s = kept.joined(separator: " ").trimmingCharacters(in: .whitespaces)
-            // Never end inside a placeholder or on a dangling joiner.
-            if s.filter({ $0 == "{" }).count != s.filter({ $0 == "}" }).count { continue }
-            while let last = s.split(separator: " ").last, ["and", "or", "the", "a", "an", "of", "to", "with", "while", ",", "-"].contains(last.lowercased()) {
-                s = String(s.dropLast(last.count)).trimmingCharacters(in: .whitespaces)
-            }
-            s = s.trimmingCharacters(in: CharacterSet(charactersIn: ",;:- "))
-            guard !s.isEmpty, s.unicodeScalars.count * 10 >= t.unicodeScalars.count * 6 else { continue }
-            if !(s.hasSuffix(".") || s.hasSuffix("!") || s.hasSuffix("?")), t.trimmingCharacters(in: .whitespaces).hasSuffix(".") { s += "." }
-            guard length(s, filled: f.filled, facts: facts) <= f.limit else { continue }
+            let limit = min(f.authored, f.filled ?? f.authored)
+            guard let t = get(d, f.keys) as? String, !hasPlaceholder(t), t.unicodeScalars.count > limit,
+                  let s = cutAtWord(t, limit: limit) else { continue }
             set(&out, f.keys, s)
             cut.append(f.path)
         }
         return (out, cut)
+    }
+
+    /// `t` cut at the last word that fits in `limit` (no dangling joiner or punctuation; a final period kept when
+    /// the original ended with one and it fits), or nil when less than 60 % would stay.
+    static func cutAtWord(_ t: String, limit: Int) -> String? {
+        var kept: [String] = []
+        for w in t.split(separator: " ", omittingEmptySubsequences: false).map(String.init) {
+            if (kept + [w]).joined(separator: " ").unicodeScalars.count > limit { break }
+            kept.append(w)
+        }
+        var s = kept.joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        while let last = s.split(separator: " ").last, ["and", "or", "the", "a", "an", "of", "to", "with", "while"].contains(last.lowercased()) {
+            s = String(s.dropLast(last.count)).trimmingCharacters(in: .whitespaces)
+        }
+        s = s.trimmingCharacters(in: CharacterSet(charactersIn: ",;:- "))
+        guard !s.isEmpty, s.unicodeScalars.count * 10 >= t.unicodeScalars.count * 6 else { return nil }
+        if t.trimmingCharacters(in: .whitespaces).hasSuffix("."), !s.hasSuffix("."), s.unicodeScalars.count < limit { s += "." }
+        return s
     }
 }
