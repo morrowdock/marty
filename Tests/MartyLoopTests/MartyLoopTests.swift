@@ -1416,7 +1416,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(loose.rows[0].unconfirmed); XCTAssertTrue(loose.rows[1].unconfirmed)
         XCTAssertFalse(QuoteCheck.statesCountWord("1", "It is a five-engine jet suit designed for flight", entities: QuoteCheck.countedWords(value: "1", claim: "Engine count")))
         XCTAssertFalse(QuoteCheck.statesCountWord("1", "a jet suit powered by five miniature engines", entities: QuoteCheck.countedWords(value: "1", claim: "Engine count for the jet suit")))
-        XCTAssertTrue(QuoteCheck.statesCountWord("2", "Both battery packs are mounted at the rear", entities: QuoteCheck.countedWords(value: "2", claim: "Batteries")))
+        XCTAssertTrue(QuoteCheck.statesCountWord("2", "Both batteries are mounted at the rear", entities: QuoteCheck.countedWords(value: "2", claim: "Batteries")))
         XCTAssertTrue(QuoteCheck.statesCountWord("1", "it has a rear jet engine", entities: QuoteCheck.countedWords(value: "1 rear engine", claim: "Rear engine")))
         XCTAssertFalse(QuoteCheck.statesCountWord("1", "The company unveiled a new version of its jet suit with five engines",
                                                   entities: QuoteCheck.countedWords(value: "Version 1", claim: "Current model")))
@@ -1429,6 +1429,11 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertFalse(QuoteCheck.statesCountWord("1", "The product uses a housing with rotors mounted inside", entities: QuoteCheck.countedWords(value: "1 rotor", claim: "Rotors")))
         XCTAssertFalse(QuoteCheck.statesCountWord("2", "Both arms carry engines to provide thrust", entities: QuoteCheck.countedWords(value: "2 engines per arm", claim: "Arm engines")))
         XCTAssertTrue(QuoteCheck.statesCountWord("2", "both rear engines run", entities: QuoteCheck.countedWords(value: "2", claim: "Rear engines on this model")))
+        XCTAssertEqual(QuoteCheck.countedWords(value: "2", claim: "Arm engines"), ["engines"])
+        XCTAssertEqual(QuoteCheck.countedWords(value: "1", claim: "Suit model"), [])
+        XCTAssertFalse(QuoteCheck.statesCountWord("2", "Both arms carry three engines each", entities: QuoteCheck.countedWords(value: "2", claim: "Arm engines")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "It uses a turbine. Engines are mounted on the arms", entities: QuoteCheck.countedWords(value: "1 engine", claim: "Engines")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "The vehicle has a jet engine mount at the rear", entities: QuoteCheck.countedWords(value: "1 engine", claim: "Engines")))
         XCTAssertEqual(rows.rows[3].sources[0].check, "quote too short to check")
     }
 

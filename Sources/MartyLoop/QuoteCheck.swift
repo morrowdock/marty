@@ -422,16 +422,31 @@ public enum QuoteCheck {
         case "2": cue = ["both", "either", "pair", "twin"]
         default: cue = []
         }
-        let words = quote.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
         let wanted = Set(entities.map(singular))
         guard !wanted.isEmpty else { return false }
+        // One clause at a time: a cue never reaches into the next sentence, clause or parenthesis.
+        for clause in quote.lowercased().components(separatedBy: CharacterSet(charactersIn: ".;:!?()[]\u{2014}\u{2013}")) {
+            if statesCountWord(headline, clause: clause.split { !$0.isLetter && !$0.isNumber }.map(String.init), cue: cue, wanted: wanted) { return true }
+        }
+        return false
+    }
+
+    static func statesCountWord(_ headline: String, clause words: [String], cue: Set<String>, wanted: Set<String>) -> Bool {
         for (i, w) in words.enumerated() where cue.contains(w) || ordinals[w] == headline {
             if i > 0, words[i - 1] == "one", w != "a" { continue }   // "one of five" is no count
             // Up to two plain modifiers between the cue and the noun ("a rear jet engine"); a connector, a verb-like
             // word, a plural noun or another count ends the phrase ("a housing with rotors", "both arms carry engines").
             for j in (i + 1)..<min(words.count, i + 4) {
                 let x = words[j]
-                if wanted.contains(singular(x)) { return true }
+                if wanted.contains(singular(x)) {
+                    // The noun must be the phrase's head, not a modifier of another noun ("a jet engine mount"): a
+                    // plural is a head ("both rear engines run"); a singular followed by a plain word that is no verb
+                    // form (-s, -ed, -ing) or connector modifies it.
+                    let next = j + 1 < words.count ? words[j + 1] : nil
+                    if singular(x) == x, let n = next, !phraseBreaks.contains(n), !n.hasSuffix("ed"), !n.hasSuffix("ing"), !n.hasSuffix("s"),
+                       n.allSatisfy(\.isLetter), !(n.count > 3 && n.hasSuffix("ly")) { break }
+                    return true
+                }
                 if x.first?.isNumber == true || numberWords[x] != nil || ordinals[x] != nil { break }
                 if phraseBreaks.contains(x) || x.hasSuffix("ing") || x.hasSuffix("ed") || (x.count > 3 && x.hasSuffix("s") && !x.hasSuffix("ss")) { break }
             }
@@ -462,15 +477,17 @@ public enum QuoteCheck {
         let connectors: Set<String> = ["per", "each", "on", "in", "for", "at", "of", "with", "by", "to", "from", "across", "under", "over"]
         let tokens = value.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
         let claimWords = claim.lowercased().split { !$0.isLetter }.map(String.init)
-        // An identifier row: its value names a version or model, or its claim is about one ("Current model").
-        let claimHead = claimWords.first { $0.count >= 2 && !filler.contains($0) }
+        // The claim's head noun: the last content word of its first phrase ("Arm engines": engines; "Engine count
+        // for the jet suit": engine; "Suit model": model). An identifier row: its value names a version or model, or
+        // its claim's head is one ("Current model").
+        let claimHead = claimWords.prefix { !connectors.contains($0) }.filter { $0.count >= 3 && !filler.contains($0) }.last
         if tokens.contains(where: identifiers.contains) || claimHead.map(identifiers.contains) == true { return [] }
         let at = tokens.firstIndex { $0.first?.isNumber == true || numberWords[$0] != nil || ordinals[$0] != nil }
         if let at {
             let phrase = tokens[(at + 1)...].prefix { !connectors.contains($0) }.filter { $0.allSatisfy(\.isLetter) && $0.count >= 3 && !filler.contains($0) }
             if let head = phrase.last { return [head] }
         }
-        return Set(claimWords.filter { $0.count >= 3 && !filler.contains($0) }.prefix(1))
+        return claimHead.map { [$0] } ?? []
     }
 
     /// The value of a Roman numeral (i to mmmcmxcix), or nil.

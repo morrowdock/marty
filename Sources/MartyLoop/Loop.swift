@@ -1022,6 +1022,10 @@ extension MartyLoop {
         result["answerLint"] = lint
         // A denial the rewrite brought in gets the posed repair if it is unused; the status is the final answer's.
         posedRepair(2)
+        // (The comparative and number status too is the final answer's.)
+        if var final = result["answerLint"] as? [String: Any] {
+            let again = problems(answer); final["fixed"] = again.comparative.isEmpty && again.unsourced.isEmpty; result["answerLint"] = final
+        }
         if var posedLint = result["answerPosedLint"] as? [String: Any] { posedLint["fixed"] = denials(answer).isEmpty; result["answerPosedLint"] = posedLint }
         else if !denials(answer).isEmpty { result["answerPosedLint"] = ["reason": "answer.posed", "sentences": denials(answer), "fixed": false] }
         return answer
