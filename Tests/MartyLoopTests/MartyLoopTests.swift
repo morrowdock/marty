@@ -1586,6 +1586,19 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(QuoteCheck.found("It holds 10 litres of fuel", in: "<p>It holds 10 litres of fuel.</p>"), "It holds 10 litres of fuel | It holds 10 litres of fuel.")
         XCTAssertTrue(QuoteCheck.found("The suit flew 10 km on the day", in: "<p>The suit flew 10 km on the day.</p>"), "The suit flew 10 km on the day | The suit flew 10 km on the day.")
         XCTAssertTrue(QuoteCheck.found("It holds 10 litres a day later", in: "<p>It holds 10 litres a day later.</p>"), "It holds 10 litres a day later | It holds 10 litres a day later.")
+        // Round 22: after a quantity with a unit only prose words follow; per after any number; s. ends a sentence.
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres every fifteen minutes.</p>"), "The pump delivers 10 litres | The pump delivers 10 litres every fifteen minutes.")
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres every other minute.</p>"), "The pump delivers 10 litres | The pump delivers 10 litres every other minute.")
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10L", in: "<p>The pump delivers 10L per minute.</p>"), "The pump delivers 10L | The pump delivers 10L per minute.")
+        XCTAssertFalse(QuoteCheck.found("The advertised return is 10%", in: "<p>The advertised return is 10% per month.</p>"), "The advertised return is 10% | The advertised return is 10% per month.")
+        XCTAssertFalse(QuoteCheck.found("The battery is rated at 100 amp", in: "<p>The battery is rated at 100 amp hours.</p>"), "The battery is rated at 100 amp | The battery is rated at 100 amp hours.")
+        XCTAssertFalse(QuoteCheck.found("The transformer is rated at 100 V", in: "<p>The transformer is rated at 100 V A.</p>"), "The transformer is rated at 100 V | The transformer is rated at 100 V A.")
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10", in: "<p>The pump delivers 10 per minute.</p>"), "The pump delivers 10 | The pump delivers 10 per minute.")
+        XCTAssertTrue(QuoteCheck.found("The run took 10 s.", in: "<p>The run took 10 s. A second trial was planned.</p>"), "The run took 10 s. | The run took 10 s. A second trial was planned.")
+        XCTAssertTrue(QuoteCheck.found("The battery is rated at 100 amp hours", in: "<p>The battery is rated at 100 amp hours.</p>"), "The battery is rated at 100 amp hours | The battery is rated at 100 amp hours.")
+        XCTAssertTrue(QuoteCheck.found("It weighs 10 kg and flies", in: "<p>It weighs 10 kg and flies.</p>"), "It weighs 10 kg and flies | It weighs 10 kg and flies.")
+        XCTAssertTrue(QuoteCheck.found("It stands 2 m tall", in: "<p>It stands 2 m tall.</p>"), "It stands 2 m tall | It stands 2 m tall.")
+        XCTAssertTrue(QuoteCheck.found("It was built in 2019 by a team of 144", in: "<p>It was built in 2019 by a team of 144 people.</p>"), "It was built in 2019 by a team of 144 | It was built in 2019 by a team of 144 people.")
         // Table cells are separate; inline markup joins.
         let specs = "<p>Maximum thrust of the rig</p><table><tr><th>Motors</th><td>1</td><td>144 kgf</td></tr></table>"
         XCTAssertFalse(QuoteCheck.found("Maximum thrust [\u{2026}] 1,144 kgf", in: specs))

@@ -78,8 +78,13 @@ the MCP server uses), so a run needs no MCP client.
    "10 m s⁻¹", "10 metres" not "10 metres per second" or "10 metres a second",
    or "10 metres every 30 seconds", "10 kW" not "10 kW h" or any SI-prefixed
    unit symbol after it, "10 cm" not "10 cm x 20 cm"), nor by a magnitude
-   ("$10" is not "$10 million"); a unit abbreviation's period after a number
-   ("10 in.") does not end the quantity; a quantity's unit may
+   ("$10" is not "$10 million"), nor by "per"; a quantity with a unit
+   (attached, "10L", "10%", or a unit word after the number) is followed only
+   by a hard boundary or an ordinary prose word ("of", "at", "in", "over",
+   "tall", ...), so any other word, which may continue the unit, a rate or a
+   product ("100 amp hours", "100 V A", "10 litres every fifteen minutes"),
+   leaves the quote unmatched; a unit abbreviation's period after a number
+   ("10 in.") does not end the quantity when a range or a tolerance follows; a quantity's unit may
    be a few words with unit symbols ("10 degrees Celsius", "10 N-m", "10 m/s"); a range in words is whole at both ends ("10 to 20 bar" and
    "between 10 degrees Celsius and 20 degrees Celsius" give neither end); a gap glued to a number keeps these rules
    ("[…]5 degrees" is not "−5 degrees"); a dash before a word is punctuation

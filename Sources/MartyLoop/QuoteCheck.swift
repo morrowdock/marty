@@ -272,6 +272,14 @@ public enum QuoteCheck {
     /// A quote mark after a digit is a prime (a unit mark: "5'11\"", "5’11”" are 5′11″; ″ as NFKC writes it, ′′) unless
     /// it closes a quotation of its own kind that is open in the same block ("“The turbine produces 144”",
     /// "\"5'11\"\"" is a quoted 5′11″). Straight double quotes pair in order; a block mark ends every quotation.
+    /// Ordinary words that may follow a quantity with a unit without continuing it.
+    static let proseAfterQuantity: Set<String> = ["of", "at", "on", "in", "for", "with", "from", "into", "over", "under", "and", "or", "the",
+        "its", "his", "her", "their", "is", "was", "are", "were", "be", "been", "has", "had", "have", "which", "that", "when", "while", "after",
+        "before", "during", "by", "than", "as", "but", "so", "if", "up", "down", "out", "off", "more", "less", "total", "overall", "tall",
+        "long", "wide", "high", "deep", "thick", "away", "apart", "across", "ago", "old", "later", "earlier", "above", "below", "behind",
+        "ahead", "faster", "slower", "heavier", "lighter", "it", "this", "these", "those", "they", "he", "she", "we", "you", "not", "only",
+        "about", "around", "near", "through", "across", "without", "within", "between", "against", "toward", "towards", "while", "until"]
+
     /// Words that scale the number before them.
     static let magnitudes: Set<String> = ["hundred", "thousand", "million", "billion", "trillion", "k", "m", "bn", "mn", "mln", "tn", "lakh", "crore"]
     /// Time units after "a", "an", "each" or "every" in a rate.
@@ -428,9 +436,11 @@ public enum QuoteCheck {
             var t = String(raw), after = false
             func trimEnd() { while let c = t.last, ".,;:!?".contains(c) { t.removeLast(); after = true } }
             trimEnd()
-            // A unit abbreviation's period after a number ("10 in.", "5 ft.", "3 lb.") does not end the quantity.
+            // A unit abbreviation's period after a number does not end the quantity when a range or a tolerance goes
+            // on ("10 in. to 20 in.", "10 in. ± 2 in."); before anything else it may end a sentence ("10 s. A second").
             if after, raw.last == ".", !raw.dropLast().contains(where: { ".,;:!?".contains($0) }), t.count <= 3,
-               t.allSatisfy({ $0.isLetter }), let before = out.last, before.hasDigit, !before.closedAfter { after = false }
+               t.allSatisfy({ $0.isLetter }), let before = out.last, before.hasDigit, !before.closedAfter, n + 1 < raws.count,
+               ["to", "-", "\u{00D7}", "x", "and"].contains(String(raws[n + 1])) || raws[n + 1].first == "\u{00B1}" { after = false }
             if t.contains(where: { $0.isLetter }), !t.contains(where: { $0.isNumber }) {
                 t = t.trimmingCharacters(in: CharacterSet(charactersIn: "()[]{}"))
                 trimEnd()
@@ -536,6 +546,13 @@ public enum QuoteCheck {
                 let unitEnd = w[last].hasLetter && !(w[last].text.first?.isNumber ?? false)
                 // A unit goes on: "per …", or a power or quotient unit ("10 m s^-1", "10 metres per second").
                 if unitEnd, quantityEnd(w, last) != nil, next.text == "per" || next.text.contains("^") || next.text.contains("/") { return false }
+                // After a number, "per" always goes on ("10 per minute", "10l per minute", "10% per month").
+                if next.text == "per" { return false }
+                // A quantity with a unit (attached, "10l", "10%", "5′11″", or a unit word after the number) is followed
+                // only by ordinary prose words: any other word may continue the unit, a rate or a product ("100 amp
+                // hours", "100 v a", "10 litres every fifteen minutes").
+                let withUnit = (w[last].hasDigit && w[last].text.contains { !$0.isNumber && !".,".contains($0) }) || (unitEnd && quantityEnd(w, last) != nil)
+                if withUnit, !Self.proseAfterQuantity.contains(next.text) { return false }
                 // A number goes on with a magnitude ("$10 million", "3 bn").
                 if w[last].hasDigit, Self.magnitudes.contains(next.text) { return false }
                 if quantityEnd(w, last) != nil {
