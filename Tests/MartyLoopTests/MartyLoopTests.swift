@@ -1176,12 +1176,23 @@ final class MartyLoopTests: XCTestCase {
         var sourced = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [["id": "F1", "claim": "Thrust figures", "label": "CLAIM",
             "sources": [["url": "https://a.org/1", "publisher": "A", "date": "2020", "quote": "the maker has not published its thrust figures"]]]]])))
         sourced.checkQuotes(fetcher: TestPages(pages: ["https://a.org/1": "<p>So far the maker has not published its thrust figures.</p>"], fallback: nil))
-        XCTAssertTrue(FactCheck.findings(doc, evidence: .build(table: sourced, question: "q", report: nil, model: doc)).isEmpty)
+        // Only a text citing that row (in the text or its "unchecked" note) may say so; another absence claim may not.
+        let sourcedEvidence = FactCheck.Evidence.build(table: sourced, question: "q", report: nil, model: doc)
+        XCTAssertEqual(FactCheck.findings(doc, evidence: sourcedEvidence).first?.kind, "notPublished", "an uncited absence")
+        let cited: [String: Any] = ["v": 2, "kind": "assembly", "title": "A suit", "parts": [] as [Any],
+                                    "annotations": ["labels": [["id": "lT", "at": ["world": [0, 0, 0]], "text": "Thrust figures: not published", "unchecked": "F1 A, claimed"]]]]
+        XCTAssertTrue(FactCheck.findings(cited, evidence: sourcedEvidence).isEmpty)
         // The answer lint flags it too.
         XCTAssertFalse(MartyLoop.unsourcedSentences("The current version is not published.", sources: []).isEmpty)
 
         // Dates as the page shows them: the date under the title; day-first meta only when unambiguous.
-        XCTAssertEqual(QuoteCheck.pageDate(#"<meta name="dcterms.date" content="08-10-2020"><h1>Jet suit rescue demonstrated</h1><p>By A. Writer</p><p>October 8, 2020</p>"#), "2020-10-08")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<meta name="dcterms.date" content="08-10-2020"><div class="intro-block"><h1>Jet suit rescue demonstrated</h1><div class="intro-block__dateline"><span class="intro-block__date">October 8, 2020</span></div></div>"#), "2020-10-08")
+        // Metadata wins over the dateline; body prose, "updated" lines and unmarked text are never read for a date.
+        XCTAssertEqual(QuoteCheck.pageDate(#"<meta property="article:published_time" content="2022-05-10"><h1>Title</h1><p>On March 4, 2019 it flew.</p>"#), "2022-05-10")
+        XCTAssertNil(QuoteCheck.pageDate("<h1>Title</h1><p>On March 4, 2019 it flew over the lake.</p>"))
+        XCTAssertEqual(QuoteCheck.pageDate(#"<h1>Title</h1><span class="updated-date">June 1, 2023</span><span class="publish-date">May 2, 2021</span>"#), "2021-05-02")
+        XCTAssertNil(QuoteCheck.isoDate("2021-02-29")); XCTAssertEqual(QuoteCheck.isoDate("2020-02-29"), "2020-02-29"); XCTAssertNil(QuoteCheck.isoDate("2020-02-31"))
+        XCTAssertEqual(QuoteCheck.pageDate(#"<meta name="date" content="2020-51-09"><meta name="pubdate" content="2020-04-09">"#), "2020-04-09", "a later valid tag")
         XCTAssertEqual(QuoteCheck.pageDate(#"<h1>FEATURE: Meet the man</h1><time class="time" datetime="2020-51-09">09 Apr 2020</time>"#), "2020-04-09")
         XCTAssertEqual(QuoteCheck.pageDate(#"<meta name="dcterms.date" content="13-10-2020">"#), "2020-10-13")
         XCTAssertNil(QuoteCheck.pageDate(#"<meta name="dcterms.date" content="08-10-2020">"#), "ambiguous day and month")
@@ -1202,6 +1213,12 @@ final class MartyLoopTests: XCTestCase {
             "sources": [["url": "https://a.org/3", "publisher": "A", "date": "2022", "quote": "thrust to weight ratio stands at 1.3"]]]]])))
         stated.checkQuotes(fetcher: TestPages(pages: ["https://a.org/3": "<p>Its thrust to weight ratio stands at 1.3 for now.</p>"], fallback: nil))
         XCTAssertFalse(stated.rows[0].unconfirmed)
+        // Number words and Roman version numerals count as stated.
+        var worded = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [
+            ["id": "F1", "claim": "Motors", "value": "5", "label": "CLAIM", "sources": [["url": "https://a.org/4", "publisher": "A", "date": "2020", "quote": "There are five motors in this mechanism"]]],
+            ["id": "F2", "claim": "Version", "value": "Mk4", "label": "CLAIM", "sources": [["url": "https://a.org/4", "publisher": "A", "date": "2020", "quote": "the current Mk IV suit is lighter"]]]]])))
+        worded.checkQuotes(fetcher: TestPages(pages: ["https://a.org/4": "<p>There are five motors in this mechanism, and the current Mk IV suit is lighter.</p>"], fallback: nil))
+        XCTAssertFalse(worded.rows[0].unconfirmed); XCTAssertFalse(worded.rows[1].unconfirmed)
 
         // Generic hints for anchor and arrow refusals do not advise ghosting the part in the way.
         for r in ["annotation.arrow.hidden.aSteer", "annotation.anchor.hidden.lCore", "annotation.arrow.untested.a", "annotation.anchor.untested.l"] {
@@ -1214,6 +1231,12 @@ final class MartyLoopTests: XCTestCase {
         let board: [String: Any] = ["board": ["items": [["id": "t", "k": "table", "cells": [["Record", 85.06], ["Engines", 5]]]]]]
         let cells = (((MartyLoop.exactTableNumbers(board) as? [String: Any])?["board"] as? [String: Any])?["items"] as? [[String: Any]])?.first?["cells"] as? [[Any]]
         XCTAssertEqual(cells?[0][1] as? String, "85.06"); XCTAssertEqual(cells?[1][1] as? Int, 5)
+        // A beat op that sets "cells", and a board override, too.
+        let op: [String: Any] = ["beats": [["ops": [["op": "set", "id": "t", "key": "cells", "value": [["Record", 85.06]]]]]], "over": ["t": ["cells": [["Speed", 136.891]]]]]
+        let fixedOp = MartyLoop.exactTableNumbers(op) as? [String: Any]
+        let setCells = ((((fixedOp?["beats"] as? [[String: Any]])?.first?["ops"] as? [[String: Any]])?.first)?["value"] as? [[Any]])
+        XCTAssertEqual(setCells?[0][1] as? String, "85.06")
+        XCTAssertEqual((((fixedOp?["over"] as? [String: Any])?["t"] as? [String: Any])?["cells"] as? [[Any]])?[0][1] as? String, "136.891")
     }
 
     func testAnchorIssuesInRepairs() throws {

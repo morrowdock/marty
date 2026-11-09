@@ -97,10 +97,8 @@ the MCP server uses), so a run needs no MCP client.
    "between 10 degrees Celsius and 20 degrees Celsius" give neither end); a gap glued to a number keeps these rules
    ("[…]5 degrees" is not "−5 degrees"); a dash before a word is punctuation
    ("1,050 bhp — the company").
-   Each source's date comes only from its fetched page: the date the page
-   shows right under its title (the first written date within 400 characters
-   of text after the first `<h1>`, "October 8, 2020", "09 Apr 2020"), else its
-   publication date (HTML comments ignored: its page-level publication meta
+   Each source's date comes only from its fetched page: its publication date
+   (HTML comments ignored: its page-level publication meta
    tag, also `dcterms.*` and other common names, with a day-first date such as
    "13-10-2020" read only when the order is unambiguous and impossible dates
    ignored, outside
@@ -110,8 +108,12 @@ the MCP server uses), so a run needs no MCP client.
    names as `mainEntity` (two different named articles are ambiguous), else the one article with `mainEntityOfPage`, else
    the only article, else with no article the only page object; with several
    candidates the owner is unknown and the date stays empty; never a nested one
-   such as a related article's or a comment's; microdata and `<time>` are not
-   read, since their owner is not known), whether or not the quote was found; a page that
+   such as a related article's or a comment's; microdata is not read, since its
+   owner is not known; with no usable metadata, the date the page shows in its
+   dateline under the title: the first `<time>` element's text, or an element
+   marked as a date, dateline, byline or publication line, not an "updated" or
+   "related" one, within the markup after the first `<h1>` ("October 8, 2020",
+   "09 Apr 2020"; body prose is never read for a date), whether or not the quote was found; a page that
    states none, or a page that was not fetched, leaves the date empty (the
    model's date is removed; every change is listed in `downgrades`). The site that counts is the one the page finally came
    from (a redirect to a blocked or free hosting site fails). Each source records its `check` ("quote found", "quote not found",
@@ -122,7 +124,8 @@ the MCP server uses), so a run needs no MCP client.
    also UNKNOWN and `unconfirmed` when every source it gave was dropped (only a
    row the model itself gave as UNKNOWN without sources is a researched
    absence, "not found in this search"); a row whose value's first number is in
-   none of its found quotes (a value computed from other figures, such as a
+   none of its found quotes (number words such as "five" and Roman version
+   numerals such as "Mk IV" count as stated) (a value computed from other figures, such as a
    ratio of two rows) is also `unconfirmed` and left out; a VERIFIED row needs
    found quotes on two sites and no found
    quote whose text or page text within 160 characters attributes the figure
@@ -212,8 +215,8 @@ the MCP server uses), so a run needs no MCP client.
    is shown once in a view that faces it (a back unit: a three-quarter-back or
    back view); a force in pounds is "lbf"; a follow-up step or beat gives text
    to at most two arrows. Board table numbers keep every published digit:
-   Marty writes a non-integer table cell as text before the check (85.06 is
-   not shown as 85.1). The generic repair hints for anchor and arrow refusals
+   Marty writes every non-integer cell as text before the check, in a table, a
+   board override or a beat op that sets "cells" (85.06 is not shown as 85.1). The generic repair hints for anchor and arrow refusals
    point to the issue's own suggestion and alternatives and never advise
    ghosting the part in the way (a part a label or pointer sits on must not be
    ghosted). The research prompt asks for the maker's own website for the
@@ -283,7 +286,8 @@ the MCP server uses), so a run needs no MCP client.
    `unchecked` text starts with "assumed example" is exempt. A finding is a
    refusal like an engine refusal. A text that says a fact is "not published"
    (also "unpublished", "never published", "undisclosed") is refused the same way
-   (`fact.notPublished.<field>`) unless a confirmed source's quote itself says so:
+   (`fact.notPublished.<field>`) unless the text, or its own `unchecked` note,
+   cites a row whose confirmed found quote itself says so:
    a search that did not find a fact does not show it is unpublished; the
    answer's check flags such a sentence too (attempt reason `fact.unsourced.<field>` of
    the first finding, `engineOk` true, `unsourced` lists up to 12 findings) and

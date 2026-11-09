@@ -328,6 +328,24 @@ public enum QuoteCheck {
         return t.range(of: "^(da|[yzafpnµumcdhkmgtpe])?(m|g|s|a|k|mol|n|j|w|pa|hz|v|c|f|ω|ohm|t|h|l|b|bar|wh|ah|ev)$", options: .regularExpression) != nil
     }
 
+    static let numberWords: [String: String] = ["zero": "0", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6",
+        "seven": "7", "eight": "8", "nine": "9", "ten": "10", "eleven": "11", "twelve": "12", "thirteen": "13", "fourteen": "14",
+        "fifteen": "15", "sixteen": "16", "seventeen": "17", "eighteen": "18", "nineteen": "19", "twenty": "20", "thirty": "30",
+        "forty": "40", "fifty": "50", "hundred": "100", "single": "1", "twin": "2", "pair": "2", "dozen": "12"]
+    static let romans: [String: String] = ["i": "1", "ii": "2", "iii": "3", "iv": "4", "v": "5", "vi": "6", "vii": "7", "viii": "8", "ix": "9", "x": "10"]
+
+    /// The numbers a quote states: its digits, number words ("five"), and Roman version numerals after a version
+    /// word ("Mk IV" is 4).
+    @MainActor static func statedNumbers(_ quote: String) -> [String] {
+        var out = MartyLoop.numbers(quote)
+        let words = quote.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
+        for (i, w) in words.enumerated() {
+            if let n = numberWords[w] { out.append(n) }
+            if i > 0, ["mk", "mark", "version", "gen", "generation", "series", "type", "model"].contains(words[i - 1]), let r = romans[w] { out.append(r) }
+        }
+        return out
+    }
+
     /// Whether a number starts at `i` and the mark `close` follows it right away ("10'" in "'10'").
     static func closesAfterNumber(_ chars: [Character], _ i: Int, _ close: Character) -> Bool {
         var i = i
@@ -679,24 +697,27 @@ public enum QuoteCheck {
         // Meta tags only outside script, style, template and noscript content (a widget's template text is not
         // the page's metadata); JSON-LD is read from its own scripts.
         let tags = h.replacingOccurrences(of: #"(?is)<(script|style|template|noscript)\b.*?(</\1\s*>|$)"#, with: " ", options: .regularExpression)
-        // 1. The date the page shows under its title (a byline right after the first <h1>), as the reader sees it.
-        if let d = shownDate(tags) { return d }
         let ns = tags as NSString
+        // The first valid date among the matches (an impossible or ambiguous one is skipped).
         func first(_ p: String) -> String? {
-            guard let re = try? NSRegularExpression(pattern: p),
-                  let m = re.firstMatch(in: tags, range: NSRange(location: 0, length: ns.length)), m.numberOfRanges > 1 else { return nil }
-            return isoDate(ns.substring(with: m.range(at: 1)))
+            guard let re = try? NSRegularExpression(pattern: p) else { return nil }
+            for m in re.matches(in: tags, range: NSRange(location: 0, length: ns.length)) where m.numberOfRanges > 1 {
+                if let d = isoDate(ns.substring(with: m.range(at: 1))) { return d }
+            }
+            return nil
         }
-        // 2. Page-level meta tags (also Dublin Core terms and common publishing names).
+        // 1. Page-level meta tags (also Dublin Core terms and common publishing names).
         let names = #"(?:article:published_time|og:published_time|date|dc\.date|dc\.date\.issued|dcterms\.date|dcterms\.created|dcterms\.issued|citation_publication_date|pubdate|publish[-_]?date|publication[-_]date|sailthru\.date|parsely-pub-date)"#
         let attr = #"(?:property|name)\s*=\s*["']"# + names + #"["']"#
         let date = #"(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{4})"#
         if let d = first(#"(?i)<meta[^>]+"# + attr + #"[^>]+content\s*=\s*["']"# + date) ?? first(#"(?i)<meta[^>]+content\s*=\s*["']"# + date + #"[^"']*["'][^>]+"# + attr) {
             return d
         }
-        // JSON-LD outside inert templates.
+        // 2. JSON-LD outside inert templates.
         let live = h.replacingOccurrences(of: #"(?is)<template\b.*?(</template\s*>|$)"#, with: " ", options: .regularExpression)
-        return jsonLDDate(live, NSRange(location: 0, length: (live as NSString).length))
+        if let d = jsonLDDate(live, NSRange(location: 0, length: (live as NSString).length)) { return d }
+        // 3. With no usable metadata: the date the page shows in its dateline under the title.
+        return shownDate(tags)
     }
 
     /// A numeric date as YYYY-MM-DD, or nil when it is not a real date or its order is ambiguous ("08-10-2020" could
@@ -712,20 +733,34 @@ public enum QuoteCheck {
             else if parts[0] == parts[1] { m = parts[0]; d = parts[1] }
             else { return nil }
         }
-        guard (1900...2100).contains(y), (1...12).contains(m), (1...31).contains(d) else { return nil }
+        guard (1900...2100).contains(y), (1...12).contains(m) else { return nil }
+        let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+        let days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1]
+        guard (1...days).contains(d) else { return nil }
         return String(format: "%04d-%02d-%02d", y, m, d)
     }
 
     static let months = ["jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12]
 
-    /// The date shown right under the page's title: the first written date ("October 8, 2020", "09 Apr 2020",
-    /// "2020-04-09") within 400 characters of text after the first <h1>; nil without one.
+    /// The date the page shows in its dateline under the title: the text of the first `<time>` element, or of an
+    /// element marked as a date, dateline, byline or publication line (not an "updated" or "related" one), within
+    /// 3,000 characters of markup after the first <h1>; nil without one. Body prose is never read for a date.
     static func shownDate(_ html: String) -> String? {
         guard let h1 = html.range(of: #"(?is)<h1\b[^>]*>.*?</h1\s*>"#, options: .regularExpression) else { return nil }
-        let after = String(html[h1.upperBound...].prefix(20_000))
-        let text = decodeEntities(after.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression))
+        let after = String(html[h1.upperBound...].prefix(3_000))
+        let marked = #"(?is)<time\b[^>]*>(.*?)</time\s*>|<([a-z0-9]+)\b[^>]*(?:class|id|itemprop)\s*=\s*["']([^"']*(?:date|byline|publish|posted)[^"']*)["'][^>]*>(.*?)</\2\s*>"#
+        guard let mre = try? NSRegularExpression(pattern: marked) else { return nil }
+        let ans = after as NSString
+        var window = ""
+        for m in mre.matches(in: after, range: NSRange(location: 0, length: ans.length)) {
+            if m.range(at: 1).location != NSNotFound { window = ans.substring(with: m.range(at: 1)); break }
+            let cls = ans.substring(with: m.range(at: 3)).lowercased()
+            if cls.contains("updat") || cls.contains("modif") || cls.contains("related") { continue }
+            window = ans.substring(with: m.range(at: 4)); break
+        }
+        window = decodeEntities(window.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression))
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-        let window = String(text.prefix(400))
+        guard !window.isEmpty else { return nil }
         let mon = #"(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"#
         let patterns: [(String, (NSTextCheckingResult, NSString) -> String?)] = [
             (#"(?i)\b"# + mon + #"\s+(\d{1,2}),?\s+(\d{4})\b"#, { m, ns in
@@ -873,7 +908,7 @@ extension FactTable {
             // The row's value must be what a found quote states: its headline number in one of them. A value computed
             // from other figures (a ratio of two rows' numbers) is no published fact: the row is left out.
             if !rows[n].unconfirmed, after != .unknown, let headline = MartyLoop.numbers(rows[n].value).first,
-               !foundQuotes.flatMap(MartyLoop.numbers).contains(headline) {
+               !foundQuotes.flatMap(QuoteCheck.statedNumbers).contains(headline) {
                 downgrades.append("\(rows[n].id): value \(rows[n].value) is in none of its found quotes (computed, not published); left out")
                 after = .unknown
                 rows[n].unconfirmed = true

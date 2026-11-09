@@ -27,10 +27,11 @@ import MartyEngine
     public struct Evidence {
         public var numbers: Set<String>
         public var versions: Set<String>
-        /// A confirmed table row's quote itself says the fact is not published: then the lesson may say so too.
-        public var absenceSourced = false
-        public init(numbers: Set<String> = [], versions: Set<String> = [], absenceSourced: Bool = false) {
-            self.numbers = numbers; self.versions = versions; self.absenceSourced = absenceSourced
+        /// Rows whose confirmed found quote itself says a fact is not published: a lesson text may say so only for
+        /// such a row, citing its id (in the text or its "unchecked" note).
+        public var absenceRows: Set<String> = []
+        public init(numbers: Set<String> = [], versions: Set<String> = [], absenceRows: Set<String> = []) {
+            self.numbers = numbers; self.versions = versions; self.absenceRows = absenceRows
         }
 
         @MainActor public static func build(table: FactTable, question: String, report: [String: Any]?, model: Any?, extra: [String] = []) -> Evidence {
@@ -49,10 +50,10 @@ import MartyEngine
                 nums.formUnion(MartyLoop.numbers(MartyLoop.trimmedDecimal(String(format: "%.2f", 1 / abs(v)))))
             }
             nums.formUnion(sizes(model).flatMap(MartyLoop.numbers))
-            let absence = table.rows.contains { r in
+            let absence = Set(table.rows.filter { r in
                 !r.unconfirmed && r.sources.contains { $0.check == "quote found" && $0.quote.range(of: FactCheck.absence, options: .regularExpression) != nil }
-            }
-            return Evidence(numbers: nums, versions: Set(texts.flatMap(FactCheck.versions)), absenceSourced: absence)
+            }.map(\.id))
+            return Evidence(numbers: nums, versions: Set(texts.flatMap(FactCheck.versions)), absenceRows: absence)
         }
     }
 
@@ -129,7 +130,7 @@ import MartyEngine
         }
         // "Not published" is a claim about the whole world; a search that missed a fact cannot support it. Only a
         // confirmed source that itself says so does.
-        if !e.absenceSourced, let r = text.range(of: absence, options: .regularExpression) {
+        if let r = text.range(of: absence, options: .regularExpression), !citesAbsenceRow(text, e) {
             out.append(Finding(field: field, token: String(text[r]), kind: "notPublished"))
         }
         return out
@@ -229,11 +230,23 @@ import MartyEngine
         let f0 = (format as? [String: Any]) ?? d
         let filled = !(f0["v"] as? Int == 1 && f0["kind"] as? String == "assembly")
         var out: [Finding] = []
-        for f in fields(d) {
-            for x in check(f.field, f.text, evidence, namesOnly: f.namesOnly, placeholders: filled && !f.literal) where !out.contains(x) { out.append(x) }
+        let all = fields(d)
+        for f in all {
+            for x in check(f.field, f.text, evidence, namesOnly: f.namesOnly, placeholders: filled && !f.literal) where !out.contains(x) {
+                // An absence may cite its row in the field's own "unchecked" note.
+                if x.kind == "notPublished", all.contains(where: { $0.field == f.field + ".unchecked" && citesAbsenceRow($0.text, evidence) }) { continue }
+                out.append(x)
+            }
             if out.count >= limit { break }
         }
         return Array(out.prefix(limit))
+    }
+
+    /// Whether `text` cites a row whose confirmed quote says the fact is unpublished ("F3 ...").
+    static func citesAbsenceRow(_ text: String, _ e: Evidence) -> Bool {
+        guard !e.absenceRows.isEmpty, let re = try? NSRegularExpression(pattern: #"\bF[0-9]{1,2}b*\b"#) else { return false }
+        let ns = text as NSString
+        return re.matches(in: text, range: NSRange(location: 0, length: ns.length)).contains { e.absenceRows.contains(ns.substring(with: $0.range)) }
     }
 
     /// The reason for a refusal: `fact.unsourced.<field>` of the first finding.

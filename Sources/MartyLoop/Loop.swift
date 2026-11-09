@@ -178,8 +178,8 @@ public final class MartyLoop {
         func walk(_ v: Any) -> Any {
             if var o = v as? [String: Any] {
                 for (k, x) in o { o[k] = walk(x) }
-                if o["k"] as? String == "table", let rows = o["cells"] as? [[Any]] {
-                    o["cells"] = rows.map { row in
+                func exact(_ rows: [[Any]]) -> [[Any]] {
+                    rows.map { row in
                         row.map { cell -> Any in
                             guard let n = cell as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() else { return cell }
                             let d = n.doubleValue
@@ -187,6 +187,9 @@ public final class MartyLoop {
                         }
                     }
                 }
+                // Every cell matrix: a table's "cells", a board override's "cells", a beat op setting "cells".
+                if let rows = o["cells"] as? [[Any]] { o["cells"] = exact(rows) }
+                if o["key"] as? String == "cells", let rows = o["value"] as? [[Any]] { o["value"] = exact(rows) }
                 return o
             }
             if let a = v as? [Any] { return a.map(walk) }
