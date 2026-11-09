@@ -525,14 +525,15 @@ public final class MartyLoop {
         // or comparison without a figure or a hedge ("<publisher> claims" is no hedge): Marty removes those sentences
         // from the says that keep another sentence, checks again, and refuses the document when any is left.
         if accepted == nil, var f = fallback {
-            if f.lint.contains(where: { $0.contains(Self.shareLint) }), let doc = f.document {
+            // (The share check runs on its own, not on the lint list, which keeps at most 12 findings.)
+            if let doc = f.document, !Self.shareFindings(doc).isEmpty {
                 let (trimmedDoc, removed) = Self.withoutShareSentences(doc)
                 if !removed.isEmpty, let r = try? engine.check(document: trimmedDoc, ref: nil, components: f.components, strict: true),
-                   (r["ok"] as? Bool) == true, !Self.documentLint(trimmedDoc).contains(where: { $0.contains(Self.shareLint) }) {
+                   (r["ok"] as? Bool) == true, Self.shareFindings(trimmedDoc).isEmpty {
                     f.report = r; f.lint = Self.documentLint(trimmedDoc)
                     receipt["lintRemoved"] = removed
                 } else {
-                    receipt["lintRefused"] = f.lint.filter { $0.contains(Self.shareLint) }
+                    receipt["lintRefused"] = Self.shareFindings(doc)
                     fallback = nil
                 }
             }
@@ -986,8 +987,15 @@ extension MartyLoop {
             let text = withoutViewRefs(raw)
             // The posed views are evidence: their angles, and a comparison of the posed parts ("one arm is raised more
             // than the other").
-            let c = Self.unsupportedComparatives(text, sources: sources + posed).filter {
-                posed.isEmpty || $0.range(of: #"(?i)\b(arm|arms|shoulder|shoulders|leg|legs|raised|lowered|tilted|posed?|pose)\b"#, options: .regularExpression) == nil
+            let c = Self.unsupportedComparatives(text, sources: sources + posed).filter { sentence in
+                // Only a comparison of a pose ("one arm is raised more than the other") is sourced by a posed view, and
+                // only when it makes no share claim ("the arm supports carry most of the load" is still checked).
+                guard !posed.isEmpty,
+                      sentence.range(of: #"(?i)\b(arm|arms|shoulder|shoulders|leg|legs|limb|limbs)\b"#, options: .regularExpression) != nil,
+                      sentence.range(of: #"(?i)\b(raised|lowered|tilted|bent|angled|higher|lower)\b"#, options: .regularExpression) != nil,
+                      sentence.range(of: #"(?i)\b(most|all|half|majority|share|load|lift|thrust|bulk|mainly|mostly)\b"#, options: .regularExpression) == nil
+                else { return true }
+                return false
             }
             // Direction words that disagree with the posed step count with the unsourced sentences.
             let d = push.map { PoseText.disagreements(text, push: $0) } ?? []
@@ -1222,6 +1230,19 @@ extension MartyLoop {
 
     /// The words that mark a share or comparison lint finding.
     static let shareLint = "a share or comparison needs"
+
+    /// Every unsupported share or comparison sentence of a document's says and annotation texts (no cap).
+    static func shareFindings(_ document: Any) -> [String] {
+        guard let d = document as? [String: Any] else { return [] }
+        let explainer = d["kind"] as? String == "explainer"
+        let solid = explainer ? d["solid"] as? [String: Any] ?? [:] : d
+        let ann = solid["annotations"] as? [String: Any] ?? [:]
+        let steps: [[String: Any]] = (explainer ? d["beats"] : d["steps"]) as? [[String: Any]] ?? []
+        let texts = steps.compactMap { $0["say"] as? String }
+            + ["labels", "arrows", "dimensions"].flatMap { (ann[$0] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String } }
+        let evidence = givenFigures(d)
+        return texts.flatMap { unsupportedComparatives($0, sources: evidence) }
+    }
 
     /// The document with every unsupported share or comparison sentence removed from a step's or beat's say that keeps
     /// another sentence; the removed sentences.

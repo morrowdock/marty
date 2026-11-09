@@ -1518,6 +1518,24 @@ final class MartyLoopTests: XCTestCase {
                           out: tempOut(), options: .init())
             .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 4, result: &clean)
         XCTAssertNil(clean["answerLint"], "\(clean)")
+        var share: [String: Any] = [:]
+        _ = try MartyLoop(model: ScriptedAdapter(replies: ["The arm supports carry most of the load.", "The arm supports carry a share of the load, about as shown."]),
+                          out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 4, result: &share)
+        XCTAssertNotNil(share["answerLint"], "a share claim near an arm is still checked")
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres daily.</p>"))
+        XCTAssertFalse(QuoteCheck.found("1050 horsepower.", in: "<p>It makes 1050 horsepower.</p>"), "punctuation is no context")
+        var allRow = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [
+            ["id": "F1", "claim": "Rear unit supplies all of the lift", "value": "lift and stabilization", "label": "CLAIM",
+             "sources": [["url": "https://a.org/11", "publisher": "A", "date": "2021", "quote": "The rear unit supplies lift and stabilization"]]]]])))
+        allRow.checkQuotes(fetcher: TestPages(pages: ["https://a.org/11": "<p>The rear unit supplies lift and stabilization.</p>"], fallback: nil))
+        XCTAssertTrue(allRow.rows[0].unconfirmed)
+        // A share hidden behind 12 other lint findings is still found.
+        var crowded = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(MartyExamples.formatExample.utf8)) as? [String: Any])
+        var steps = try XCTUnwrap(crowded["steps"] as? [[String: Any]])
+        steps[0]["say"] = "Two bearings hold a shaft. The lower bearing carries most of the load."
+        crowded["steps"] = steps
+        XCTAssertEqual(MartyLoop.shareFindings(crowded), ["The lower bearing carries most of the load"])
         var stuck: [String: Any] = [:]
         _ = try MartyLoop(model: ScriptedAdapter(replies: ["It weighs 99 kg.", "It still weighs 99 kg."]), out: tempOut(), options: .init())
             .writeAnswer(system: "s", user: "u", sources: [], result: &stuck)

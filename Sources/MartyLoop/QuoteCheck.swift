@@ -466,7 +466,7 @@ public enum QuoteCheck {
     /// Share and comparison words: a claim that uses one needs a quote that uses it too.
     static let shareWords: Set<String> = ["most", "majority", "half", "halves", "third", "thirds", "quarter", "quarters", "share", "shares",
         "split", "mainly", "mostly", "chiefly", "primarily", "largely", "largest", "main", "bulk", "predominantly", "dominant", "equal",
-        "equally", "evenly", "uniformly"]
+        "equally", "evenly", "uniformly", "all", "more", "less", "fewer", "twice", "double", "triple", "entire", "whole"]
 
     /// The claim word that none of the found quotes states, or nil: each share or comparison word of the value and
     /// claim, and for a value in words (no number) at least one of its content words.
@@ -728,7 +728,7 @@ public enum QuoteCheck {
             let gb = n > 0 && r.first.map { !" .,;:!?".contains($0) } == true
             let ga = n < raw.count - 1 && r.last.map { !" .,;:!?".contains($0) } == true
             // (Its length is that of its normalized text, as the too-short check measures it: "dry weight: 27kg" is 16.)
-            parts.append(Part(words: words, gluedBefore: gb, gluedAfter: ga, text: r.trimmingCharacters(in: .whitespaces)))
+            parts.append(Part(words: words, gluedBefore: gb, gluedAfter: ga, text: r.trimmingCharacters(in: CharacterSet(charactersIn: " .,;:!?"))))
         }
         guard let longest = parts.map(\.text.count).max(), longest >= minimumPart / 2,
               parts.reduce(0, { $0 + $1.text.count }) >= minimumPart else { return nil }
@@ -826,7 +826,8 @@ public enum QuoteCheck {
                 // magnitude, bound or rate word, or a short symbol-like word, may go on with the quantity.)
                 let plainProse = next.text.count >= 4 && next.text.allSatisfy(\.isLetter) && !Self.isUnitWord(next.text)
                     && !Self.timeUnits.contains(next.text) && !Self.magnitudes.contains(next.text) && !Self.postBounds.contains(next.text)
-                    && !Self.boundTails.contains(next.text) && !["every", "each", "plus", "times", "minus"].contains(next.text)
+                    && !Self.boundTails.contains(next.text) && !["every", "each", "plus", "times", "minus", "daily", "hourly", "weekly",
+                        "monthly", "yearly", "annually", "annual", "nightly", "apiece", "continuously"].contains(next.text)
                 if withUnit, !Self.proseAfterQuantity.contains(next.text), !plainProse { return false }
                 // An allowed word that leads into another quantity or a time continues it ("10 cm by 20 cm",
                 // "10 litres in 30 seconds", "10 kg over 2 hours").
