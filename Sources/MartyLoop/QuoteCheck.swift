@@ -275,9 +275,20 @@ public enum QuoteCheck {
     /// Words that scale the number before them.
     static let magnitudes: Set<String> = ["hundred", "thousand", "million", "billion", "trillion", "k", "m", "bn", "mn", "mln", "tn", "lakh", "crore"]
     /// Time units after "a", "an", "each" or "every" in a rate.
-    static let timeUnits: Set<String> = ["second", "sec", "s", "minute", "min", "hour", "hr", "h", "day", "week", "month", "year", "yr"]
-    /// Unit symbols that multiply a unit before them when written apart ("kw h", "n m", "a h").
-    static let unitSymbols: Set<String> = ["h", "s", "m", "g", "kg", "km", "w", "kw", "v", "j", "n", "pa", "hz", "mol", "k", "cd", "l"]
+    static let timeUnits: Set<String> = ["second", "seconds", "sec", "secs", "s", "minute", "minutes", "min", "mins", "hour", "hours", "hr",
+                                         "hrs", "h", "day", "days", "week", "weeks", "month", "months", "year", "years", "yr", "yrs"]
+    /// Number words that count the time unit after them ("every two hours").
+    static let countWords: Set<String> = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "twelve",
+                                          "few", "several", "half"]
+    /// Ordinary short words that are not unit symbols though they look like one ("at", "in", "of").
+    static let notUnits: Set<String> = ["a", "an", "at", "as", "am", "pm", "in", "on", "is", "it", "of", "or", "by", "to", "me", "my", "do",
+                                        "no", "so", "up", "we", "he", "us", "ha", "be", "go", "if", "cd"]
+    /// A unit symbol that multiplies a unit before it when written apart ("kw h", "n cm", "w ms"): an SI prefix and a
+    /// base or derived unit symbol.
+    static func isUnitSymbol(_ t: String) -> Bool {
+        guard !notUnits.contains(t), t.count <= 5 else { return false }
+        return t.range(of: "^(da|[yzafpnµumcdhkmgtpe])?(m|g|s|a|k|mol|n|j|w|pa|hz|v|c|f|ω|ohm|t|h|l|b|bar|wh|ah|ev)$", options: .regularExpression) != nil
+    }
 
     /// Whether a number starts at `i` and the mark `close` follows it right away ("10'" in "'10'").
     static func closesAfterNumber(_ chars: [Character], _ i: Int, _ close: Character) -> Bool {
@@ -529,8 +540,9 @@ public enum QuoteCheck {
                 if w[last].hasDigit, Self.magnitudes.contains(next.text) { return false }
                 if quantityEnd(w, last) != nil {
                     // A rate ("10 metres a second", "5 litres each hour") or a unit product ("10 kw h").
-                    if ["a", "an", "each", "every"].contains(next.text), let t = after, Self.timeUnits.contains(t.text) { return false }
-                    if unitEnd, Self.unitSymbols.contains(next.text) { return false }
+                    if ["a", "an", "each", "every"].contains(next.text), let t = after,
+                       Self.timeUnits.contains(t.text) || t.hasDigit || Self.countWords.contains(t.text) { return false }
+                    if unitEnd, Self.isUnitSymbol(next.text) { return false }
                 }
                 let dashBeforeWord = next.text == "-" && !unitEnd && !(after.map { $0.hasDigit || $0.text.first == "." || isSign($0) } ?? false)
                 if bare(next), !dashBeforeWord { return false }

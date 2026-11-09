@@ -76,7 +76,8 @@ the MCP server uses), so a run needs no MCP client.
    part that ends with a number or a unit after one may not be followed by
    such a word, nor by "per" or a power or quotient unit ("10 m" is not
    "10 m s⁻¹", "10 metres" not "10 metres per second" or "10 metres a second",
-   "10 kW" not "10 kW h", "10 cm" not "10 cm x 20 cm"), nor by a magnitude
+   or "10 metres every 30 seconds", "10 kW" not "10 kW h" or any SI-prefixed
+   unit symbol after it, "10 cm" not "10 cm x 20 cm"), nor by a magnitude
    ("$10" is not "$10 million"); a unit abbreviation's period after a number
    ("10 in.") does not end the quantity; a quantity's unit may
    be a few words with unit symbols ("10 degrees Celsius", "10 N-m", "10 m/s"); a range in words is whole at both ends ("10 to 20 bar" and

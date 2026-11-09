@@ -1572,6 +1572,20 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(QuoteCheck.found("The sensor displays -.5 when ready", in: "<p>The sensor displays '-.5' when ready.</p>"), "The sensor displays -.5 when ready | The sensor displays '-.5' when ready.")
         XCTAssertTrue(QuoteCheck.found("The length is 10 in. and the width", in: "<p>The length is 10 in. and the width is 4 in.</p>"), "The length is 10 in. and the width | The length is 10 in. and the width is 4 in.")
         XCTAssertTrue(QuoteCheck.found("it flew 10 km in a test run", in: "<p>it flew 10 km in a test run</p>"), "it flew 10 km in a test run | it flew 10 km in a test run")
+        // Round 21: quantified rates; SI-prefixed spaced unit products.
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres every 30 seconds.</p>"), "The pump delivers 10 litres | The pump delivers 10 litres every 30 seconds.")
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres every two hours.</p>"), "The pump delivers 10 litres | The pump delivers 10 litres every two hours.")
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres a minute.</p>"), "The pump delivers 10 litres | The pump delivers 10 litres a minute.")
+        XCTAssertFalse(QuoteCheck.found("The rated torque is 10 N", in: "<p>The rated torque is 10 N cm at the shaft.</p>"), "The rated torque is 10 N | The rated torque is 10 N cm at the shaft.")
+        XCTAssertFalse(QuoteCheck.found("The emitted energy is 10 W", in: "<p>The emitted energy is 10 W ms per pulse.</p>"), "The emitted energy is 10 W | The emitted energy is 10 W ms per pulse.")
+        XCTAssertFalse(QuoteCheck.found("The cell holds 10 m", in: "<p>The cell holds 10 mA h of charge.</p>"), "The cell holds 10 m | The cell holds 10 mA h of charge.")
+        XCTAssertTrue(QuoteCheck.found("The pump delivers 10 litres every 30 seconds", in: "<p>The pump delivers 10 litres every 30 seconds.</p>"), "The pump delivers 10 litres every 30 seconds | The pump delivers 10 litres every 30 seconds.")
+        XCTAssertTrue(QuoteCheck.found("The rated torque is 10 N cm at the shaft", in: "<p>The rated torque is 10 N cm at the shaft.</p>"), "The rated torque is 10 N cm at the shaft | The rated torque is 10 N cm at the shaft.")
+        XCTAssertTrue(QuoteCheck.found("It weighs 10 kg at sea level", in: "<p>It weighs 10 kg at sea level.</p>"), "It weighs 10 kg at sea level | It weighs 10 kg at sea level.")
+        XCTAssertTrue(QuoteCheck.found("It weighs 10 kg in total", in: "<p>It weighs 10 kg in total.</p>"), "It weighs 10 kg in total | It weighs 10 kg in total.")
+        XCTAssertTrue(QuoteCheck.found("It holds 10 litres of fuel", in: "<p>It holds 10 litres of fuel.</p>"), "It holds 10 litres of fuel | It holds 10 litres of fuel.")
+        XCTAssertTrue(QuoteCheck.found("The suit flew 10 km on the day", in: "<p>The suit flew 10 km on the day.</p>"), "The suit flew 10 km on the day | The suit flew 10 km on the day.")
+        XCTAssertTrue(QuoteCheck.found("It holds 10 litres a day later", in: "<p>It holds 10 litres a day later.</p>"), "It holds 10 litres a day later | It holds 10 litres a day later.")
         // Table cells are separate; inline markup joins.
         let specs = "<p>Maximum thrust of the rig</p><table><tr><th>Motors</th><td>1</td><td>144 kgf</td></tr></table>"
         XCTAssertFalse(QuoteCheck.found("Maximum thrust [\u{2026}] 1,144 kgf", in: specs))
