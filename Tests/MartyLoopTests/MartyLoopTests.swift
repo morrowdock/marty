@@ -148,7 +148,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(ok["modelled"] as? Bool, true)
         XCTAssertTrue(mOK.prompts[3].user.contains(#""radius":8"#), "the answer prompt shows the accepted change: \(mOK.prompts[3].user)")
         // A table edit in a beat's ops is a model change; a board text item edit alone is words only.
-        let table = MartyExamples.explainerExample.replacingOccurrences(of: #"["Rated rpm",3000]"#, with: #"["Rated rpm",3500]"#)
+        let table = MartyExamples.explainerExample.replacingOccurrences(of: #"["Rated rpm",3000,"#, with: #"["Rated rpm",3500,"#)
         XCTAssertNotEqual(table, MartyExamples.explainerExample)
         // The learner names the new figure, so it is evidence; an invented one is refused (fact.unsourced).
         let (_, invented) = try run([#"{"document": \#(table)}"#, #"{"document": null}"#, "No change."])
@@ -158,13 +158,13 @@ final class MartyLoopTests: XCTestCase {
         // The answer gets the changed values, before and after.
         XCTAssertTrue(mTable.prompts[3].user.contains("3000") && mTable.prompts[3].user.contains("3500"), mTable.prompts[3].user)
         // The answer gets the given figures of the accepted explainer, with their source.
-        XCTAssertTrue(mTable.prompts[3].user.contains("- Rated rpm 3500 — F1 maker's data sheet, 2024, claimed (given)"), mTable.prompts[3].user)
+        XCTAssertTrue(mTable.prompts[3].user.contains("- Rated rpm 3500") && mTable.prompts[3].user.contains("F1 maker's data sheet, 2024, claimed (given)"), mTable.prompts[3].user)
         let summary = MartyLoop.changeSummary(from: ["board": ["params": ["angle": 10]]], to: ["board": ["params": ["angle": 30]]])
         XCTAssertTrue(summary.contains("10") && summary.contains("30") && summary.contains("board"), summary)
         // A gravity arrow is checked again by the engine: no schematic-direction line.
         XCTAssertEqual(ok["forceArrowsMoved"] as? [String], [])
         XCTAssertFalse(mOK.prompts[3].user.contains("Force arrows the change moved"))
-        let caption = MartyExamples.explainerExample.replacingOccurrences(of: #""text":"Key figures""#, with: #""text":"Figures""#)
+        let caption = MartyExamples.explainerExample.replacingOccurrences(of: "Two bearings hold a shaft on a base", with: "Two bearings hold a shaft on its base")
         XCTAssertNotEqual(caption, MartyExamples.explainerExample)
         let (_, captionEdit) = try run([#"{"document": \#(caption)}"#, #"{"document": null}"#, "No change."])
         XCTAssertEqual((captionEdit["attempts"] as? [[String: Any]])?.first?["reason"] as? String, "followup.textOnly")
@@ -190,18 +190,17 @@ final class MartyLoopTests: XCTestCase {
             edited { d in d["beats"] = beats(d) + [["say": "A new caption.", "ops": [Any]()]] },
             edited { d in d["beats"] = beats(d) + [["say": "Note.", "ops": [["op": "add", "item": ["id": "n", "k": "text", "at": [1, 1], "text": "Note"]],
                                                                             ["op": "set", "id": "n", "key": "text", "value": "Note 2"],
-                                                                            ["op": "set", "id": "cap", "key": "text", "value": "Figures"],
+
                                                                             ["op": "title", "title": "New"], ["op": "camera", "camera": [Any]()]]]] },
             edited { d in
                 var solid = d["solid"] as! [String: Any], ann = solid["annotations"] as! [String: Any]
                 var arrows = ann["arrows"] as! [[String: Any]]; arrows[0]["text"] = "Its weight"
                 ann["arrows"] = arrows; solid["annotations"] = ann; d["solid"] = solid
             },
-            // A label on the table, in its add payload, and a board title.
+            // A label on the table (on the board item) and a board title.
             edited { d in
-                var b = beats(d), ops = b[0]["ops"] as! [[String: Any]], item = ops[0]["item"] as! [String: Any]
-                item["label"] = "Rated figures"; ops[0]["item"] = item; b[0]["ops"] = ops; d["beats"] = b
-                var board = d["board"] as! [String: Any]; board["title"] = "Figures"; d["board"] = board
+                var board = d["board"] as! [String: Any], items = board["items"] as! [[String: Any]]
+                items[0]["label"] = "Rated figures"; board["items"] = items; board["title"] = "Figures"; d["board"] = board
             }]
         for (n, d) in wordsOnly.enumerated() { XCTAssertEqual(MartyLoop.modelContent(d), same, "case \(n)") }
         let modelChanges: [[String: Any]] = [
@@ -1309,7 +1308,8 @@ final class MartyLoopTests: XCTestCase {
             XCTAssertFalse(h.contains("ghost the part in the way") || h.contains("or ghost parts"), "\(r): \(h)")
         }
         // Guide lines and exact table numbers.
-        XCTAssertTrue(author.contains("three-quarter-back or back view") && author.contains("\"lbf\""))
+        XCTAssertTrue(author.contains("back unit: a back camera") && author.contains("\"lbf\"") && author.contains("\"kgf\""))
+        XCTAssertFalse(author.contains("three-quarter-back"), "not a preset name")
         XCTAssertTrue(MartyPrompts.followUpSystem().contains("at most two arrows"))
         let board: [String: Any] = ["board": ["items": [["id": "t", "k": "table", "cells": [["Record", 85.06], ["Engines", 5]]]]]]
         let cells = (((MartyLoop.exactTableNumbers(board) as? [String: Any])?["board"] as? [String: Any])?["items"] as? [[String: Any]])?.first?["cells"] as? [[Any]]
@@ -1322,6 +1322,152 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual((((fixedOp?["over"] as? [String: Any])?["t"] as? [String: Any])?["cells"] as? [[Any]])?[0][1] as? String, "136.891")
         let sci = MartyLoop.exactTableNumbers(["cells": [[1.5e-10]]]) as? [String: Any]
         XCTAssertEqual((sci?["cells"] as? [[Any]])?[0][0] as? String, "1.5e-10")
+    }
+
+    /// Round 2i: preset names in the prompt and repair, bare part anchors auto-fixed, the no-change answer may not
+    /// deny a posed view, short quotes reported as such, counts written as words or articles.
+    func testRound2iFormatAndFollowUp() throws {
+        let author = MartyPrompts.authorSystem(parts: "x", example: "{}", explainer: nil)
+        for p in ["hero", "front", "side", "top", "low", "back", "iso", "backLeft", "backRight"] { XCTAssertTrue(author.contains(p), p) }
+        XCTAssertTrue(author.contains("Cameras: " + MartyEngine.cameraPresets.joined(separator: ", ") + " only"))
+        XCTAssertTrue(MartyPrompts.hint(for: "view.camera")?.contains(MartyEngine.cameraPresets.joined(separator: ", ")) == true)
+        XCTAssertFalse(MartyPrompts.authorSystem(parts: "x", example: "{}", explainer: MartyExamples.explainerExample).contains("Key figures"))
+        XCTAssertFalse(MartyExamples.explainerExample.contains("Key figures"))
+        XCTAssertTrue(MartyPrompts.researchSystem(maxSearches: 10).contains("product, technology or innovation"))
+
+        // The engine accepts a bare {"part": id} as the part's centre (no rewrite by Marty).
+        var doc = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(MartyExamples.formatExample.utf8)) as? [String: Any])
+        var ann = try XCTUnwrap(doc["annotations"] as? [String: Any]), labels = try XCTUnwrap(ann["labels"] as? [[String: Any]])
+        labels[0]["at"] = ["part": "shaft.input"]; ann["labels"] = labels; doc["annotations"] = ann
+        let report = try MartyEngine(outputRoot: nil).check(document: doc, ref: nil, components: [], strict: false)
+        XCTAssertNotEqual(report["reason"] as? String, "anchor.form", "\(report["reason"] ?? "")")
+        XCTAssertEqual(MartyEngine.cameraPresets.count, 9)
+        XCTAssertTrue(MartyEngine.cameraPresets.contains("backLeft") && MartyEngine.cameraPresets.contains("backRight"))
+
+        // The no-change answer: posed views go to the prompt, and a denial gets one repair.
+        let explainer: [String: Any] = ["kind": "explainer", "beats": [["say": "Hover."], ["say": "One arm raised steers.", "view": ["pose": ["pilot": ["with": ["shoulderL": 45]]]]]]]
+        let posed = MartyLoop.posedViews(explainer)
+        XCTAssertEqual(posed.count, 1); XCTAssertTrue(posed[0].hasPrefix("beat 2 poses"), posed[0])
+        XCTAssertTrue(MartyPrompts.answerUser(followUp: "How does it steer?", before: "{}", after: nil, posed: posed).contains("never say the model does not show it"))
+        let model = ScriptedAdapter(replies: ["In this schematic the arms are held still, so the model shows the hover, not a steering move.",
+                                              "Beat 2 shows this: raising one arm tilts its thrust."])
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let loop = try MartyLoop(model: model, out: out, options: .init())
+        var result: [String: Any] = [:]
+        let answer = loop.writeAnswer(system: "s", user: "u", sources: [], posed: posed, result: &result)
+        XCTAssertEqual(answer, "Beat 2 shows this: raising one arm tilts its thrust.")
+        XCTAssertEqual((result["answerPosedLint"] as? [String: Any])?["fixed"] as? Bool, true)
+        XCTAssertTrue(model.prompts[1].user.contains("beat 2 poses"), model.prompts[1].user)
+        var quiet: [String: Any] = [:]
+        _ = try MartyLoop(model: ScriptedAdapter(replies: ["The model does not show steering."]), out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], posed: [], result: &quiet)
+        XCTAssertNil(quiet["answerPosedLint"], "no posed view: nothing to contradict")
+        // Honest limits that are not about motion stay; a valid beat reference is no unsourced number.
+        var honest: [String: Any] = [:]
+        let honestAnswer = try MartyLoop(model: ScriptedAdapter(replies: ["The real suit is not shown to scale, and the engine does not model airflow. Beat 2 shows this."]),
+                                         out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &honest)
+        XCTAssertEqual(honestAnswer, "The real suit is not shown to scale, and the engine does not model airflow. Beat 2 shows this.")
+        XCTAssertNil(honest["answerPosedLint"]); XCTAssertNil(honest["answerLint"])
+        var airflow: [String: Any] = [:]
+        _ = try MartyLoop(model: ScriptedAdapter(replies: ["The arm engines' airflow is not modelled. The turn mechanism's airflow is not modelled either. Beats 1 and 2 show the suit."]),
+                          out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &airflow)
+        XCTAssertNil(airflow["answerPosedLint"]); XCTAssertNil(airflow["answerLint"])
+        var mixed: [String: Any] = [:]
+        _ = try MartyLoop(model: ScriptedAdapter(replies: ["The model shows steering but does not model airflow. Beats 1, 2, and 2 show it; beats 1,2 too."]),
+                          out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &mixed)
+        XCTAssertNil(mixed["answerPosedLint"]); XCTAssertNil(mixed["answerLint"])
+        var dashed: [String: Any] = [:]
+        _ = try MartyLoop(model: ScriptedAdapter(replies: ["The model shows steering\u{2014}it does not model airflow."]), out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &dashed)
+        XCTAssertNil(dashed["answerPosedLint"])
+        var paren: [String: Any] = [:]
+        _ = try MartyLoop(model: ScriptedAdapter(replies: ["The model shows steering (airflow is not modelled). Beats 1 through 2 show it."]), out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &paren)
+        XCTAssertNil(paren["answerPosedLint"]); XCTAssertNil(paren["answerLint"])
+        var predicate: [String: Any] = [:]
+        _ = try MartyLoop(model: ScriptedAdapter(replies: ["The model shows steering and does not model airflow."]), out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &predicate)
+        XCTAssertNil(predicate["answerPosedLint"])
+        for honestLine in ["The model shows rotation and the engine does not model airflow.", "The model shows rotation and airflow is not modelled.",
+                           "The model shows rotation and the engine's internal airflow is not modelled.", "The model does not show airflow and depicts the arms turning."] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: [honestLine]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &r)
+            XCTAssertNil(r["answerPosedLint"], honestLine)
+        }
+        // A coordinated phrase stays one clause; a denial a later rewrite brings in gets the posed repair.
+        var coordinated: [String: Any] = [:]
+        _ = try MartyLoop(model: ScriptedAdapter(replies: ["The model does not show the arms and shoulders moving.", "Beat 2 shows the arm raised."]), out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &coordinated)
+        XCTAssertEqual((coordinated["answerPosedLint"] as? [String: Any])?["fixed"] as? Bool, true)
+        var late: [String: Any] = [:]
+        let lateAnswer = try MartyLoop(model: ScriptedAdapter(replies: ["Most of the thrust comes from the rear engine.", "The model does not show steering.", "Beat 2 shows steering."]),
+                                       out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &late)
+        XCTAssertEqual(lateAnswer, "Beat 2 shows steering.")
+        XCTAssertEqual((late["answerPosedLint"] as? [String: Any])?["fixed"] as? Bool, true)
+
+        // Short quotes; counts written as ordinals, articles and pairs.
+        var rows = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [
+            ["id": "F1", "claim": "Engines", "value": "5", "label": "CLAIM", "sources": [["url": "https://a.org/7", "publisher": "A", "date": "2021", "quote": "two miniature jet engines on each arm, and a fifth engine"]]],
+            ["id": "F2", "claim": "Rear engine", "value": "1 rear engine", "label": "CLAIM", "sources": [["url": "https://a.org/7", "publisher": "A", "date": "2021", "quote": "a rear jet engine housed in a backpack"]]],
+            ["id": "F3", "claim": "Sides", "value": "2 sides", "label": "CLAIM", "sources": [["url": "https://a.org/7", "publisher": "A", "date": "2021", "quote": "on either side of the engine housing"]]],
+            ["id": "F4", "claim": "Model", "value": "Mk4", "label": "CLAIM", "sources": [["url": "https://a.org/7", "publisher": "A", "date": "2021", "quote": "the Mk4 suit"]]]]])))
+        rows.checkQuotes(fetcher: TestPages(pages: ["https://a.org/7": "<p>It has two miniature jet engines on each arm, and a fifth engine; a rear jet engine housed in a backpack sits on either side of the engine housing. See the Mk4 suit.</p>"], fallback: nil))
+        XCTAssertFalse(rows.rows[0].unconfirmed, "\(rows.downgrades)"); XCTAssertFalse(rows.rows[1].unconfirmed); XCTAssertFalse(rows.rows[2].unconfirmed)
+        // An unrelated article or a prose ordinal confirms no count.
+        var loose = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [
+            ["id": "F1", "claim": "Rotors", "value": "1 rotor", "label": "CLAIM", "sources": [["url": "https://a.org/8", "publisher": "A", "date": "2021", "quote": "The product uses a housing with five rotors"]]],
+            ["id": "F2", "claim": "Rotors", "value": "1", "label": "CLAIM", "sources": [["url": "https://a.org/8", "publisher": "A", "date": "2021", "quote": "It completed its first flight in 2017"]]]]])))
+        loose.checkQuotes(fetcher: TestPages(pages: ["https://a.org/8": "<p>The product uses a housing with five rotors. It completed its first flight in 2017.</p>"], fallback: nil))
+        XCTAssertTrue(loose.rows[0].unconfirmed); XCTAssertTrue(loose.rows[1].unconfirmed)
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "It is a five-engine jet suit designed for flight", entities: QuoteCheck.countedWords(value: "1", claim: "Engine count")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "a jet suit powered by five miniature engines", entities: QuoteCheck.countedWords(value: "1", claim: "Engine count for the jet suit")))
+        XCTAssertTrue(QuoteCheck.statesCountWord("2", "Both batteries are mounted at the rear", entities: QuoteCheck.countedWords(value: "2", claim: "Batteries")))
+        XCTAssertTrue(QuoteCheck.statesCountWord("1", "it has a rear jet engine", entities: QuoteCheck.countedWords(value: "1 rear engine", claim: "Rear engine")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "The company unveiled a new version of its jet suit with five engines",
+                                                  entities: QuoteCheck.countedWords(value: "Version 1", claim: "Current model")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "The company unveiled a new version of its jet suit with five engines",
+                                                  entities: QuoteCheck.countedWords(value: "Jet Suit Mk 1", claim: "Current model")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("2", "Both arms carry three engines each", entities: QuoteCheck.countedWords(value: "2 engines per arm", claim: "Arm engines")))
+        XCTAssertEqual(QuoteCheck.countedWords(value: "2 engines per arm", claim: "Arm engines"), ["engines"])
+        XCTAssertEqual(QuoteCheck.countedWords(value: "1 rear engine", claim: "Rear engine"), ["engine"])
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "A new model of the device uses five engines", entities: QuoteCheck.countedWords(value: "Version 1", claim: "Current model")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "The product uses a housing with rotors mounted inside", entities: QuoteCheck.countedWords(value: "1 rotor", claim: "Rotors")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("2", "Both arms carry engines to provide thrust", entities: QuoteCheck.countedWords(value: "2 engines per arm", claim: "Arm engines")))
+        XCTAssertTrue(QuoteCheck.statesCountWord("2", "both rear engines are mounted low", entities: QuoteCheck.countedWords(value: "2", claim: "Rear engines on this model")))
+        XCTAssertEqual(QuoteCheck.countedWords(value: "2", claim: "Arm engines"), ["engines"])
+        XCTAssertEqual(QuoteCheck.countedWords(value: "1", claim: "Suit model"), [])
+        XCTAssertFalse(QuoteCheck.statesCountWord("2", "Both arms carry three engines each", entities: QuoteCheck.countedWords(value: "2", claim: "Arm engines")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "It uses a turbine. Engines are mounted on the arms", entities: QuoteCheck.countedWords(value: "1 engine", claim: "Engines")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "The vehicle has a jet engine mount at the rear", entities: QuoteCheck.countedWords(value: "1 engine", claim: "Engines")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("2", "Both rotor blades generate lift as the hub turns", entities: QuoteCheck.countedWords(value: "2 rotors", claim: "Rotors")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("2", "Both engine mounts are attached to the airframe", entities: QuoteCheck.countedWords(value: "2 engines", claim: "Engines")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "In a jet suit, engines provide the thrust needed for flight", entities: QuoteCheck.countedWords(value: "1 engine", claim: "Engines")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "The device uses a rotor housing containing several rotors", entities: QuoteCheck.countedWords(value: "1 rotor", claim: "Rotors")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("2", "Both engine mounting brackets are attached to the airframe", entities: QuoteCheck.countedWords(value: "2 engines", claim: "Engines")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("2", "Both engine power and fuel consumption are shown on the display", entities: QuoteCheck.countedWords(value: "2 engines", claim: "Engines")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "It has a battery power supply", entities: QuoteCheck.countedWords(value: "1 battery", claim: "Batteries")))
+        XCTAssertEqual(QuoteCheck.countedWords(value: "1 kg", claim: "Dry mass"), [])
+        XCTAssertEqual(QuoteCheck.countedWords(value: "1", claim: "Thrust"), [])
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "a thrust of fifty newtons", entities: QuoteCheck.countedWords(value: "1 N", claim: "Thrust")))
+        XCTAssertEqual(QuoteCheck.countedWords(value: "1", claim: "Fuel consumption", unit: "kg/h"), [])
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "The device is powered by a few engines", entities: QuoteCheck.countedWords(value: "1 engine", claim: "Engines")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("2", "Both engine and battery are mounted at the rear", entities: QuoteCheck.countedWords(value: "2 engines", claim: "Engines")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("2", "The aircraft uses a second-generation engine", entities: QuoteCheck.countedWords(value: "2 engines", claim: "Engines")))
+        for hyphen in ["\u{2010}", "\u{2011}"] {
+            XCTAssertFalse(QuoteCheck.statesCountWord("2", "The aircraft uses a second\(hyphen)generation engine", entities: QuoteCheck.countedWords(value: "2 engines", claim: "Engines")))
+            var row = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [["id": "F1", "claim": "Engines", "value": "2 engines", "label": "CLAIM",
+                "sources": [["url": "https://a.org/9", "publisher": "A", "date": "2021", "quote": "The aircraft uses a second\(hyphen)generation engine"]]]]])))
+            row.checkQuotes(fetcher: TestPages(pages: ["https://a.org/9": "<p>The aircraft uses a second\(hyphen)generation engine.</p>"], fallback: nil))
+            XCTAssertTrue(row.rows[0].unconfirmed, "\(row.downgrades)")
+        }
+        XCTAssertTrue(QuoteCheck.statesCountWord("2", "both engines are mounted low", entities: QuoteCheck.countedWords(value: "2 engines in the rear", claim: "Engines")))
+        XCTAssertEqual(rows.rows[3].sources[0].check, "quote too short to check")
     }
 
     func testAnchorIssuesInRepairs() throws {

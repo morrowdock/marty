@@ -334,6 +334,8 @@ public enum QuoteCheck {
         "fifteen": "15", "sixteen": "16", "seventeen": "17", "eighteen": "18", "nineteen": "19", "twenty": "20", "thirty": "30",
         "forty": "40", "fifty": "50", "sixty": "60", "seventy": "70", "eighty": "80", "ninety": "90", "hundred": "100",
         "thousand": "1000", "million": "1000000", "billion": "1000000000", "single": "1", "twin": "2", "pair": "2", "dozen": "12"]
+    static let ordinals: [String: String] = ["first": "1", "second": "2", "third": "3", "fourth": "4", "fifth": "5", "sixth": "6",
+        "seventh": "7", "eighth": "8", "ninth": "9", "tenth": "10"]
 
     /// The numbers a quote states: its digits, number words ("five"), and Roman version numerals after a version
     /// word ("Mk IV" is 4).
@@ -406,6 +408,111 @@ public enum QuoteCheck {
         }
         let ordered = found.map(\.1)
         return inOrder ? ordered : Array(Set(ordered + MartyLoop.numbers(quote)))
+    }
+
+    /// Whether `quote` states the count `headline` of the row's counted thing (`entities`, see `countedWords`) in
+    /// words that are no cardinal: an ordinal ("a fifth engine" is 5), or for 1 an article, "single" or "sole" ("a
+    /// rear jet engine"), for 2 "both", "either", "pair" or "twin" ("either side"). The cue must come within three
+    /// words before the counted noun, with no number between ("a five-engine suit" states no 1; "a housing with five
+    /// rotors" no 1 rotor; "first flight" no count of engines).
+    static func statesCountWord(_ headline: String, _ quote: String, entities: Set<String>) -> Bool {
+        let cue: Set<String>
+        switch headline {
+        case "1": cue = ["a", "an", "single", "sole"]
+        case "2": cue = ["both", "either", "pair", "twin"]
+        default: cue = []
+        }
+        let wanted = Set(entities.map(singular))
+        guard !wanted.isEmpty else { return false }
+        // One clause at a time: a cue never reaches into the next sentence, clause or parenthesis.
+        // (Unicode hyphens are hyphens: "second\u{2011}generation" stays one compound.)
+        let folded = quote.lowercased().replacingOccurrences(of: "[\u{2010}\u{2011}\u{2012}\u{00AD}]", with: "-", options: .regularExpression)
+        for clause in folded.components(separatedBy: CharacterSet(charactersIn: ".,;:!?()[]\u{2014}\u{2013}")) {
+            // (A hyphenated compound stays one word: "second-generation" is no ordinal, "five-engine" a count.)
+            if statesCountWord(headline, clause: clause.split { !$0.isLetter && !$0.isNumber && $0 != "-" }.map(String.init), cue: cue, wanted: wanted) { return true }
+        }
+        return false
+    }
+
+    static func statesCountWord(_ headline: String, clause words: [String], cue: Set<String>, wanted: Set<String>) -> Bool {
+        for (i, w) in words.enumerated() where cue.contains(w) || ordinals[w] == headline {
+            if i > 0, words[i - 1] == "one", w != "a" { continue }   // "one of five" is no count
+            // Up to two plain modifiers between the cue and the noun ("a rear jet engine"); a connector, a verb-like
+            // word, a plural noun or another count ends the phrase ("a housing with rotors", "both arms carry engines").
+            // Agreement: an article, "single", "sole", "either" or an ordinal counts a singular head; "both", "pair",
+            // "twin" a plural one ("a few engines", "both engine and battery" count nothing).
+            let wantsPlural = ["both", "pair", "twin"].contains(w)
+            for j in (i + 1)..<min(words.count, i + 4) {
+                let x = words[j]
+                if wanted.contains(singular(x)), (singular(x) != x) == wantsPlural {
+                    // The noun must be the phrase's head, not a modifier of another noun ("a jet engine mount", "both
+                    // rotor blades", "a rotor housing"): only the clause's end, a connector, a common verb or an -ed
+                    // participle ("housed", "mounted") may follow it; any other word may be the real head, so the cue
+                    // counts nothing.
+                    guard j + 1 < words.count else { return true }
+                    let n = words[j + 1]
+                    if phraseBreaks.contains(n) || (n.count > 3 && n.hasSuffix("ed")) { return true }
+                    break
+                }
+                if x.first?.isNumber == true || numberWords[x] != nil || ordinals[x] != nil || quantifiers.contains(x) { break }
+                if x.contains("-"), x.split(separator: "-").contains(where: { numberWords[String($0)] != nil || ordinals[String($0)] != nil || $0.first?.isNumber == true }) { break }
+                if wanted.contains(singular(x)) { break }   // the noun in the wrong number
+                if phraseBreaks.contains(x) || x.hasSuffix("ing") || x.hasSuffix("ed") || (x.count > 3 && x.hasSuffix("s") && !x.hasSuffix("ss")) { break }
+            }
+        }
+        return false
+    }
+
+    /// Words of quantity that are no count ("a few", "several", "a number of").
+    static let quantifiers: Set<String> = ["few", "several", "many", "couple", "number", "lot", "lots", "some", "more", "most", "all", "multiple", "various"]
+
+    /// Words that end a noun phrase: connectors, articles and common verbs.
+    /// (Only words that are never nouns: "power", "drive", "run" or "turn" may head a compound, "engine power".)
+    static let phraseBreaks: Set<String> = ["with", "of", "for", "to", "from", "in", "on", "at", "by", "and", "or", "but", "that", "which",
+        "the", "a", "an", "its", "their", "his", "her", "is", "are", "was", "were", "be", "has", "have", "had", "carries",
+        "provides", "produces", "generates", "sits", "can", "will", "must", "may", "each", "only", "also", "contains", "weighs"]
+
+    /// A plural noun as its singular ("batteries" battery, "boxes" box, "engines" engine).
+    static func singular(_ w: String) -> String {
+        if w.count > 4, w.hasSuffix("ies") { return String(w.dropLast(3)) + "y" }
+        if w.count > 4, ["sses", "xes", "ches", "shes", "zes"].contains(where: { w.hasSuffix($0) }) { return String(w.dropLast(2)) }
+        if w.count > 3, w.hasSuffix("s"), !w.hasSuffix("ss") { return String(w.dropLast()) }
+        return w
+    }
+
+    /// The row's counted noun: the head noun of the value's phrase after its number, up to a connector ("1 rear
+    /// engine": engine; "2 engines per arm": engines), or else the first content word of its claim. A version or
+    /// model row counts nothing ("Version 1", "Current model": an identifier must be stated, never an article).
+    static func countedWords(value: String, claim: String, unit: String = "") -> Set<String> {
+        let filler: Set<String> = ["the", "and", "with", "for", "per", "its", "of", "on", "in", "a", "an", "number", "count", "total", "each",
+                                   "how", "many", "there", "are", "is", "current", "new", "latest", "main"]
+        let identifiers: Set<String> = ["version", "model", "generation", "gen", "mark", "mk", "type", "series", "edition", "release", "variant"]
+        let connectors: Set<String> = ["per", "each", "on", "in", "for", "at", "of", "with", "by", "to", "from", "across", "under", "over"]
+        let tokens = value.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
+        let claimWords = claim.lowercased().split { !$0.isLetter }.map(String.init)
+        // The claim's head noun: the last content word of its first phrase ("Arm engines": engines; "Engine count
+        // for the jet suit": engine; "Suit model": model). An identifier row: its value names a version or model, or
+        // its claim's head is one ("Current model").
+        let claimHead = claimWords.prefix { !connectors.contains($0) }.filter { $0.count >= 3 && !filler.contains($0) }.last
+        if tokens.contains(where: identifiers.contains) || claimHead.map(identifiers.contains) == true { return [] }
+        // A measured quantity takes no count word: a unit after the value's number ("1 kg") or a measurement claim
+        // ("Dry mass", "Thrust"); its number must be stated.
+        let measures: Set<String> = ["mass", "weight", "thrust", "force", "power", "speed", "velocity", "length", "height", "width", "depth",
+            "diameter", "radius", "range", "distance", "time", "duration", "pressure", "temperature", "capacity", "energy", "volume", "area",
+            "rate", "price", "cost", "altitude", "endurance", "payload", "efficiency", "torque", "voltage", "frequency", "size"]
+        // (The unit is the word right after the number, or the row's own unit field: "1" with unit "kg/h".)
+        let at0 = tokens.firstIndex { $0.first?.isNumber == true || numberWords[$0] != nil || ordinals[$0] != nil }
+        if let at0, at0 + 1 < tokens.count, isUnitWord(tokens[at0 + 1]) { return [] }
+        let unitWords = unit.lowercased().split { !$0.isLetter }.map(String.init)
+        if unit.contains("/") || unitWords.contains(where: { isUnitWord($0) }) { return [] }
+        if let head = claimHead, measures.contains(head) || measures.contains(singular(head)) { return [] }
+        let at = tokens.firstIndex { $0.first?.isNumber == true || numberWords[$0] != nil || ordinals[$0] != nil }
+        if let at {
+            let phrase = tokens[(at + 1)...].prefix { !connectors.contains($0) }.filter { $0.allSatisfy(\.isLetter) && $0.count >= 3 && !filler.contains($0) }
+            if let head = phrase.last { return [head] }
+        }
+        if let u = unitWords.last, u.count >= 3 { return [u] }   // a count unit ("engines")
+        return claimHead.map { [$0] } ?? []
     }
 
     /// The value of a Roman numeral (i to mmmcmxcix), or nil.
@@ -1021,6 +1128,10 @@ extension FactTable {
                     }
                 }
                 guard !src.quote.isEmpty else { rows[n].sources[k].check = "no quote"; continue }
+                // A quote under the minimum is never evidence: it is reported as too short, not as not found.
+                guard QuoteCheck.normalized(src.quote, html: false).count >= QuoteCheck.minimumPart else {
+                    rows[n].sources[k].check = "quote too short to check"; continue
+                }
                 guard let url = URL(string: src.url) else { rows[n].sources[k].check = "bad url"; continue }
                 let page: (status: Int, body: String?, final: URL?)
                 if let cached = pages[src.url] { page = cached }
@@ -1059,7 +1170,8 @@ extension FactTable {
             // The row's value must be what a found quote states: its headline number in one of them. A value computed
             // from other figures (a ratio of two rows' numbers) is no published fact: the row is left out.
             if !rows[n].unconfirmed, after != .unknown, let headline = QuoteCheck.statedNumbers(rows[n].value, inOrder: true).first,
-               !foundQuotes.flatMap({ QuoteCheck.statedNumbers($0) }).contains(headline) {
+               !foundQuotes.flatMap({ QuoteCheck.statedNumbers($0) }).contains(headline),
+               !foundQuotes.contains(where: { QuoteCheck.statesCountWord(headline, $0, entities: QuoteCheck.countedWords(value: rows[n].value, claim: rows[n].claim, unit: rows[n].unit)) }) {
                 downgrades.append("\(rows[n].id): value \(rows[n].value) is in none of its found quotes (computed, not published); left out")
                 after = .unknown
                 rows[n].unconfirmed = true

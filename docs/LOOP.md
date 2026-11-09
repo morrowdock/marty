@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-09. Prompts `marty-prompts/21`. Engine pin as in
+Status: early preview, 2026-11-09. Prompts `marty-prompts/22`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -127,7 +127,11 @@ the MCP server uses), so a run needs no MCP client.
    row the model itself gave as UNKNOWN without sources is a researched
    absence, "not found in this search"); a row whose value's first number is in
    none of its found quotes (number words such as "five" or "twenty-four", as
-   one number, and Roman version numerals such as "Mk IV" count as stated) (a value computed from other figures, such as a
+   one number, Roman version numerals such as "Mk IV", and, right before one of
+   the row's own words within three words, an ordinal ("a fifth engine"), or
+   for 1 an article or "single", for 2 "both", "either" or "pair" ("a rear jet
+   engine", "either side") count as stated; "a housing with five rotors"
+   states no 1 rotor, "first flight" no count) (a value computed from other figures, such as a
    ratio of two rows) is also `unconfirmed` and left out; a VERIFIED row needs
    found quotes on two sites and no found
    quote whose text or page text within 160 characters attributes the figure
@@ -214,8 +218,13 @@ the MCP server uses), so a run needs no MCP client.
    label is anchored on the named inner part, not on the casing or body, and an
    inside whose real parts are not public is labelled "<class>-style <kind>
    (example)" with "Not confirmed <brand> hardware". Each unit the lesson names
-   is shown once in a view that faces it (a back unit: a three-quarter-back or
-   back view); a force in pounds is "lbf"; a follow-up step or beat gives text
+   is shown in a view that faces it (a back unit: camera "back", "backLeft" or
+   "backRight") and every named
+   unit in one whole-figure view; the guide lists the camera presets exactly
+   (`MartyEngine.cameraPresets`), as do the `view.camera` and `step.camera`
+   repair hints; force units are "lbf" and "kgf"; a board has no text caption
+   (it would show on every beat) and a table shows each figure's publisher (a
+   "Source" column); a fact a table row gives is stated, never "not found"; a follow-up step or beat gives text
    to at most two arrows. Board table numbers keep every published digit:
    Marty writes every non-integer cell as text before the check, in a table, a
    board override or a beat op that sets "cells" (85.06 is not shown as 85.1). The generic repair hints for anchor and arrow refusals
@@ -224,7 +233,12 @@ the MCP server uses), so a run needs no MCP client.
    ghosted). The research prompt asks for the maker's own website for the
    current version and model, interviews with the maker or inventor for how it
    works and how parts share the load, ratios only as a source states them,
-   and dates exactly as the page shows them. Free text (a figure, a
+   and dates exactly as the page shows them, the maker's product, technology or
+   innovation pages by name with its current model name as a row, the
+   inventor's own account of how thrust or load is shared, and quotes of at
+   least 16 characters (a shorter quote is reported "quote too short to
+   check"). A bare part anchor (`{"part": id}`) is the part's centre (the
+   engine accepts it since PR #46). Free text (a figure, a
    note) is a label on a `{"world": [x, y, z]}` anchor beside the model, not on
    a part. The same general honesty rules apply to
    every subject: a load share is quoted with its source, never invented; no
@@ -470,7 +484,14 @@ the MCP server uses), so a run needs no MCP client.
    of", "more than" or a similar word, with no hedge (about, in this schematic)
    and no number that is also in the evidence (the given figures shown, the
    engine fact texts and ratios, numbers set in the change; never raw JSON),
-   gets one rewrite request; `answerLint` records the sentences and whether the
+   gets one rewrite request. The answer prompt lists the beats or steps that
+   already pose parts ("beat 4 poses …"; after an accepted change, those of the
+   changed document): an answer that denies a motion while such a view exists
+   ("the model does not show steering", "held still", "not a steering move";
+   not an unrelated limit such as "not shown to scale") gets one
+   rewrite request to say which beat shows it (`answerPosedLint`); a beat or
+   step number that names one of its views is no fact for the number check. `answerLint`
+   records the sentences and whether the
    rewrite cleared them. A sentence with a number, year or version that is in no
    source (the fact table, the reports, the change, the question and the
    follow-up; for a refused answer only the report before, not the rejected
@@ -524,7 +545,7 @@ One `receipt.json` per run, with sorted keys:
 | `accepted`, `final` | Whether a document was accepted, and its title, part ids, ratios, checks, `ref`, triangles and steps. |
 | `render`, `lesson` | Render `ok`, `reason` (when it failed), directory, file digests and timing; `lesson.json`. |
 | `adapterErrors` | Reasons of model calls that failed in the adapter (for example `adapter.timeout`). Present only when one failed. If the last plan call fails in the adapter (no plan was received), the run stops there. |
-| `followUp` | The question, its attempts, `changed` (the engine accepted a patch), `modelled` (the engine solved the change, or none was needed), `ratiosChanged`, `forceArrowsMoved` (force arrows that the accepted change may have moved; their shown direction is schematic), the report after the change, the answer, `answerLint` (when a comparison without a figure was sent back once) and `answerSource`. `ok` means an answer was written: also an honest "this model cannot show it" when `modelled` is false. `ok` is false when no answer was written (for example an adapter failure). |
+| `followUp` | The question, its attempts, `changed` (the engine accepted a patch), `modelled` (the engine solved the change, or none was needed), `ratiosChanged`, `forceArrowsMoved` (force arrows that the accepted change may have moved; their shown direction is schematic), the report after the change, the answer, `answerLint` (when a comparison without a figure was sent back once), `answerPosedLint` (when a denial of a posed view was sent back once), `autoFixed` and `answerSource`. `ok` means an answer was written: also an honest "this model cannot show it" when `modelled` is false. `ok` is false when no answer was written (for example an adapter failure). |
 | `calls` | Every model call: phase, attempt, prompt files with sizes and digests, reply file, seconds, adapter facts (tokens, cost equivalent) and the engine outcome. |
 | `seconds`, `modelSeconds`, `contextBytes` | Wall time, model time and prompt sizes. |
 
