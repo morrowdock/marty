@@ -1513,6 +1513,21 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(QuoteCheck.found("The turbine produces 144 kgf", in: "<p>She said, \"The turbine produces 144 kgf\" and left.</p>"), "The turbine produces 144 kgf | She said, \"The turbine produces 144 kgf\" and left.")
         XCTAssertTrue(QuoteCheck.found("The engine[s] produce 144 kgf of thrust", in: "<p>The engines produce 144 kgf of thrust.</p>"), "The engine[s] produce 144 kgf of thrust | The engines produce 144 kgf of thrust.")
         XCTAssertTrue(QuoteCheck.found("it went from the dock to 20 metres out", in: "<p>it went from the dock to 20 metres out</p>"), "it went from the dock to 20 metres out | it went from the dock to 20 metres out")
+        // Round 17: quotation pairing by context; between-and ranges; em dashes are punctuation.
+        XCTAssertFalse(QuoteCheck.found("The compact model stands 511\" tall", in: "<p>The 'compact' model stands 5'11\" tall.</p>"), "The compact model stands 511\" tall | The 'compact' model stands 5'11\" tall.")
+        XCTAssertFalse(QuoteCheck.found("The compact model stands 511\" tall", in: "<p>The &lsquo;compact&rsquo; model stands 5'11\" tall.</p>"), "The compact model stands 511\" tall | The &lsquo;compact&rsquo; model stands 5'11\" tall.")
+        XCTAssertFalse(QuoteCheck.found("The model from the 90s stands 511 tall", in: "<p>The model from the '90s stands 5'11\" tall.</p>"), "The model from the 90s stands 511 tall | The model from the '90s stands 5'11\" tall.")
+        XCTAssertFalse(QuoteCheck.found("Operating pressure […] 20 bar", in: "<p>Operating pressure is between 10 and 20 bar.</p>"), "Operating pressure […] 20 bar | Operating pressure is between 10 and 20 bar.")
+        XCTAssertFalse(QuoteCheck.found("The pressure is between 10", in: "<p>The pressure is between 10 and 20 bar.</p>"), "The pressure is between 10 | The pressure is between 10 and 20 bar.")
+        XCTAssertFalse(QuoteCheck.found("The pressure is between 10 bar", in: "<p>The pressure is between 10 bar and 20 bar.</p>"), "The pressure is between 10 bar | The pressure is between 10 bar and 20 bar.")
+        XCTAssertFalse(QuoteCheck.found("The pressure is […] -5", in: "<p>The pressure is between −10 and −5 bar.</p>"), "The pressure is […] -5 | The pressure is between −10 and −5 bar.")
+        XCTAssertTrue(QuoteCheck.found("The motor produces 144 kgf", in: "<p>The motor produces 144 kgf — 2024 testing confirmed this.</p>"), "The motor produces 144 kgf | The motor produces 144 kgf — 2024 testing confirmed this.")
+        XCTAssertTrue(QuoteCheck.found("The suit - with five engines - gives a thrust", in: "<p>The suit—with five engines—gives a thrust</p>"), "The suit - with five engines - gives a thrust | The suit—with five engines—gives a thrust")
+        XCTAssertTrue(QuoteCheck.found("a five-engine suit with 144 kgf", in: "<p>a five-engine suit with 144 kgf of thrust</p>"), "a five-engine suit with 144 kgf | a five-engine suit with 144 kgf of thrust")
+        XCTAssertTrue(QuoteCheck.found("The compact model stands 5'11\" tall", in: "<p>The 'compact' model stands 5'11\" tall.</p>"), "The compact model stands 5'11\" tall | The 'compact' model stands 5'11\" tall.")
+        XCTAssertTrue(QuoteCheck.found("The pressure is between 10 and 20 bar", in: "<p>The pressure is between 10 and 20 bar.</p>"), "The pressure is between 10 and 20 bar | The pressure is between 10 and 20 bar.")
+        XCTAssertTrue(QuoteCheck.found("it has 3 engines and 2 fans", in: "<p>it has 3 engines and 2 fans</p>"), "it has 3 engines and 2 fans | it has 3 engines and 2 fans")
+        XCTAssertTrue(QuoteCheck.found("It's rated at 144 kgf", in: "<p>It's rated at 144 kgf.</p>"), "It's rated at 144 kgf | It's rated at 144 kgf.")
         // Table cells are separate; inline markup joins.
         let specs = "<p>Maximum thrust of the rig</p><table><tr><th>Motors</th><td>1</td><td>144 kgf</td></tr></table>"
         XCTAssertFalse(QuoteCheck.found("Maximum thrust [\u{2026}] 1,144 kgf", in: specs))

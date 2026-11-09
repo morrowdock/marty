@@ -225,7 +225,7 @@ public enum QuoteCheck {
         t = unitPrimes(t)
         for (a, b) in [("\u{2018}", "'"), ("\u{2019}", "'"), ("\u{201A}", "'"), ("\u{201B}", "'"),
                        ("\u{201C}", "\""), ("\u{201D}", "\""), ("\u{201E}", "\""), ("\u{00AB}", "\""), ("\u{00BB}", "\""),
-                       ("\u{2010}", "-"), ("\u{2011}", "-"), ("\u{2012}", "-"), ("\u{2013}", "-"), ("\u{2014}", "-"), ("\u{2015}", "-"),
+                       ("\u{2010}", "-"), ("\u{2011}", "-"), ("\u{2012}", "-"), ("\u{2013}", "-"), ("\u{2015}", "\u{2014}"),
                        ("\u{2212}", "-"), ("\u{00A0}", " "), ("\u{202F}", " "), ("\u{2009}", " "), ("\u{2026}", "...")] {
             t = t.replacingOccurrences(of: a, with: b)
         }
@@ -255,6 +255,7 @@ public enum QuoteCheck {
         // The block mark stays a token of its own (a hard boundary between tokens, see `tokens`).
         t = t.replacingOccurrences(of: "\u{2}", with: " \u{2} ")
         t = t.replacingOccurrences(of: #"\s*-\s*"#, with: " - ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s*\u{2014}\\s*", with: " \u{2014} ", options: .regularExpression)
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
         t = t.replacingOccurrences(of: #" ([.,;:!?)\]])(?![0-9])"#, with: "$1", options: .regularExpression)
             .replacingOccurrences(of: #"([(\[]) "#, with: "$1", options: .regularExpression)
@@ -268,23 +269,31 @@ public enum QuoteCheck {
     /// it closes a quotation of its own kind that is open in the same block ("“The turbine produces 144”",
     /// "\"5'11\"\"" is a quoted 5′11″). Straight double quotes pair in order; a block mark ends every quotation.
     static func unitPrimes(_ s: String) -> String {
+        let chars = Array(s)
         var out = "", curlyDouble = 0, curlySingle = 0, straightDouble = false, straightSingle = false
-        for c in s {
-            let afterDigit = out.last?.isNumber == true
+        for (i, c) in chars.enumerated() {
+            let prev = out.last, next: Character? = i + 1 < chars.count ? chars[i + 1] : nil
+            let afterDigit = prev?.isNumber == true, beforeDigit = next?.isNumber == true
+            let afterWord = prev.map { $0.isLetter || $0.isNumber } ?? false, beforeLetter = next?.isLetter == true
             switch c {
             case "\u{2}": curlyDouble = 0; curlySingle = 0; straightDouble = false; straightSingle = false; out.append(c)
-            case "\u{201C}": curlyDouble += 1; out.append(c)
-            case "\u{2018}": curlySingle += 1; out.append(c)
+            case "\u{201C}", "\u{201E}": curlyDouble += 1; out.append(c)
+            case "\u{2018}", "\u{201A}": if !beforeDigit { curlySingle += 1 }; out.append(c)   // "‘90s" opens nothing
             case "\u{201D}":
-                if afterDigit, curlyDouble == 0 { out += "\u{2032}\u{2032}" } else { curlyDouble = max(0, curlyDouble - 1); out.append(c) }
+                if afterDigit, beforeDigit || curlyDouble == 0 { out += "\u{2032}\u{2032}" } else { curlyDouble = max(0, curlyDouble - 1); out.append(c) }
             case "\u{2019}":
-                if afterDigit, curlySingle == 0 { out += "\u{2032}" } else { curlySingle = max(0, curlySingle - 1); out.append(c) }
+                if afterDigit, beforeDigit || curlySingle == 0 { out += "\u{2032}" }
+                else if afterWord, beforeLetter { out.append(c) }   // an apostrophe: "it’s"
+                else { if afterWord { curlySingle = max(0, curlySingle - 1) }; out.append(c) }
             case "\"":
-                if afterDigit, !straightDouble { out += "\u{2032}\u{2032}" } else { straightDouble.toggle(); out.append(c) }
+                if afterDigit, beforeDigit || !straightDouble { out += "\u{2032}\u{2032}" } else { straightDouble.toggle(); out.append(c) }
             case "'":
-                if afterDigit, !straightSingle { out += "\u{2032}" }
-                else if out.last?.isLetter == true { out.append(c) }   // an apostrophe ("it's") opens nothing
-                else { straightSingle.toggle(); out.append(c) }
+                if afterDigit, beforeDigit || !straightSingle { out += "\u{2032}" }   // "5'11", "5' tall"
+                else if afterWord, beforeLetter { out.append(c) }                     // an apostrophe: "it's"
+                else if afterWord { straightSingle = false; out.append(c) }           // closes "'compact'"
+                else if beforeDigit { out.append(c) }                                 // an elision: "'90s"
+                else if beforeLetter { straightSingle = true; out.append(c) }         // opens "'compact'"
+                else { out.append(c) }
             default: out.append(c)
             }
         }
@@ -319,7 +328,7 @@ public enum QuoteCheck {
         // Named entities (the common ones; "&amp;" last, so "&amp;minus;" stays text), then numeric ones below.
         for (e, c) in [("&nbsp;", "\u{00A0}"), ("&thinsp;", "\u{2009}"), ("&hairsp;", "\u{200A}"), ("&ensp;", " "), ("&emsp;", " "),
                        ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"),
-                       ("&rsquo;", "'"), ("&lsquo;", "'"), ("&sbquo;", "'"), ("&ldquo;", "\""), ("&rdquo;", "\""), ("&bdquo;", "\""),
+                       ("&rsquo;", "\u{2019}"), ("&lsquo;", "\u{2018}"), ("&sbquo;", "\u{201A}"), ("&ldquo;", "\u{201C}"), ("&rdquo;", "\u{201D}"), ("&bdquo;", "\u{201E}"),
                        ("&laquo;", "\u{00AB}"), ("&raquo;", "\u{00BB}"), ("&ndash;", "\u{2013}"), ("&mdash;", "\u{2014}"), ("&minus;", "\u{2212}"),
                        ("&hellip;", "..."), ("&deg;", "\u{00B0}"), ("&times;", "\u{00D7}"), ("&divide;", "\u{00F7}"), ("&plusmn;", "\u{00B1}"),
                        ("&le;", "\u{2264}"), ("&ge;", "\u{2265}"), ("&asymp;", "\u{2248}"), ("&prime;", "\u{2032}"), ("&Prime;", "\u{2033}"),
@@ -366,8 +375,13 @@ public enum QuoteCheck {
         var out: [Token] = []
         var closed = true
         func close() { if !out.isEmpty { out[out.count - 1].closedAfter = true }; closed = true }
-        for raw in normalized.split(separator: " ") {
-            if raw == "\u{2}" { close(); continue }
+        let raws = normalized.split(separator: " ")
+        for (n, raw) in raws.enumerated() {
+            if raw == "\u{2}" || raw == "\u{2014}" { close(); continue }
+            // A hyphen between two words ("five-engine", "suit - with") is punctuation: next to a number it stays
+            // a word of its own (a sign or a range).
+            if raw == "-", let before = out.last, before.text.allSatisfy({ $0.isLetter }), n + 1 < raws.count,
+               raws[n + 1].first?.isLetter == true, !raws[n + 1].contains(where: { $0.isNumber }) { close(); continue }
             var t = String(raw), after = false
             func trimEnd() { while let c = t.last, ".,;:!?".contains(c) { t.removeLast(); after = true } }
             trimEnd()
@@ -442,6 +456,9 @@ public enum QuoteCheck {
                 let prev = p[s - 1]
                 if bare(prev) { return false }
                 // The end of a range in words ("10 to 20 bar", "10 bar to 20 bar").
+                // The end of a "between … and …" range.
+                if prev.text == "and", !prev.closedBefore, s >= 3, p[max(0, s - 5)..<(s - 1)].contains(where: { $0.text == "between" }),
+                   p[s - 2].hasDigit || (p[s - 2].hasLetter && p[s - 3].hasDigit) { return false }
                 if prev.text == "to", !prev.closedBefore, s >= 2,
                    p[s - 2].hasDigit || (p[s - 2].hasLetter && s >= 3 && p[s - 3].hasDigit && !p[s - 2].closedBefore) { return false }
                 if isSign(w[0]) || w[0].text.first == "+" || w[0].text.first == "-", prev.hasDigit { return false }
@@ -457,6 +474,9 @@ public enum QuoteCheck {
                 let dashBeforeWord = next.text == "-" && !(after.map { $0.hasDigit || $0.text.first == "." || isSign($0) } ?? false)
                 if bare(next), !dashBeforeWord { return false }
                 if next.text == "to", e + 2 < p.count, p[e + 2].hasDigit || isSign(p[e + 2]) { return false }
+                // The start of a "between … and …" range.
+                if next.text == "and", e + 2 < p.count, p[e + 2].hasDigit || isSign(p[e + 2]),
+                   p[max(0, e - 3)...e].contains(where: { $0.text == "between" }) { return false }
             }
             return true
         }

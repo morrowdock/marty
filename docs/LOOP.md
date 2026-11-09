@@ -51,11 +51,14 @@ the MCP server uses), so a run needs no MCP client.
    characters and joiners such as U+2060 removed; case, quote marks and dashes
    folded; a prime after a digit, ASCII or curly, stays a unit mark ("5'11\""
    is 5′11″, not "511") unless it closes a quotation of its kind that is open
-   in the same block; vulgar and spaced mixed fractions are "+n/d" ("1½" is
+   in the same block (quotation marks pair by context: an apostrophe inside a
+   word or before a decade, "it's", "'90s", opens nothing, and a mark before a
+   digit, "5'11", is always a prime); vulgar and spaced mixed fractions are "+n/d" ("1½" is
    "1+1/2"); grouping spaces before 3 digits join thousands ("1 144" is
    "1,144"); number operators bind without spaces ("10 ^ 3", "3 / 4",
    "10 ± 2", "4 + 4", "10 x 20", "1.5·10^6", "≥ 10", ">= 10", "10 m / s",
-   "10 %"); a dash is a word of its own. An ellipsis or a bracketed insertion
+   "10 %"); a dash is a word of its own, except an em dash or a hyphen between
+   two words, which is punctuation (a hard boundary). An ellipsis or a bracketed insertion
    such as "[…]" or "[s]" in the quote is a gap: the quote's parts must all be
    found in order, all together at least 16 characters and the longest at
    least 8 (a bare "85 mph" is no evidence). Each part's words must equal the
@@ -68,8 +71,8 @@ the MCP server uses), so a run needs no MCP client.
    "6.674 30", "5′ 11″", "− $500") unless a hard boundary is between them, and
    a signed part never follows a word with a digit ("2e-3" is not "-3"); a
    part that ends with a number or a unit after one may not be followed by
-   such a word; a range in words is whole at both ends ("10 to 20 bar" gives
-   neither "10" nor "20 bar"); a gap glued to a number keeps these rules
+   such a word; a range in words is whole at both ends ("10 to 20 bar" and
+   "between 10 and 20 bar" give neither "10" nor "20 bar"); a gap glued to a number keeps these rules
    ("[…]5 degrees" is not "−5 degrees"); a dash before a word is punctuation
    ("1,050 bhp — the company").
    Each source's date comes only from its fetched page: its publication date
