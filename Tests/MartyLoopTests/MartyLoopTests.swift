@@ -1349,6 +1349,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertNil(QuoteCheck.pageDate(#"<script type="application/ld+json">{"@type": "CollectionPage", "mainEntity": [{"@type": "Article", "datePublished": "2017-01-01"}, {"@type": "Article", "datePublished": "2018-01-01"}]}</script>"#), "two named articles")
         XCTAssertEqual(QuoteCheck.pageDate(#"<script>var t = '<meta name="date" content="2017-01-01">';</script><meta name="date" content="2024-04-04">"#), "2024-04-04", "a script's text is not metadata")
         XCTAssertEqual(QuoteCheck.pageDate(#"<meta property = "article:published_time" content = "2026-11-01">"#), "2026-11-01")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<script type = "application/ld+json">{"@type": "Article", "datePublished": "2022-02-02"}</script>"#), "2022-02-02")
         XCTAssertNil(QuoteCheck.pageDate(#"<template><script type="application/ld+json">{"@type": "Article", "datePublished": "2017-01-01"}</script></template>"#))
         // A commented-out tag is not metadata.
         XCTAssertEqual(QuoteCheck.pageDate(#"<!-- <meta name="date" content="2017-01-01"> --><script type="application/ld+json">{"@type": "Article", "datePublished": "2026-11-01"}</script>"#), "2026-11-01")
@@ -1377,6 +1378,15 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertFalse(QuoteCheck.found("The power density is 103 W/kg", in: "<p>The power density is 10\u{00B3} W/kg</p>"))
         XCTAssertTrue(QuoteCheck.found("The power density is 10\u{00B3} W/kg", in: "<p>The power density is 10<sup>3</sup> W/kg</p>"))
         XCTAssertTrue(QuoteCheck.found("Maximum thrust is 144 kgf in total", in: ##"<p>Maximum thrust is 144 kgf<sup class="reference"><a href="#c1">[1]</a></sup> in total</p>"##))
+        // Fractions and exponents keep their structure: no match on a part of them.
+        XCTAssertFalse(QuoteCheck.found("2 inches in diameter", in: "<p>The shaft measures 1\u{00BD} inches in diameter</p>"))
+        XCTAssertFalse(QuoteCheck.found("shaft measures 1 inches in diameter", in: "<p>The shaft measures 1\u{00BD} inches in diameter</p>"))
+        XCTAssertFalse(QuoteCheck.found("The shaft measures [...] 1/2 inches", in: "<p>The shaft measures 1\u{00BD} inches</p>"))
+        XCTAssertTrue(QuoteCheck.found("The shaft measures 1\u{00BD} inches in diameter", in: "<p>The shaft measures 1\u{00BD} inches in diameter</p>"))
+        XCTAssertFalse(QuoteCheck.found("Power density [...] 3 watts per kilogram", in: "<p>Power density is 10\u{00B3} watts per kilogram</p>"))
+        XCTAssertFalse(QuoteCheck.found("Power density is 10 watts per kilogram", in: "<p>Power density is 10\u{00B3} watts per kilogram</p>"))
+        XCTAssertFalse(QuoteCheck.found("a gear ratio of 3", in: "<p>a gear ratio of 3/4 at the output</p>"))
+        XCTAssertFalse(QuoteCheck.found("a gear ratio of [...] 4 at the output", in: "<p>a gear ratio of 3/4 at the output</p>"))
         // Table cells are separate; inline markup joins.
         let specs = "<p>Maximum thrust of the rig</p><table><tr><th>Motors</th><td>1</td><td>144 kgf</td></tr></table>"
         XCTAssertFalse(QuoteCheck.found("Maximum thrust [\u{2026}] 1,144 kgf", in: specs))

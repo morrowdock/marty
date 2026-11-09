@@ -46,7 +46,11 @@ the MCP server uses), so a run needs no MCP client.
    "[edit]" removed; block tags such as table cells and paragraphs separate
    text, never as a thousands space, and inline tags such as `<span>` join it
    as it renders; a superscript, `<sup>` or Unicode, is marked "^" and never
-   joins the number before it, so "10³" is not "103"; entities decoded, Unicode NFKC, zero-width characters and
+   joins the number before it, so "10³" is not "103"; a vulgar fraction after
+   a digit is "+n/d", so "1½" is "1+1/2", not "11/2"; a numeric part never
+   starts or ends inside a number joined by a decimal point, separator, sign,
+   "^", "/" or "+", so "2 inches" does not match "1½ inches" nor "3 watts"
+   "10³ watts"; entities decoded, Unicode NFKC, zero-width characters and
    joiners such as U+2060 removed, case, quote marks, dashes and the spaces
    around them, and white space unified; trailing punctuation ignored; an
    ellipsis or a bracketed insertion such as "[…]" or "[s]" in the quote is a

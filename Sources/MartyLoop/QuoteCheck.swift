@@ -205,6 +205,8 @@ public enum QuoteCheck {
         }
         // Unicode superscripts likewise ("10³" is "10^3", "10⁻³" is "10^-3"), before NFKC would fold them to digits.
         t = markedSuperscripts(t)
+        // A vulgar fraction stays a fraction: "1½" is "1+1/2" (NFKC alone makes it "11⁄2", a different number).
+        t = plainFractions(t)
         // A digit-grouping space (no-break, narrow no-break or thin, before a group of 3 digits: "1 144 kgf") is a
         // thousands separator, so the number stays one token ("144" is not inside it). Before NFKC, which makes
         // these spaces plain.
@@ -243,6 +245,19 @@ public enum QuoteCheck {
 
     static let superscripts: [Character: Character] = ["\u{2070}": "0", "\u{00B9}": "1", "\u{00B2}": "2", "\u{00B3}": "3", "\u{2074}": "4",
         "\u{2075}": "5", "\u{2076}": "6", "\u{2077}": "7", "\u{2078}": "8", "\u{2079}": "9", "\u{207A}": "+", "\u{207B}": "-"]
+
+    /// Each vulgar fraction character as "n/d", after a digit as "+n/d" ("1½" is "1+1/2").
+    static func plainFractions(_ s: String) -> String {
+        var out = ""
+        for c in s {
+            guard let v = c.unicodeScalars.first?.value, c.unicodeScalars.count == 1,
+                  (0xBC...0xBE).contains(v) || (0x2150...0x215E).contains(v) || v == 0x2189 else { out.append(c); continue }
+            let f = String(c).precomposedStringWithCompatibilityMapping.replacingOccurrences(of: "\u{2044}", with: "/")
+            if out.last?.isNumber == true { out += "+" }
+            out += f
+        }
+        return out
+    }
 
     /// Each run of Unicode superscript digits and signs as "^" and plain characters.
     static func markedSuperscripts(_ s: String) -> String {
@@ -313,15 +328,19 @@ public enum QuoteCheck {
                 let j = p.index(before: i), c = p[j]
                 if signed { return !c.isNumber && !(decimalLead && c == "-") }
                 if c.isLetter || c.isNumber { return false }
-                // A sign, a decimal point or a separator right before a number is part of it ("-5", ".5", "1,144"):
-                // a quote without it is a different value.
-                if numeric, c == "." || c == "," || c == "-" { return false }
+                // A sign, a decimal point, a separator, an exponent mark or a fraction bar right before a number is
+                // part of it ("-5", ".5", "1,144", "10^3", "1+1/2", "3/4"): a quote without it is a different value.
+                if numeric, Self.numberJoiners.contains(c) { return false }
                 return true
             }
             guard i != p.endIndex else { return true }
             let c = p[i]
             if c.isLetter || c.isNumber { return false }
-            if numeric, c == "." || c == ",", let k = p.index(i, offsetBy: 1, limitedBy: p.endIndex), k != p.endIndex, p[k].isNumber { return false }
+            // A number that goes on ("144.5", "1,144", "10^3", "3/4", "1+1/2") is not this one.
+            if numeric, let k = p.index(i, offsetBy: 1, limitedBy: p.endIndex), k != p.endIndex {
+                if c == "." || c == ",", p[k].isNumber { return false }
+                if "^/\u{2044}+".contains(c), p[k].isNumber || p[k] == "-" { return false }
+            }
             return true
         }
         var from = p.startIndex
@@ -345,6 +364,10 @@ public enum QuoteCheck {
     }
 
     public static func found(_ quote: String, in page: String, html: Bool = true) -> Bool { match(quote, in: page, html: html) != nil }
+
+    /// Characters that join a number to the one before it: a decimal point, a separator, a sign, an exponent mark,
+    /// a fraction bar.
+    static let numberJoiners: Set<Character> = [".", ",", "-", "^", "/", "\u{2044}", "+"]
 
     /// A number written with plain spaces between groups of 3 digits ("1 144", "12 500 000"; the first group 1 to 3
     /// digits) is one number ("1,144"), on the page and in the quote: a page may group with plain spaces, and a model
@@ -425,7 +448,7 @@ public enum QuoteCheck {
     /// @id); else the one article that says `mainEntityOfPage`; else the only article. With no article, the only
     /// page object's own date. Anything else (several candidates, a related article) is ambiguous: nil.
     static func jsonLDDate(_ html: String, _ scan: NSRange) -> String? {
-        guard let re = try? NSRegularExpression(pattern: #"(?is)<script[^>]+type=["']application/ld\+json["'][^>]*>(.*?)</script>"#) else { return nil }
+        guard let re = try? NSRegularExpression(pattern: #"(?is)<script[^>]+type\s*=\s*["']application/ld\+json["'][^>]*>(.*?)</script>"#) else { return nil }
         let ns = html as NSString
         var objects: [[String: Any]] = []
         for m in re.matches(in: html, range: scan) {
