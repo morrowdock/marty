@@ -245,10 +245,12 @@ public final class MartyLoop {
             } else {
                 let reason = text == nil ? ((calls[i]["error"] as? String).map { $0.components(separatedBy: ":").first ?? "adapter" } ?? "adapter") : "research.json"
                 block["ok"] = false; block["reason"] = reason
-                if reason == "adapter.research.turns" {
-                    block["warning"] = "research stopped at its tool limit before it confirmed a fact; there is no fact table"
-                    facts = FactTable(needed: true, rows: [], downgrades: [], partial: true)
-                }
+                // Research was tried and stopped (a limit, a timeout, an error, an unreadable reply) before it
+                // confirmed a fact: no table, a warning with the cause, and the prompts say facts may still be published.
+                let cause = reason == "adapter.research.turns" ? "its tool limit" : reason == "adapter.timeout" ? "a timeout"
+                    : reason == "research.json" ? "an unreadable reply" : "an error (\(reason))"
+                block["warning"] = "research stopped at \(cause) before it confirmed a fact; there is no fact table"
+                facts = FactTable(needed: true, rows: [], downgrades: [], partial: true)
                 note(i, ["ok": false, "reason": reason])
             }
             receipt["research"] = block

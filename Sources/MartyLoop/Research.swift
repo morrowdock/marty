@@ -169,7 +169,7 @@ public struct FactTable {
         let shown = rows.filter { !$0.unconfirmed }
         guard !shown.isEmpty else {
             return "Fact table: none (no research). State no figure, date, product version or share that the engine did not solve."
-                + (partial ? " (Research stopped at its tool limit before it confirmed a fact.)" : "")
+                + (partial ? " (Research stopped before it confirmed a fact: a fact not here may still be published; say nothing about it.)" : "")
                 + (rows.isEmpty ? "" : " Rows whose quotes were not found on their pages are left out: they are not shown, which is not the same as not published.")
         }
         let json = shown.map { r -> String in

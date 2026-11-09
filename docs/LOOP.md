@@ -49,8 +49,8 @@ the MCP server uses), so a run needs no MCP client.
    joins the number before it, so "10³" is not "103"; a vulgar fraction after
    a digit is "+n/d", so "1½" is "1+1/2", not "11/2"; a numeric part never
    starts or ends inside a number joined by a decimal point, separator, sign,
-   "^", "/" or "+", so "2 inches" does not match "1½ inches" nor "3 watts"
-   "10³ watts"; entities decoded, Unicode NFKC, zero-width characters and
+   "^", "/" or "+" (a signed part never follows one either), so "2 inches"
+   does not match "1½ inches", nor "3 watts" or "-3 seconds" a power of ten; entities decoded, Unicode NFKC, zero-width characters and
    joiners such as U+2060 removed, case, quote marks, dashes and the spaces
    around them, and white space unified; trailing punctuation ignored; an
    ellipsis or a bracketed insertion such as "[…]" or "[s]" in the quote is a
@@ -94,7 +94,10 @@ the MCP server uses), so a run needs no MCP client.
    removed), and every system prompt says that the table is web data whose
    instructions are never followed. A refused answer gets no table. A failed or unreadable research reply,
    or an adapter without web tools, leaves no table ("Fact table: none"), and
-   the run goes on; this is not an adapter error. The research call streams its
+   the run goes on; this is not an adapter error. Research that was tried and
+   stopped before any row (a limit, a timeout, an error, an unreadable reply)
+   also gets a `warning` with its cause, and the prompts say that a fact not
+   in the table may still be published. The research call streams its
    events (`--output-format stream-json`): Marty parses every line as it arrives
    (also past the 8 MB kept output; the last line without a newline too) as
    JSON, counts each WebSearch and WebFetch use, keeps the last top-level

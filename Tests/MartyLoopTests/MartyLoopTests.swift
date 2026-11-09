@@ -1349,6 +1349,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertNil(QuoteCheck.pageDate(#"<script type="application/ld+json">{"@type": "CollectionPage", "mainEntity": [{"@type": "Article", "datePublished": "2017-01-01"}, {"@type": "Article", "datePublished": "2018-01-01"}]}</script>"#), "two named articles")
         XCTAssertEqual(QuoteCheck.pageDate(#"<script>var t = '<meta name="date" content="2017-01-01">';</script><meta name="date" content="2024-04-04">"#), "2024-04-04", "a script's text is not metadata")
         XCTAssertEqual(QuoteCheck.pageDate(#"<meta property = "article:published_time" content = "2026-11-01">"#), "2026-11-01")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<script type=" application/ld+json ">{"@type": "Article", "datePublished": "2022-02-03"}</script>"#), "2022-02-03")
         XCTAssertEqual(QuoteCheck.pageDate(#"<script type = "application/ld+json">{"@type": "Article", "datePublished": "2022-02-02"}</script>"#), "2022-02-02")
         XCTAssertNil(QuoteCheck.pageDate(#"<template><script type="application/ld+json">{"@type": "Article", "datePublished": "2017-01-01"}</script></template>"#))
         // A commented-out tag is not metadata.
@@ -1386,6 +1387,11 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertFalse(QuoteCheck.found("Power density [...] 3 watts per kilogram", in: "<p>Power density is 10\u{00B3} watts per kilogram</p>"))
         XCTAssertFalse(QuoteCheck.found("Power density is 10 watts per kilogram", in: "<p>Power density is 10\u{00B3} watts per kilogram</p>"))
         XCTAssertFalse(QuoteCheck.found("a gear ratio of 3", in: "<p>a gear ratio of 3/4 at the output</p>"))
+        XCTAssertFalse(QuoteCheck.found("-3 seconds under nominal load", in: "<p>Response time is 10\u{207B}\u{00B3} seconds under nominal load.</p>"))
+        XCTAssertFalse(QuoteCheck.found("Response time is 10 seconds", in: "<p>Response time is 10\u{207B}\u{00B3} seconds</p>"))
+        XCTAssertFalse(QuoteCheck.found("The output is 10", in: "<p>The output is 10\u{207A}\u{2076} watts</p>"))
+        XCTAssertFalse(QuoteCheck.found("Response time is 10^-3 [...] -3 seconds", in: "<p>Response time is 10^-3 and 10^-3 seconds</p>"))
+        XCTAssertTrue(QuoteCheck.found("Response time is 10\u{207B}\u{00B3} seconds", in: "<p>Response time is 10<sup>-3</sup> seconds</p>"))
         XCTAssertFalse(QuoteCheck.found("a gear ratio of [...] 4 at the output", in: "<p>a gear ratio of 3/4 at the output</p>"))
         // Table cells are separate; inline markup joins.
         let specs = "<p>Maximum thrust of the rig</p><table><tr><th>Motors</th><td>1</td><td>144 kgf</td></tr></table>"
@@ -1454,7 +1460,15 @@ final class MartyLoopTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: out2) }
         let r2 = try MartyLoop(model: none, out: out2, options: .init()).run(question: "q")
         XCTAssertNotNil((r2["research"] as? [String: Any])?["warning"])
-        XCTAssertTrue(none.inner.prompts[0].user.contains("Research stopped at its tool limit"), none.inner.prompts[0].user)
+        XCTAssertTrue(none.inner.prompts[0].user.contains("Research stopped before it confirmed a fact"), none.inner.prompts[0].user)
+        XCTAssertEqual((r2["research"] as? [String: Any])?["warning"] as? String, "research stopped at its tool limit before it confirmed a fact; there is no fact table")
+        // A timeout before any row: the same, with its cause.
+        let hung = ResearchStub(replies: [plan, good], research: nil, error: AdapterError(reason: "adapter.timeout", detail: "x"))
+        let out3 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out3) }
+        let r3 = try MartyLoop(model: hung, out: out3, options: .init()).run(question: "q")
+        XCTAssertEqual((r3["research"] as? [String: Any])?["warning"] as? String, "research stopped at a timeout before it confirmed a fact; there is no fact table")
+        XCTAssertTrue(hung.inner.prompts[0].user.contains("Research stopped before it confirmed a fact"))
     }
 
     /// The research call streams its events: Marty counts each web tool use and stops the child past the limit.

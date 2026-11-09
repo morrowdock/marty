@@ -326,7 +326,9 @@ public enum QuoteCheck {
             if before {
                 guard i != p.startIndex else { return true }
                 let j = p.index(before: i), c = p[j]
-                if signed { return !c.isNumber && !(decimalLead && c == "-") }
+                // A signed or decimal-led part ("-3", ".5") may follow a letter or a space, never a digit or another
+                // joiner ("10^-3" is an exponent, "-.5" another value).
+                if signed { return !c.isNumber && !Self.numberJoiners.contains(c) }
                 if c.isLetter || c.isNumber { return false }
                 // A sign, a decimal point, a separator, an exponent mark or a fraction bar right before a number is
                 // part of it ("-5", ".5", "1,144", "10^3", "1+1/2", "3/4"): a quote without it is a different value.
@@ -339,7 +341,7 @@ public enum QuoteCheck {
             // A number that goes on ("144.5", "1,144", "10^3", "3/4", "1+1/2") is not this one.
             if numeric, let k = p.index(i, offsetBy: 1, limitedBy: p.endIndex), k != p.endIndex {
                 if c == "." || c == ",", p[k].isNumber { return false }
-                if "^/\u{2044}+".contains(c), p[k].isNumber || p[k] == "-" { return false }
+                if "^/\u{2044}+".contains(c), p[k].isNumber || p[k] == "-" || p[k] == "+" { return false }
             }
             return true
         }
@@ -448,7 +450,7 @@ public enum QuoteCheck {
     /// @id); else the one article that says `mainEntityOfPage`; else the only article. With no article, the only
     /// page object's own date. Anything else (several candidates, a related article) is ambiguous: nil.
     static func jsonLDDate(_ html: String, _ scan: NSRange) -> String? {
-        guard let re = try? NSRegularExpression(pattern: #"(?is)<script[^>]+type\s*=\s*["']application/ld\+json["'][^>]*>(.*?)</script>"#) else { return nil }
+        guard let re = try? NSRegularExpression(pattern: #"(?is)<script[^>]+type\s*=\s*["']\s*application/ld\+json\s*["'][^>]*>(.*?)</script>"#) else { return nil }
         let ns = html as NSString
         var objects: [[String: Any]] = []
         for m in re.matches(in: html, range: scan) {
