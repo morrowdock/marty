@@ -953,7 +953,7 @@ extension MartyLoop {
         // A beat or step number that names a view of the model ("beat 4 shows this") is no fact.
         func withoutViewRefs(_ t: String) -> String {
             // ("beat 4", "beats 2 and 3", "steps 2-4", "beats 1, 2 and 5")
-            guard views > 0, let re = try? NSRegularExpression(pattern: #"(?i)\b(beats?|steps?)\s+(\d+(?:\s*(?:,\s*(?:and|or)?|and|or|to|-|\x{2013})\s*\d+)*)\b"#),
+            guard views > 0, let re = try? NSRegularExpression(pattern: #"(?i)\b(beats?|steps?)\s+(\d+(?:\s*(?:,\s*(?:and|or)?|and|or|to|through|thru|-|\x{2013})\s*\d+)*)\b"#),
                   let digits = try? NSRegularExpression(pattern: #"\d+"#) else { return t }
             let ns = t as NSString
             var out = t
@@ -979,8 +979,9 @@ extension MartyLoop {
         func denials(_ text: String) -> [String] {
             guard !posed.isEmpty, let dre = try? NSRegularExpression(pattern: Self.denials) else { return [] }
             return Self.sentences(text).filter { sentence in
-                let clauses = sentence.replacingOccurrences(of: #"(?i)\s+(?:but|and|while|whereas|although|though|yet)\s+|\s*[\x{2014}\x{2013}]\s*|\s+-\s+"#, with: ";", options: .regularExpression)
-                    .components(separatedBy: CharacterSet(charactersIn: ",;:"))
+                // ("and" joins phrases as often as clauses, so it does not split: "the arms and shoulders moving".)
+                let clauses = sentence.replacingOccurrences(of: #"(?i)\s+(?:but|while|whereas|although|though|yet)\s+|\s*[\x{2014}\x{2013}]\s*|\s+-\s+"#, with: ";", options: .regularExpression)
+                    .components(separatedBy: CharacterSet(charactersIn: ",;:()"))
                 for clause in clauses {
                     let cns = clause as NSString
                     if dre.firstMatch(in: clause, range: NSRange(location: 0, length: cns.length)) != nil,
@@ -989,9 +990,13 @@ extension MartyLoop {
                 return false
             }
         }
-        let denied = denials(answer)
-        if !denied.isEmpty {
-            let (fixed, k) = ask("answer", attempt: 1, system: system, user: user + "\n\nYour previous answer:\n\(answer)\n\n"
+        // One posed repair for the answer (also for a denial a later rewrite brings in).
+        var posedRepairUsed = false
+        func posedRepair(_ attempt: Int) {
+            let denied = denials(answer)
+            guard !denied.isEmpty, !posedRepairUsed else { return }
+            posedRepairUsed = true
+            let (fixed, k) = ask("answer", attempt: attempt, system: system, user: user + "\n\nYour previous answer:\n\(answer)\n\n"
                 + MartyPrompts.answerPosedRepair + "\n" + denied.joined(separator: "\n") + "\n\nPosed views:\n" + posed.map { "- \($0)" }.joined(separator: "\n"))
             note(k, ["ok": fixed != nil, "reason": "answer.posed"])
             var lint: [String: Any] = ["reason": "answer.posed", "sentences": denied, "fixed": false]
@@ -1001,6 +1006,7 @@ extension MartyLoop {
             }
             result["answerPosedLint"] = lint
         }
+        posedRepair(1)
         let (comparative, unsourced) = problems(answer)
         let flagged = comparative + unsourced
         guard !flagged.isEmpty else { return answer }
@@ -1012,10 +1018,12 @@ extension MartyLoop {
             answer = s
             let again = problems(s)
             lint["fixed"] = again.comparative.isEmpty && again.unsourced.isEmpty
-            // The posed-view status is that of the final answer.
-            if var posedLint = result["answerPosedLint"] as? [String: Any] { posedLint["fixed"] = denials(s).isEmpty; result["answerPosedLint"] = posedLint }
         }
         result["answerLint"] = lint
+        // A denial the rewrite brought in gets the posed repair if it is unused; the status is the final answer's.
+        posedRepair(2)
+        if var posedLint = result["answerPosedLint"] as? [String: Any] { posedLint["fixed"] = denials(answer).isEmpty; result["answerPosedLint"] = posedLint }
+        else if !denials(answer).isEmpty { result["answerPosedLint"] = ["reason": "answer.posed", "sentences": denials(answer), "fixed": false] }
         return answer
     }
 

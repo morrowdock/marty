@@ -1384,6 +1384,21 @@ final class MartyLoopTests: XCTestCase {
         _ = try MartyLoop(model: ScriptedAdapter(replies: ["The model shows steering\u{2014}it does not model airflow."]), out: tempOut(), options: .init())
             .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &dashed)
         XCTAssertNil(dashed["answerPosedLint"])
+        var paren: [String: Any] = [:]
+        _ = try MartyLoop(model: ScriptedAdapter(replies: ["The model shows steering (airflow is not modelled). Beats 1 through 2 show it."]), out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &paren)
+        XCTAssertNil(paren["answerPosedLint"]); XCTAssertNil(paren["answerLint"])
+        // A coordinated phrase stays one clause; a denial a later rewrite brings in gets the posed repair.
+        var coordinated: [String: Any] = [:]
+        _ = try MartyLoop(model: ScriptedAdapter(replies: ["The model does not show the arms and shoulders moving.", "Beat 2 shows the arm raised."]), out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &coordinated)
+        XCTAssertEqual((coordinated["answerPosedLint"] as? [String: Any])?["fixed"] as? Bool, true)
+        var late: [String: Any] = [:]
+        let lateAnswer = try MartyLoop(model: ScriptedAdapter(replies: ["Most of the thrust comes from the rear engine.", "The model does not show steering.", "Beat 2 shows steering."]),
+                                       out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &late)
+        XCTAssertEqual(lateAnswer, "Beat 2 shows steering.")
+        XCTAssertEqual((late["answerPosedLint"] as? [String: Any])?["fixed"] as? Bool, true)
 
         // Short quotes; counts written as ordinals, articles and pairs.
         var rows = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [
@@ -1411,6 +1426,9 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(QuoteCheck.countedWords(value: "2 engines per arm", claim: "Arm engines"), ["engines"])
         XCTAssertEqual(QuoteCheck.countedWords(value: "1 rear engine", claim: "Rear engine"), ["engine"])
         XCTAssertFalse(QuoteCheck.statesCountWord("1", "A new model of the device uses five engines", entities: QuoteCheck.countedWords(value: "Version 1", claim: "Current model")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "The product uses a housing with rotors mounted inside", entities: QuoteCheck.countedWords(value: "1 rotor", claim: "Rotors")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("2", "Both arms carry engines to provide thrust", entities: QuoteCheck.countedWords(value: "2 engines per arm", claim: "Arm engines")))
+        XCTAssertTrue(QuoteCheck.statesCountWord("2", "both rear engines run", entities: QuoteCheck.countedWords(value: "2", claim: "Rear engines on this model")))
         XCTAssertEqual(rows.rows[3].sources[0].check, "quote too short to check")
     }
 

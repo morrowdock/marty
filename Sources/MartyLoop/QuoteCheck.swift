@@ -427,14 +427,22 @@ public enum QuoteCheck {
         guard !wanted.isEmpty else { return false }
         for (i, w) in words.enumerated() where cue.contains(w) || ordinals[w] == headline {
             if i > 0, words[i - 1] == "one", w != "a" { continue }   // "one of five" is no count
+            // Up to two plain modifiers between the cue and the noun ("a rear jet engine"); a connector, a verb-like
+            // word, a plural noun or another count ends the phrase ("a housing with rotors", "both arms carry engines").
             for j in (i + 1)..<min(words.count, i + 4) {
                 let x = words[j]
-                if x.first?.isNumber == true || numberWords[x] != nil || ordinals[x] != nil { break }   // another count first
                 if wanted.contains(singular(x)) { return true }
+                if x.first?.isNumber == true || numberWords[x] != nil || ordinals[x] != nil { break }
+                if phraseBreaks.contains(x) || x.hasSuffix("ing") || x.hasSuffix("ed") || (x.count > 3 && x.hasSuffix("s") && !x.hasSuffix("ss")) { break }
             }
         }
         return false
     }
+
+    /// Words that end a noun phrase: connectors, articles and common verbs.
+    static let phraseBreaks: Set<String> = ["with", "of", "for", "to", "from", "in", "on", "at", "by", "and", "or", "but", "that", "which",
+        "the", "a", "an", "its", "their", "his", "her", "is", "are", "was", "were", "be", "has", "have", "had", "carry", "carries", "use", "uses",
+        "hold", "holds", "provide", "provides", "power", "powers", "drive", "drives", "give", "gives", "make", "makes", "sit", "sits"]
 
     /// A plural noun as its singular ("batteries" battery, "boxes" box, "engines" engine).
     static func singular(_ w: String) -> String {
@@ -454,7 +462,9 @@ public enum QuoteCheck {
         let connectors: Set<String> = ["per", "each", "on", "in", "for", "at", "of", "with", "by", "to", "from", "across", "under", "over"]
         let tokens = value.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
         let claimWords = claim.lowercased().split { !$0.isLetter }.map(String.init)
-        if tokens.contains(where: identifiers.contains) || claimWords.contains(where: identifiers.contains) { return [] }
+        // An identifier row: its value names a version or model, or its claim is about one ("Current model").
+        let claimHead = claimWords.first { $0.count >= 2 && !filler.contains($0) }
+        if tokens.contains(where: identifiers.contains) || claimHead.map(identifiers.contains) == true { return [] }
         let at = tokens.firstIndex { $0.first?.isNumber == true || numberWords[$0] != nil || ordinals[$0] != nil }
         if let at {
             let phrase = tokens[(at + 1)...].prefix { !connectors.contains($0) }.filter { $0.allSatisfy(\.isLetter) && $0.count >= 3 && !filler.contains($0) }
