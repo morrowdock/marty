@@ -1392,6 +1392,12 @@ final class MartyLoopTests: XCTestCase {
         _ = try MartyLoop(model: ScriptedAdapter(replies: ["The model shows steering and does not model airflow."]), out: tempOut(), options: .init())
             .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &predicate)
         XCTAssertNil(predicate["answerPosedLint"])
+        for honestLine in ["The model shows rotation and the engine does not model airflow.", "The model shows rotation and airflow is not modelled."] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: [honestLine]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &r)
+            XCTAssertNil(r["answerPosedLint"], honestLine)
+        }
         // A coordinated phrase stays one clause; a denial a later rewrite brings in gets the posed repair.
         var coordinated: [String: Any] = [:]
         _ = try MartyLoop(model: ScriptedAdapter(replies: ["The model does not show the arms and shoulders moving.", "Beat 2 shows the arm raised."]), out: tempOut(), options: .init())
@@ -1441,6 +1447,8 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertFalse(QuoteCheck.statesCountWord("2", "Both rotor blades generate lift as the hub turns", entities: QuoteCheck.countedWords(value: "2 rotors", claim: "Rotors")))
         XCTAssertFalse(QuoteCheck.statesCountWord("2", "Both engine mounts are attached to the airframe", entities: QuoteCheck.countedWords(value: "2 engines", claim: "Engines")))
         XCTAssertFalse(QuoteCheck.statesCountWord("1", "In a jet suit, engines provide the thrust needed for flight", entities: QuoteCheck.countedWords(value: "1 engine", claim: "Engines")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "The device uses a rotor housing containing several rotors", entities: QuoteCheck.countedWords(value: "1 rotor", claim: "Rotors")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("2", "Both engine mounting brackets are attached to the airframe", entities: QuoteCheck.countedWords(value: "2 engines", claim: "Engines")))
         XCTAssertEqual(rows.rows[3].sources[0].check, "quote too short to check")
     }
 

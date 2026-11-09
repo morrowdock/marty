@@ -440,11 +440,12 @@ public enum QuoteCheck {
                 let x = words[j]
                 if wanted.contains(singular(x)) {
                     // The noun must be the phrase's head, not a modifier of another noun ("a jet engine mount", "both
-                    // rotor blades"): only the clause's end, a connector, a common verb, or an -ed, -ing or -ly word
-                    // may follow it; any other word may be the real head, so the cue counts nothing.
+                    // rotor blades", "a rotor housing"): only the clause's end, a connector, a common verb or an -ed
+                    // participle ("housed", "mounted") may follow it; any other word may be the real head, so the cue
+                    // counts nothing.
                     guard j + 1 < words.count else { return true }
                     let n = words[j + 1]
-                    if phraseBreaks.contains(n) || n.hasSuffix("ed") || n.hasSuffix("ing") || (n.count > 3 && n.hasSuffix("ly")) { return true }
+                    if phraseBreaks.contains(n) || (n.count > 3 && n.hasSuffix("ed")) { return true }
                     break
                 }
                 if x.first?.isNumber == true || numberWords[x] != nil || ordinals[x] != nil { break }
