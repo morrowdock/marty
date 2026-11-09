@@ -232,7 +232,8 @@ the MCP server uses), so a run needs no MCP client.
    80, beat say 200, note 60; the guide states them; a label also has an
    authored cap of 240 and an explainer title of 320) is cut only by dropping
    whole trailing sentences that hold no number, no placeholder and no list
-   (no comma), only in a text of more than one sentence without placeholders
+   (no comma), only complete sentences, never in a text with a numbered or
+   bulleted list, only in a text of more than one sentence without placeholders
    (its length is exact), and only when at least 60 % of it stays (the attempt
    lists the cut paths in `trimmed`). A cut never shortens a list, a clause or
    a one-phrase text (a title, a name): those are refused and the repair asks
@@ -304,8 +305,11 @@ the MCP server uses), so a run needs no MCP client.
    is none (`noSuggest`: its readable cause and the engine's own alternatives
    for that cause, such as leaving the label out of the view's annotate list,
    ghosting the part in the way or changing the camera), and the engine's
-   one-line `repair`; an alternative or repair line that would ghost a part
-   some label or pointer is anchored on is dropped (it would hide that dot);
+   one-line `repair`; an alternative or repair line that would ghost or hide a
+   part some label or arrow is anchored on, a part inside it, or a part of the
+   same component instance as an anchored alias ("shaft.shaft" for
+   "shaft.input"), is dropped, here and in the refusal detail (it would hide
+   that dot; "do not ghost" advice is kept);
    the view named is the explainer beat when there is one
    (else the step); the attempt keeps `anchor`. Before any repair call (author and follow-up) Marty
    applies the engine's checked suggestions itself (a label's `at`, a
@@ -313,8 +317,10 @@ the MCP server uses), so a run needs no MCP client.
    `arrowIssues`; the engine checks all printed suggestions together, so they
    are applied at once; an id given two different values for one field is a
    conflict and is left alone) and checks again, up to 3 rounds; the attempt lists the fixed
-   ids in `autoFixed`, and when the document is still refused the repair
-   starts from the auto-fixed document. Every repair (author and follow-up)
+   ids in `autoFixed`, and when the document is still refused every repair
+   (engine, fact, lint) starts from the auto-fixed document. An assembly
+   follow-up patch cannot move annotations, so there Marty applies the
+   suggestions to the patched whole document and checks it in full. Every repair (author and follow-up)
    also gets the refusal's full structured detail (the engine's `repair`
    line, and `location`, `limit`, `actual`, `path`, `cause`, `by`, `closer`,
    `fix`, `suggest`, `detail` when present, nulls left out) and the texts of the

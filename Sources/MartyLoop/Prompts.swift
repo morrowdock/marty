@@ -264,6 +264,25 @@ public enum MartyPrompts {
 
     /// The engine's label and pointer dot issues (`anchor`, `anchorIssues`): at most 6, each with the view, the part,
     /// what is in the way, the engine's checked suggestion (to apply exactly) or why there is none, and its repair line.
+    /// Whether `text` advises ghosting (or hiding) a part that a label or arrow is anchored on, so following it would hide
+    /// that annotation. A part counts when it is anchored, inside an anchored part ("casing.inner" for "casing"), or
+    /// in the same component instance as an anchored inner name or alias ("shaft.shaft" for "shaft.input": the
+    /// engine resolves aliases to inner parts). Negated advice ("do not ghost `x`") is kept.
+    public static func ghostsAnchored(_ text: String, _ anchored: Set<String>) -> Bool {
+        guard !anchored.isEmpty,
+              let re = try? NSRegularExpression(pattern: #"(?i)(?<!not )(?<!n't )(?<!never )\b(?:ghost|hide)\s+`?([A-Za-z0-9_.\-]+)`?"#) else { return false }
+        let ns = text as NSString
+        let low = Set(anchored.map { $0.lowercased() })
+        for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            let target = ns.substring(with: m.range(at: 1)).lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            for a in low {
+                if target == a || target.hasPrefix(a + ".") { return true }
+                if let inst = a.split(separator: ".").first.map(String.init), a.contains("."), target == inst || target.hasPrefix(inst + ".") { return true }
+            }
+        }
+        return false
+    }
+
     public static func anchorLines(_ issues: [[String: Any]], anchoredParts: Set<String> = []) -> String? {
         guard !issues.isEmpty else { return nil }
         // Every issue, once (the same text from two views is one line), up to 40 lines and the total count.
@@ -294,13 +313,10 @@ public enum MartyPrompts {
                 let cause = (none["cause"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? (none["code"] as? String) ?? "none"
                 line += ": no checked suggestion (\(cause))"
                 // An alternative that ghosts a part some label is anchored on would hide that label: dropped.
-                let alts = (none["alternatives"] as? [String] ?? []).filter { alt in
-                    !alt.isEmpty && !anchoredParts.contains { alt.lowercased().contains("ghost `\($0.lowercased())`") }
-                }
+                let alts = (none["alternatives"] as? [String] ?? []).filter { !$0.isEmpty && !ghostsAnchored($0, anchoredParts) }
                 if !alts.isEmpty { line += "; do one of: " + alts.joined(separator: " ") }
             }
-            if let r = (i["repair"] as? String) ?? (i["fix"] as? String), !r.isEmpty,
-               !anchoredParts.contains(where: { r.lowercased().contains("ghost `\($0.lowercased())`") || r.lowercased().contains("ghost \($0.lowercased())") }) {
+            if let r = (i["repair"] as? String) ?? (i["fix"] as? String), !r.isEmpty, !ghostsAnchored(r, anchoredParts) {
                 line += ". Engine: " + r
             }
             return seen.insert(line).inserted ? line : nil

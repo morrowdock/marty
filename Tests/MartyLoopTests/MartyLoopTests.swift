@@ -1111,6 +1111,45 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(MartyPrompts.anchorLines([many[45]])!.contains("Ghost `casing`"))
     }
 
+    /// PR #25 review: an assembly follow-up patch cannot move annotations, so Marty applies the engine's checked
+    /// suggestions to the patched whole document; ghost advice is filtered everywhere (aliases, negations, detail).
+    func testFollowUpPatchAutoFixAndGhostFilters() throws {
+        let plan = #"{"inScope": true, "subject": "shaft", "beats": ["a shaft in bearings"], "components": ["shaftWithBearing", "housingBase"], "primitives": [], "honesty": ""}"#
+        let author = #"{"document": \#(MartyExamples.formatExample), "components": []}"#
+        let patch = #"{"patch": {"parts": {"shaft.upperBearing": {"at": [0, 0, -20]}}}}"#
+        let answer = "The upper bearing moves down, and the shaft label moves with the engine's check so it stays visible."
+        let model = ScriptedAdapter(replies: [plan, author, patch, answer])
+        var options = MartyLoop.Options()
+        options.followUp = "What if the upper bearing sat lower?"
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: options).run(question: "How is a shaft held?")
+        XCTAssertEqual(r["accepted"] as? Bool, true, "\(r["attempts"] ?? "")")
+        let f = try XCTUnwrap(r["followUp"] as? [String: Any])
+        let fa = try XCTUnwrap(f["attempts"] as? [[String: Any]])
+        XCTAssertEqual(f["changed"] as? Bool, true, "\(fa)")
+        XCTAssertTrue((fa.first?["autoFixed"] as? [String] ?? []).contains("lShaft"), "\(fa)")
+
+        // Ghost advice: anchored parts, parts inside them, the same component instance as an alias; negations kept.
+        let anchored: Set<String> = ["shaft.input", "casing"]
+        XCTAssertTrue(MartyPrompts.ghostsAnchored("Ghost `shaft.shaft` in step 1.", anchored))
+        XCTAssertTrue(MartyPrompts.ghostsAnchored("ghost casing.inner here", anchored))
+        XCTAssertTrue(MartyPrompts.ghostsAnchored("Hide `casing` in this view.", anchored))
+        XCTAssertFalse(MartyPrompts.ghostsAnchored("Do not ghost `casing`.", anchored))
+        XCTAssertFalse(MartyPrompts.ghostsAnchored("Ghost `base.base` in step 1.", anchored))
+        // The engine's top-level repair line is filtered the same way in the refusal detail.
+        let refusal: [String: Any] = ["reason": "annotation.anchor.hidden.lCore", "repair": "Label lCore is hidden by casing. Ghost `casing` in step 1.",
+                                      "cause": "hidden"]
+        let detail = MartyLoop.refusalDetail(refusal, document: nil, anchored: anchored) ?? ""
+        XCTAssertFalse(detail.contains("Ghost `casing`"), detail)
+        XCTAssertTrue(MartyLoop.refusalDetail(refusal, document: nil, anchored: [])?.contains("Ghost `casing`") == true)
+
+        // The length cut never shortens a list, numbered or bulleted.
+        XCTAssertNil(TextBudget.cutAtWord("The shaft rotates in its bearings. 1. Fit bearing. 2. Tighten guard.", limit: 60))
+        XCTAssertNil(TextBudget.cutAtWord("The shaft rotates in its bearings and turns freely. - Do not touch.", limit: 55))
+        XCTAssertNil(TextBudget.cutAtWord(String(repeating: "x", count: 60) + ". Then the shaft turns and", limit: 64), "an unfinished sentence is not dropped")
+    }
+
     func testAnchorIssuesInRepairs() throws {
         let hidden = MartyExamples.formatExample.replacingOccurrences(of: #""offset":[0,-6,40]"#, with: #""offset":[0,0,60]"#)
         XCTAssertNotEqual(hidden, MartyExamples.formatExample)

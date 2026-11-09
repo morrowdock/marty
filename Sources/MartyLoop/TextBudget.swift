@@ -142,11 +142,15 @@ import MartyEngine
     /// placeholder and no list are dropped (a cut never shortens a list or a clause), and at least 60 % stays; else
     /// nil (the repair asks the model to shorten).
     static func cutAtWord(_ t: String, limit: Int) -> String? {
+        // A text with a list (numbered or bulleted items, or items in a sentence) is never cut.
+        if t.range(of: #"(^|\s)(\d{1,2}[.)]|[-\u{2022}*\u{2013}])\s"#, options: .regularExpression) != nil { return nil }
         let marked = t.replacingOccurrences(of: #"(?<=[.!?])\s+"#, with: "\u{1}", options: .regularExpression)
         var sentences = marked.split(separator: "\u{1}").map { String($0).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         guard sentences.count > 1 else { return nil }
         while sentences.count > 1, sentences.joined(separator: " ").unicodeScalars.count > limit {
             let last = sentences.removeLast()
+            // Only a complete sentence (ending in . ! or ?) without a number, a placeholder or a list is dropped.
+            guard let end = last.last, ".!?".contains(end) else { return nil }
             if last.rangeOfCharacter(from: .decimalDigits) != nil || last.contains("{") || last.contains(",") { return nil }
         }
         let s = sentences.joined(separator: " ")

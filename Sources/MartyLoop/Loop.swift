@@ -91,12 +91,16 @@ public final class MartyLoop {
     /// The full detail of a refusal for the repair prompt: every structured field the engine gave (location, limit,
     /// actual, path, cause, by, closer, fix, and the newer repair and suggest), and the texts of the refused document
     /// that are over their length limit (measured as the engine counts them, with the facts the report has).
-    static func refusalDetail(_ r: [String: Any], document: Any?) -> String? {
+    /// Engine advice that would ghost a part some label or arrow is anchored on (`anchored`) is left out: following it
+    /// would hide that annotation.
+    static func refusalDetail(_ r: [String: Any], document: Any?, anchored: Set<String>? = nil) -> String? {
+        let anchored = anchored ?? document.map(Self.anchoredParts) ?? []
         var lines: [String] = []
-        if let rep = r["repair"] as? String, !rep.isEmpty { lines.append("Engine repair: \(rep)") }
+        if let rep = r["repair"] as? String, !rep.isEmpty, !MartyPrompts.ghostsAnchored(rep, anchored) { lines.append("Engine repair: \(rep)") }
         var fields: [String: Any] = [:]
         for k in ["location", "limit", "actual", "path", "cause", "by", "closer", "fix", "suggest", "detail"] {
             guard let v = r[k], !(v is NSNull) else { continue }
+            if let t = v as? String, MartyPrompts.ghostsAnchored(t, anchored) { continue }
             if let o = v as? [String: Any] {
                 let kept = o.filter { !($0.value is NSNull) }
                 if !kept.isEmpty { fields[k] = kept }
@@ -413,6 +417,11 @@ public final class MartyLoop {
             } else {
                 report = ["ok": false, "reason": "json", "part": NSNull()]
             }
+            // After Marty applied suggestions, every repair (engine, fact, lint) gets that document, so the model does
+            // not undo them.
+            let previous = autoFixed.isEmpty ? text
+                : "(Marty applied the engine's checked anchor and arrow suggestions for " + autoFixed.map { "`\($0)`" }.joined(separator: ", ")
+                    + "; this is the document after them.)\n" + MartyJSON.string(["document": document ?? NSNull(), "components": components])
             var outcome = Self.outcome(report)
             if !trimmedNow.isEmpty { outcome["trimmed"] = trimmedNow }
             if !autoFixed.isEmpty { outcome["autoFixed"] = autoFixed }
@@ -428,7 +437,7 @@ public final class MartyLoop {
                 attempts[attempts.count - 1]["engineOk"] = true
                 attempts[attempts.count - 1]["unsourced"] = unsourced.map(\.line)
                 note(i, attempts[attempts.count - 1])
-                user = MartyPrompts.repairUser(question: question, plan: planText, previous: text, reason: reason, part: nil,
+                user = MartyPrompts.repairUser(question: question, plan: planText, previous: previous, reason: reason, part: nil,
                                                hint: MartyPrompts.factRepair + "\n" + unsourced.map { "- \($0.line)" }.joined(separator: "\n"),
                                                table: factBlock)
                 continue
@@ -446,7 +455,7 @@ public final class MartyLoop {
                 // No repair left, or the one lint repair was used: the best accepted document stands (after the loop).
                 if lintRepairUsed || attempt == options.repairs { break }
                 lintRepairUsed = true
-                user = MartyPrompts.repairUser(question: question, plan: planText, previous: text, reason: "marty.lint", part: nil,
+                user = MartyPrompts.repairUser(question: question, plan: planText, previous: previous, reason: "marty.lint", part: nil,
                                                hint: MartyPrompts.lintRepair + "\n" + lint.map { "- \($0)" }.joined(separator: "\n"),
                                                table: factBlock)
                 continue
@@ -457,10 +466,6 @@ public final class MartyLoop {
             // Engine context for the repair: the facts for caption and claim refusals, the read-back for frame,
             // idle-joint and expect refusals. Only what the engine actually returned is attached.
             let (facts, readBack) = repairContext(reason: reason, report: report, document: document, components: components)
-            // After Marty applied suggestions, the model gets that document, so it does not undo them.
-            let previous = autoFixed.isEmpty ? text
-                : "(Marty applied the engine's checked anchor suggestions for " + autoFixed.map { "`\($0)`" }.joined(separator: ", ")
-                    + "; this is the document after them.)\n" + MartyJSON.string(["document": document ?? NSNull(), "components": components])
             user = MartyPrompts.repairUser(question: question, plan: planText, previous: previous, reason: reason, part: part,
                                            hint: MartyPrompts.hint(for: reason), facts: facts, readBack: readBack,
                                            visibility: report["visibility"] as? [String: Any], limit: report["limit"] as? [String: Any],
@@ -591,6 +596,22 @@ public final class MartyLoop {
             engineChecked = true
             do { r = try engine.patch(document: nil, ref: ref, patch: merged, components: components, returnDocument: false, strict: true) }
             catch let e as ToolError { r = ["ok": false, "reason": e.reason] }
+            // A patch cannot move annotations, so the engine's checked anchor and arrow suggestions are applied by Marty
+            // to the patched whole document, which is checked again (at most 3 rounds); the accepted model is then that
+            // document (its `ref`), and the attempt lists the fixed ids.
+            var patchAutoFixed: [String] = []
+            if (r["ok"] as? Bool) != true, !Self.anchorIssues(r).isEmpty,
+               var whole = (try? engine.patch(document: nil, ref: ref, patch: merged, components: components, returnDocument: true, strict: false))?["document"] {
+                var rr = r, round = 0
+                while (rr["ok"] as? Bool) != true, round < 3 {
+                    let (fixed, applied) = Self.applySuggestions(whole, Self.anchorIssues(rr))
+                    guard !applied.isEmpty else { break }
+                    round += 1
+                    guard let r2 = try? engine.check(document: fixed, ref: nil, components: components, strict: true) else { break }
+                    whole = fixed; rr = r2; patchAutoFixed += applied
+                }
+                if !patchAutoFixed.isEmpty { r = rr }
+            }
             // A title or steps patch that leaves every step's effective pose and visibility as before changes only words.
             if (r["ok"] as? Bool) == true, viewsOnly, Self.effectiveViews(r) == Self.effectiveViews(report) {
                 let o: [String: Any] = ["ok": false, "reason": "followup.textOnly"]
@@ -624,6 +645,7 @@ public final class MartyLoop {
             }
             var o = Self.outcome(r)
             if !patchCut.isEmpty { o["trimmed"] = patchCut }
+            if !patchAutoFixed.isEmpty { o["autoFixed"] = patchAutoFixed }
             note(i, o); attempts.append(o)
             if (r["ok"] as? Bool) == true {
                 after = r; acceptedPatch = merged; acceptedPush = stepPush
@@ -635,6 +657,8 @@ public final class MartyLoop {
                 break
             }
             let reason = r["reason"] as? String ?? "unknown"
+            // A patch keeps the base document's annotations: their anchored parts guard the repair's ghost advice.
+            let baseAnchored = ((try? JSONSerialization.jsonObject(with: Data(docText.utf8))) as Any?).map(Self.anchoredParts) ?? []
             // Facts of the changed model: the same patch with steps cleared and a plain title, plain profile.
             var facts: String? = nil
             if ["text.", "check.failed", "check.fact"].contains(where: { reason.hasPrefix($0) }), var p = merged as? [String: Any] {
@@ -649,8 +673,8 @@ public final class MartyLoop {
                 + ((r["visibility"] as? [String: Any]).flatMap(MartyPrompts.visibilityLine).map { " \($0)" } ?? "")
                 + ((r["limit"] as? [String: Any]).flatMap(MartyPrompts.limitLine).map { " \($0)" } ?? "")
                 + ((r["unsourced"] as? [String]).map { " " + MartyPrompts.factRepair + "\n" + $0.map { "- \($0)" }.joined(separator: "\n") } ?? "")
-                + (MartyPrompts.anchorLines(Self.anchorIssues(r)).map { "\n" + $0 } ?? "")
-                + (Self.refusalDetail(r, document: merged).map { "\n" + $0 } ?? "")
+                + (MartyPrompts.anchorLines(Self.anchorIssues(r), anchoredParts: baseAnchored).map { "\n" + $0 } ?? "")
+                + (Self.refusalDetail(r, document: merged, anchored: baseAnchored).map { "\n" + $0 } ?? "")
                 + ((r["direction"] as? [String]).map { " " + MartyPrompts.directionRepair + " " + ($0.first ?? "") + "\n" + $0.dropFirst().map { "- \($0)" }.joined(separator: "\n") } ?? "")
                 + (facts.map { "\n\nFacts the engine solved for the changed model (name: value):\n\($0)" } ?? "")
                 + "\n\nReply with a corrected JSON object only."
@@ -806,7 +830,7 @@ extension MartyLoop {
             if let l = (r["limit"] as? [String: Any]).flatMap(MartyPrompts.limitLine) { u += " \(l)" }
             if let lines = r["unsourced"] as? [String] { u += " " + MartyPrompts.factRepair + "\n" + lines.map { "- \($0)" }.joined(separator: "\n") }
             if let a = MartyPrompts.anchorLines(Self.anchorIssues(r), anchoredParts: Self.anchoredParts(changed)) { u += "\n" + a }
-            if let d = Self.refusalDetail(r, document: changed) { u += "\n" + d }
+            if let d = Self.refusalDetail(r, document: changed, anchored: Self.anchoredParts(changed)) { u += "\n" + d }
             if let d = r["direction"] as? [String] { u += " " + MartyPrompts.directionRepair + " " + (d.first ?? "") + "\n" + d.dropFirst().map { "- \($0)" }.joined(separator: "\n") }
             if let facts { u += "\n\nFacts the engine solved (name: value):\n\(facts)" }
             if let readBack { u += "\n\nEngine read-back:\n\(readBack)" }
