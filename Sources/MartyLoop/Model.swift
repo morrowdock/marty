@@ -113,8 +113,26 @@ public struct ClaudeCLIAdapter: ModelAdapter {
         } else {
             a += ["--tools", ""]
         }
-        return a + ["--strict-mcp-config", "--disable-slash-commands", "--setting-sources", "", "--no-session-persistence",
-                    "--output-format", "json", "--system-prompt-file", systemFile]
+        // A research call streams its events, so Marty can count each web tool use and stop at the limit.
+        let format = research != nil ? ["--output-format", "stream-json", "--verbose"] : ["--output-format", "json"]
+        return a + ["--strict-mcp-config", "--disable-slash-commands", "--setting-sources", "", "--no-session-persistence"]
+            + format + ["--system-prompt-file", systemFile]
+    }
+
+    /// The web tool uses (WebSearch, WebFetch) in one stream-json line: tool_use blocks of an assistant message.
+    static func webToolUses(_ line: Data) -> [String: Int] {
+        guard let o = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { return [:] }
+        return webToolUses(o)
+    }
+
+    static func webToolUses(_ o: [String: Any]) -> [String: Int] {
+        guard o["type"] as? String == "assistant",
+              let content = (o["message"] as? [String: Any])?["content"] as? [[String: Any]] else { return [:] }
+        var out: [String: Int] = [:]
+        for c in content where c["type"] as? String == "tool_use" {
+            if let n = c["name"] as? String, n == "WebSearch" || n == "WebFetch" { out[n, default: 0] += 1 }
+        }
+        return out
     }
 
     func run(system: String, user: String, tools: ResearchLimits?) throws -> ModelReply {
@@ -143,24 +161,54 @@ public struct ClaudeCLIAdapter: ModelAdapter {
         do { try p.run() } catch { try? fm.removeItem(at: work); try? fm.removeItem(at: ctx); throw error }
 
         // Reading and writing run on their own threads; the timeout is on the child's exit. Only the writer closes stdin.
-        final class Box: @unchecked Sendable { var out = Data(), err = Data() }
+        final class Box: @unchecked Sendable {
+            var out = Data(), err = Data(), toolUses = 0, overBudget = false
+            /// A research call's stream, parsed from every byte (not only the kept output): the unfinished line, the
+            /// counts per tool, and the last "result" event.
+            var line = Data(), lineTooLong = false, counts: [String: Int] = [:], result: Data? = nil
+        }
         let box = Box()
         let group = DispatchGroup()     // the two pipe readers
         let exited = DispatchGroup()    // the child's exit
-        func drain(_ h: FileHandle, _ keep: @escaping (Data) -> Void) {
+        func drain(_ h: FileHandle, observe: ((Data) -> Void)? = nil, _ keep: @escaping (Data) -> Void) {
             group.enter()
             DispatchQueue.global().async {
                 var kept = 0
                 while true {
                     let d = h.availableData
                     if d.isEmpty { break }
+                    observe?(d)
                     if kept < Self.maxOutputBytes { let part = d.prefix(Self.maxOutputBytes - kept); keep(part); kept += part.count }
                 }
                 group.leave()
             }
         }
         let lock = NSLock()
-        drain(stdout.fileHandleForReading) { d in lock.lock(); box.out.append(d); lock.unlock() }
+        let toolLimit = tools.map { max(1, min($0.maxTurns, 40)) }
+        // A research call: every complete stream line is parsed as it arrives (bounded: a line over the output cap is
+        // skipped), its web tool uses counted and the last "result" event kept; past the limit, the child is stopped.
+        // One complete stream line (called with the lock held): parsed once; its web tool uses counted; a top-level
+        // "result" event kept; past the limit, the child is stopped.
+        func handle(_ line: Data, limit: Int) {
+            guard let o = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { return }
+            for (k, v) in Self.webToolUses(o) { box.counts[k, default: 0] += v; box.toolUses += v }
+            if o["type"] as? String == "result" { box.result = line }
+            if box.toolUses > limit, !box.overBudget { box.overBudget = true; if p.isRunning { p.terminate() } }
+        }
+        let observe: ((Data) -> Void)? = toolLimit.map { limit in { d in
+            lock.lock()
+            for byte in d {
+                if byte == 10 {
+                    if !box.lineTooLong { handle(box.line, limit: limit) }
+                    box.line.removeAll(keepingCapacity: true); box.lineTooLong = false
+                } else if !box.lineTooLong {
+                    box.line.append(byte)
+                    if box.line.count > Self.maxOutputBytes { box.lineTooLong = true; box.line.removeAll() }
+                }
+            }
+            lock.unlock()
+        } }
+        drain(stdout.fileHandleForReading, observe: observe) { d in lock.lock(); box.out.append(d); lock.unlock() }
         drain(stderr.fileHandleForReading) { d in lock.lock(); if box.err.count < 4096 { box.err.append(d.prefix(4096)) }; lock.unlock() }
         DispatchQueue.global().async {
             // EPIPE (the child exited without reading) ends the write; F_SETNOSIGPIPE keeps it from being a signal.
@@ -182,8 +230,20 @@ public struct ClaudeCLIAdapter: ModelAdapter {
         try? fm.removeItem(at: work); try? fm.removeItem(at: ctx)
         if timedOut { throw AdapterError(reason: "adapter.timeout", detail: "no answer in \(Int(timeout)) s") }
         let seconds = Date().timeIntervalSince(t0)
-        lock.lock(); let out = box.out, err = box.err; lock.unlock()
-        guard let env = try? JSONSerialization.jsonObject(with: out) as? [String: Any] else {
+        lock.lock()
+        // A last line without a newline.
+        if let limit = toolLimit, !box.line.isEmpty, !box.lineTooLong { handle(box.line, limit: limit) }
+        let out = box.out, err = box.err, overBudget = box.overBudget, streamCounts = box.counts, streamResult = box.result
+        lock.unlock()
+        if overBudget { throw AdapterError(reason: "adapter.research.turns", detail: "more than \(toolLimit ?? 0) web tool uses") }
+        // A research call's stream: the web tool uses counted from its events, the result from its last "result" event.
+        var counted: [String: Int]? = nil
+        var envData = out
+        if tools != nil {
+            counted = ["WebSearch": streamCounts["WebSearch"] ?? 0, "WebFetch": streamCounts["WebFetch"] ?? 0]
+            envData = streamResult ?? Data()
+        }
+        guard let env = try? JSONSerialization.jsonObject(with: envData) as? [String: Any] else {
             throw AdapterError(reason: "adapter.output", detail: "exit \(p.terminationStatus): " + String(decoding: err.suffix(400), as: UTF8.self))
         }
         var meta: [String: Any] = ["exit": Int(p.terminationStatus)]
@@ -194,6 +254,7 @@ public struct ClaudeCLIAdapter: ModelAdapter {
                 meta["webTools"] = t.filter { ["web_search_requests", "web_fetch_requests"].contains($0.key) }
             }
         }
+        if let counted { meta["webTools"] = ["web_search_requests": counted["WebSearch"] ?? 0, "web_fetch_requests": counted["WebFetch"] ?? 0] }
         if (env["is_error"] as? Bool) == true {
             throw AdapterError(reason: "adapter.error", detail: String((env["result"] as? String ?? "").prefix(400)))
         }

@@ -12,6 +12,7 @@ let usage = """
       --repairs N   repairs after the first attempt, 0-3 (default 3)
       --no-research         skip the research phase (no web search; no fact table)
       --research-turns N    turns of the research call, 2-40 (default 12)
+      --no-quote-check      keep research rows whose quotes Marty did not find on the cited pages
     """
 
 func fail(_ s: String) -> Never { FileHandle.standardError.write(Data((s + "\n").utf8)); exit(2) }
@@ -41,6 +42,7 @@ func fail(_ s: String) -> Never { FileHandle.standardError.write(Data((s + "\n")
             options.size = value()
             guard MartyEngine.parseSize(options.size) != nil else { fail("--size is WIDTHxHEIGHT, width 320-1920 and height 200-1200") }
         case "--no-research": options.research = false
+        case "--no-quote-check": options.quoteCheck = false
         case "--research-turns":
             guard let n = Int(value()), (2...40).contains(n) else { fail("--research-turns is 2-40") }
             options.researchTurns = n

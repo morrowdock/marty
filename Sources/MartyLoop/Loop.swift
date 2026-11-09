@@ -15,10 +15,14 @@ public final class MartyLoop {
         /// The research phase (web search through the adapter's research call). An adapter without web tools skips it.
         public var research = true
         public var researchTurns = 12
+        /// Fetch each cited page and check its quote (`FactTable.checkQuotes`); a row whose quotes are not found is UNKNOWN.
+        public var quoteCheck = true
         public init() {}
     }
 
     public static let receiptFormat = "marty.run-receipt/v1"
+    /// The page fetcher of the quote check (tests replace it with a stub).
+    public static var fetcher: PageFetcher = PinnedFetcher()
     public static let maxPlanIds = 6
 
     let engine: MartyEngine
@@ -208,7 +212,8 @@ public final class MartyLoop {
             "format": Self.receiptFormat, "prompts": MartyPrompts.version, "model": model.id,
             "engine": ["repository": MartyPin.engineRepository, "revision": MartyPin.engineRevision],
             "question": question, "options": ["repairs": options.repairs, "render": options.render, "size": options.size,
-                                              "research": options.research, "researchTurns": options.researchTurns],
+                                              "research": options.research, "researchTurns": options.researchTurns,
+                                              "quoteCheck": options.quoteCheck],
             "startedAt": ISO8601DateFormatter().string(from: started),
         ]
 
@@ -220,10 +225,11 @@ public final class MartyLoop {
             let (text, i) = ask("research", attempt: 0, system: MartyPrompts.researchSystem(maxSearches: max(1, limits.maxTurns - 1)),
                                 user: "Question: \(question)", research: limits)
             var block: [String: Any] = ["maxTurns": limits.maxTurns, "blockedDomains": limits.blockedDomains]
-            // `turns` shows that tools ran (one turn per search or fetch); the CLI's WebSearch runs as its own
-            // sub-request, so the top-level `webTools` counters can stay 0.
+            // `webTools` counts each WebSearch and WebFetch use from the call's event stream (the adapter stops the
+            // call past the limit); `turns` is the CLI's own turn count.
             if let m = calls[i]["model"] as? [String: Any] { block["turns"] = m["num_turns"] ?? NSNull(); block["webTools"] = m["webTools"] ?? NSNull() }
-            if let text, let table = FactTable.parse(text, blocked: limits.blockedDomains) {
+            if let text, var table = FactTable.parse(text, blocked: limits.blockedDomains) {
+                if options.quoteCheck { table.checkQuotes(fetcher: Self.fetcher) }
                 facts = table
                 block.merge(table.json) { a, _ in a }
                 block["ok"] = true

@@ -14,6 +14,8 @@ public struct FactTable {
         public var publisher: String
         public var date: String
         public var quote: String
+        /// The quote check's result for this source ("quote found", "quote not found", "page failed (404)", ...).
+        public var check: String = ""
         /// The host, lower case, without a trailing dot ("www." kept: the site is derived from the full host).
         public var host: String
         /// The site, for the independence rule: the registrable domain of the host (see `FactTable.site`).
@@ -28,11 +30,19 @@ public struct FactTable {
         public var label: Label
         public var appliesTo: String
         public var sources: [Source]
+        /// Sources the parse dropped (blocked, free hosting, not a web URL, no public host name).
+        public var dropped = 0
     }
 
     public var needed: Bool
     public var rows: [Row]
     public var downgrades: [String]
+    /// Pages the quote check fetched.
+    public var quoteChecks = 0
+
+    /// Free hosting domains where copies of news pages live: never a source (round 2f: a "WIRED" page on pages.dev).
+    public static let mirrorHosts = ["pages.dev", "netlify.app", "vercel.app", "github.io", "web.app", "firebaseapp.com",
+                                     "glitch.me", "herokuapp.com", "onrender.com", "surge.sh", "neocities.org"]
 
     public static let maxRows = 20
     public static let maxSources = 3
@@ -56,7 +66,8 @@ public struct FactTable {
             guard !claim.isEmpty else { continue }
             var label = Label(rawValue: clip(r["label"], 12).uppercased()) ?? .unknown
             var sources: [Source] = []
-            for s in (r["sources"] as? [[String: Any]] ?? []).prefix(maxSources) {
+            let given = (r["sources"] as? [[String: Any]] ?? []).prefix(maxSources)
+            for s in given {
                 let url = clip(s["url"], 300)
                 guard let u = URL(string: url), let scheme = u.scheme?.lowercased(), scheme == "https" || scheme == "http",
                       let rawHost = u.host else { continue }
@@ -69,12 +80,18 @@ public struct FactTable {
                 if blocked.contains(where: { host == $0 || host.hasSuffix("." + $0) }) {
                     downgrades.append("\(id): source on a blocked site dropped (\(host))"); continue
                 }
+                if mirrorHosts.contains(where: { host == $0 || host.hasSuffix("." + $0) }) {
+                    downgrades.append("\(id): source on a free hosting site dropped (\(host))"); continue
+                }
                 sources.append(Source(url: url, publisher: clip(s["publisher"], 80), date: clip(s["date"], 20),
                                       quote: clip(s["quote"], 200), host: host))
             }
             let sites = distinctSites(sources)
             let before = label
+            // Sources were given but none survived: nothing supports the row (UNKNOWN). No source at all: a CLAIM or
+            // VERIFIED row is at most PLAUSIBLE (a class inference).
             switch label {
+            case _ where sources.isEmpty && !given.isEmpty && label != .unknown: label = .unknown
             case .verified where sites < 2: label = sources.isEmpty ? .plausible : .claim
             case .claim where sources.isEmpty: label = .plausible
             default: break
@@ -83,7 +100,7 @@ public struct FactTable {
             var value = clip(r["value"], 60)
             if label == .unknown { value = "" }
             rows.append(Row(id: id, claim: claim, value: value, unit: clip(r["unit"], 20), label: label,
-                            appliesTo: clip(r["appliesTo"], 80), sources: sources))
+                            appliesTo: clip(r["appliesTo"], 80), sources: sources, dropped: given.count - sources.count))
         }
         return FactTable(needed: needed, rows: rows, downgrades: downgrades)
     }
@@ -142,7 +159,11 @@ public struct FactTable {
             return "Fact table: none (no research). State no figure, date, product version or share that the engine did not solve."
         }
         let json = rows.map { r -> String in
-            let src = r.sources.map { ["publisher": $0.publisher.isEmpty ? $0.site : $0.publisher, "date": $0.date] }
+            let src = r.sources.map { s -> [String: Any] in
+                var o: [String: Any] = ["publisher": s.publisher.isEmpty ? s.site : s.publisher, "date": s.date]
+                if !s.check.isEmpty { o["check"] = s.check }
+                return o
+            }
             return MartyJSON.string(["id": r.id, "label": r.label.rawValue, "claim": r.claim, "value": r.value, "unit": r.unit,
                                      "appliesTo": r.appliesTo, "sources": src] as [String: Any])
         }
@@ -155,7 +176,7 @@ public struct FactTable {
         ["needed": needed, "downgrades": downgrades,
          "rows": rows.map { r in
              ["id": r.id, "claim": r.claim, "value": r.value, "unit": r.unit, "label": r.label.rawValue, "appliesTo": r.appliesTo,
-              "sources": r.sources.map { ["url": $0.url, "publisher": $0.publisher, "date": $0.date, "quote": $0.quote] }] as [String: Any]
-         }]
+              "sources": r.sources.map { ["url": $0.url, "publisher": $0.publisher, "date": $0.date, "quote": $0.quote, "check": $0.check] }] as [String: Any]
+         }, "quoteChecks": quoteChecks]
     }
 }
