@@ -20,14 +20,19 @@ import MartyEngine
 
     /// A text field: its path, its key path in the document, its authored cap and its filled cap (nil when the
     /// engine does not fill placeholders there).
-    struct Field { let path: String; let keys: [Any]; let authored: Int; let filled: Int? }
+    struct Field {
+        let path: String; let keys: [Any]; let authored: Int; let filled: Int?
+        /// Whether the engine strips surrounding white space before filling (all filled fields except the explainer
+        /// title, which it fills as authored).
+        var strips = true
+    }
 
     static func fields(_ d: [String: Any]) -> [Field] {
         typealias L = MartyTextLimits
         var out: [Field] = []
         let explainer = d["kind"] as? String == "explainer"
         let v2 = explainer || (d["v"] as? Int ?? 2) >= 2
-        if explainer { out.append(Field(path: "title", keys: ["title"], authored: L.explainerTitleRaw, filled: L.explainerTitle)) }
+        if explainer { out.append(Field(path: "title", keys: ["title"], authored: L.explainerTitleRaw, filled: L.explainerTitle, strips: false)) }
         else { out.append(Field(path: "title", keys: ["title"], authored: L.title, filled: v2 ? L.title : nil)) }
         func solid(_ s: [String: Any], _ prefix: String, _ base: [Any]) {
             if let list = s["parts"] as? [[String: Any]] {
@@ -92,8 +97,8 @@ import MartyEngine
 
     /// The smallest filled length: the text as the engine keeps it (surrounding white space removed), each
     /// placeholder at least 1 character.
-    static func filledAtLeast(_ t: String) -> Int {
-        t.trimmingCharacters(in: .whitespacesAndNewlines)
+    static func filledAtLeast(_ t: String, strips: Bool = true) -> Int {
+        (strips ? t.trimmingCharacters(in: .whitespacesAndNewlines) : t)
             .replacingOccurrences(of: placeholder, with: "x", options: .regularExpression).unicodeScalars.count
     }
 
@@ -107,10 +112,10 @@ import MartyEngine
             if n > f.authored { return Issue(path: f.path, limit: f.authored, actual: n, atLeast: false) }
             if let cap = f.filled {
                 if !hasPlaceholder(t) {
-                    let kept = t.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars.count
+                    let kept = (f.strips ? t.trimmingCharacters(in: .whitespacesAndNewlines) : t).unicodeScalars.count
                     return kept > cap ? Issue(path: f.path, limit: cap, actual: kept, atLeast: false) : nil
                 }
-                let low = filledAtLeast(t)
+                let low = filledAtLeast(t, strips: f.strips)
                 return low > cap ? Issue(path: f.path, limit: cap, actual: low, atLeast: true) : nil
             }
             return nil

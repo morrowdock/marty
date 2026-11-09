@@ -1069,6 +1069,11 @@ final class MartyLoopTests: XCTestCase {
         let padded: [String: Any] = ["v": 2, "kind": "assembly", "title": "t", "annotations": ["labels": [["id": "l", "at": ["world": [0, 0, 0]],
                                      "text": " " + String(repeating: "A", count: 58) + " {shaft.input.speed}"]]], "steps": [["say": "x"]]]
         XCTAssertEqual(TextBudget.issues(padded), [])
+        // The explainer title is filled as authored: its spaces count.
+        var spaced = ex; spaced["title"] = " " + String(repeating: "A", count: 80)
+        XCTAssertEqual(TextBudget.issues(spaced).map(\.line), ["title: 81 characters, the limit is 80"])
+        spaced["title"] = " " + String(repeating: "A", count: 79) + "{x.y}"
+        XCTAssertEqual(TextBudget.issues(spaced).first?.atLeast, true)
         // A caption with a placeholder is never cut; its authored length is reported exactly.
         let say = "The wheel turns {pair.wheel.speed|abs|frac} " + String(repeating: "and keeps turning ", count: 14)
         let d: [String: Any] = ["v": 2, "kind": "assembly", "title": "t", "steps": [["say": say]]]
