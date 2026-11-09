@@ -337,24 +337,35 @@ public enum QuoteCheck {
     /// The numbers a quote states: its digits, number words ("five"), and Roman version numerals after a version
     /// word ("Mk IV" is 4).
     @MainActor static func statedNumbers(_ quote: String, inOrder: Bool = false) -> [String] {
-        // Words with whether sentence punctuation follows them (a number-word run never crosses it).
+        // Words in order: a token with a digit gives its whole numeric spans ("85.06", "1,200", the 4 of "Mk4"); the
+        // letter parts of other tokens give words, and any punctuation after a word ends a number-word run.
         var words: [(w: String, stop: Bool)] = []
+        var spans: [Int: [String]] = [:]
         for raw in quote.lowercased().split(whereSeparator: { $0.isWhitespace }) {
-            let stop = raw.last.map { ".,;:!?)".contains($0) } ?? false
-            for (k, part) in raw.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).enumerated() {
-                words.append((String(part), false))
-                _ = k
+            if raw.contains(where: { $0.isNumber }) {
+                spans[words.count] = MartyLoop.numbers(String(raw))
+                // The letters before the digits ("mk" of "mk4") still name a version for a Roman numeral after it.
+                words.append((String(raw.prefix { $0.isLetter }), true))
+                continue
             }
-            if stop, !words.isEmpty { words[words.count - 1].stop = true }
+            var part = ""
+            for c in raw {
+                if c.isLetter { part.append(c); continue }
+                if !part.isEmpty { words.append((part, c != "-" && c != "\u{2011}")); part = "" }
+                else if c != "-", !words.isEmpty { words[words.count - 1].stop = true }
+            }
+            if !part.isEmpty { words.append((part, false)) }
         }
         var found: [(Int, String)] = []
         var i = 0
         while i < words.count {
             let w = words[i].w
-            if w.first?.isNumber == true {
-                for n in MartyLoop.numbers(w) { found.append((i, n)) }
+            if let ns = spans[i] {
+                for n in ns { found.append((i, n)) }
                 i += 1; continue
             }
+            // "One of the …" names one of several, not a count.
+            if w == "one", i + 1 < words.count, words[i + 1].w == "of", !words[i].stop { i += 1; continue }
             if numberWords[w] != nil {
                 // A run of number words is one number ("twenty-four" is 24, "two hundred and five" 205, "one
                 // million" 1000000), never its parts; "and" joins only after a scale word ("five and six" are two).
@@ -647,7 +658,10 @@ public enum QuoteCheck {
             }
             // The end: a number may not go on after it.
             let e = s + last
-            if !completedEnd, e + 1 < p.count, !p[e].closedAfter, numericEnd(w) {
+            // A counted noun right after a number ("5 engines") keeps its bounds, rates and ranges ("or more", "per
+            // wing", "every …"), though it is no unit (no default deny after it).
+            let countEnd = last > 0 && w[last].text.allSatisfy(\.isLetter) && w[last - 1].hasDigit && !w[last - 1].closedAfter
+            if !completedEnd, e + 1 < p.count, !p[e].closedAfter, numericEnd(w) || countEnd {
                 let next = p[e + 1]
                 // A dash goes on with a number only when a number follows it ("10 - 20"); before a word it is
                 // punctuation ("1,050 bhp - the company").
@@ -667,13 +681,13 @@ public enum QuoteCheck {
                 // Modifiers between the connector and the quantity are skipped ("in just 30 seconds", "by about 20 cm").
                 var m = e + 2
                 while m < p.count, m < e + 5, Self.modifiers.contains(p[m].text) { m += 1 }
-                if withUnit || w[last].hasDigit, m < p.count, ["by", "in", "over", "for", "within", "under", "every", "each"].contains(next.text) {
+                if withUnit || w[last].hasDigit || countEnd, m < p.count, ["by", "in", "over", "for", "within", "under", "every", "each"].contains(next.text) {
                     let t = p[m]
                     if t.hasDigit || isSign(t) || Self.countWords.contains(t.text)
                         || ((t.text == "a" || t.text == "an") && m + 1 < p.count && Self.timeUnits.contains(p[m + 1].text)) { return false }
                 }
                 // A bound after the quantity ("10 kg or less", "10 kw or more", "10 kg max", "10 bar and up").
-                if withUnit || w[last].hasDigit {
+                if withUnit || w[last].hasDigit || countEnd {
                     if Self.postBounds.contains(next.text) { return false }
                     if next.text == "or" || next.text == "and", let t = after, Self.boundTails.contains(t.text) { return false }
                 }
@@ -681,13 +695,13 @@ public enum QuoteCheck {
                 if !withUnit, w[last].hasDigit, Self.isUnitWord(next.text) { return false }
                 // A number goes on with a magnitude ("$10 million", "3 bn").
                 if w[last].hasDigit, Self.magnitudes.contains(next.text) { return false }
-                if quantityEnd(w, last) != nil {
+                if quantityEnd(w, last) != nil || countEnd {
                     // A rate ("10 metres a second", "5 litres each hour") or a unit product ("10 kw h").
                     if ["a", "an", "each", "every"].contains(next.text), let t = after,
                        Self.timeUnits.contains(t.text) || t.hasDigit || Self.countWords.contains(t.text) { return false }
-                    if unitEnd, Self.isUnitSymbol(next.text) { return false }
+                    if unitEnd, quantityEnd(w, last) != nil, Self.isUnitSymbol(next.text) { return false }
                 }
-                let dashBeforeWord = next.text == "-" && !unitEnd && !(after.map { $0.hasDigit || $0.text.first == "." || isSign($0) } ?? false)
+                let dashBeforeWord = next.text == "-" && !(unitEnd && quantityEnd(w, last) != nil) && !(after.map { $0.hasDigit || $0.text.first == "." || isSign($0) } ?? false)
                 if bare(next), !dashBeforeWord { return false }
                 if next.text == "to", e + 2 < p.count, p[e + 2].hasDigit || isSign(p[e + 2]) { return false }
                 // The start of a "between … and …" range.
@@ -820,6 +834,14 @@ public enum QuoteCheck {
         // ancestors (an "updated" or "related" container), the words right before it and its own text. A candidate
         // that contains another candidate is left to its children.
         var stack: [(name: String, attrs: String, index: Int)] = []
+        // Containers still open at the h1 (an "updated" or "related" one around the title) are ancestors too.
+        let prefix = String(html[..<h1.lowerBound].suffix(50_000)) as NSString
+        for t in tagRe.matches(in: prefix as String, range: NSRange(location: 0, length: prefix.length)) {
+            let name = prefix.substring(with: t.range(at: 2)).lowercased(), attrs = prefix.substring(with: t.range(at: 3))
+            if prefix.substring(with: t.range(at: 1)) == "/" { if let at = stack.lastIndex(where: { $0.name == name }) { stack.removeSubrange(at...) }; continue }
+            if void.contains(name) || attrs.hasSuffix("/") { continue }
+            stack.append((name, attrs, -1))
+        }
         for (k, t) in tags.enumerated() {
             let closing = ans.substring(with: t.range(at: 1)) == "/"
             let name = ans.substring(with: t.range(at: 2)).lowercased()
@@ -845,10 +867,10 @@ public enum QuoteCheck {
             let before = decodeEntities(ans.substring(with: NSRange(location: max(0, t.range.location - 300), length: min(300, t.range.location))))
                 .replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
                 .replacingOccurrences(of: "\u{00A0}", with: " ").lowercased()
-            if before.range(of: #"(updated|modified|revised|last edited)\s*:?\s*$"#, options: .regularExpression) != nil { continue }
+            if before.range(of: #"(updated|modified|revised|last edited|related)\s*:?\s*$"#, options: .regularExpression) != nil { continue }
             let text = decodeEntities(inner.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression))
                 .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            if text.lowercased().range(of: #"\b(updated|modified|revised)\b"#, options: .regularExpression) != nil { continue }
+            if text.lowercased().range(of: #"\b(updated|modified|revised|related)\b"#, options: .regularExpression) != nil { continue }
             if let d = writtenDate(text) { return d }
         }
         return nil

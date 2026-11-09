@@ -271,8 +271,8 @@ import MartyEngine
         for key in ["labels", "arrows", "dimensions"] {
             for x in ann[key] as? [[String: Any]] ?? [] {
                 let note = x["unchecked"] as? String ?? ""
-                guard note.lowercased().hasPrefix("assumed example"), let text = x["text"] as? String else { continue }
-                out.append(("annotation.\(x["id"] as? String ?? "?")", text, note))
+                guard note.lowercased().hasPrefix("assumed example") else { continue }
+                out.append(("annotation.\(x["id"] as? String ?? "?")", x["text"] as? String ?? "", note))
             }
         }
         return out

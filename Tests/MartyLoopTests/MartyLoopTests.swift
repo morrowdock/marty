@@ -1192,6 +1192,9 @@ final class MartyLoopTests: XCTestCase {
         let exampleNote: [String: Any] = ["v": 2, "kind": "assembly", "title": "A suit", "parts": [] as [Any],
             "annotations": ["labels": [["id": "lI", "at": ["world": [0, 0, 0]], "text": "Interior (example)", "unchecked": "assumed example; internal details are not published"]]]]
         XCTAssertEqual(FactCheck.findings(exampleNote, evidence: .init()).first?.field, "annotation.lI.unchecked")
+        let exampleArrow: [String: Any] = ["v": 2, "kind": "assembly", "title": "A suit", "parts": [] as [Any],
+            "annotations": ["arrows": [["id": "aT", "meaning": "force", "from": ["world": [0, 0, 0]], "to": ["world": [0, 0, 1]], "unchecked": "assumed example; thrust not published"]]]]
+        XCTAssertEqual(FactCheck.findings(exampleArrow, evidence: .init()).first?.kind, "notPublished")
         // The answer lint flags it too.
         XCTAssertFalse(MartyLoop.unsourcedSentences("The current version is not published.", sources: []).isEmpty)
 
@@ -1210,6 +1213,8 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(QuoteCheck.pageDate(#"<h1>Title</h1><aside id="related"><div><time>June 1, 2023</time></div></aside><time>May 2, 2021</time>"#), "2021-05-02")
         XCTAssertEqual(QuoteCheck.pageDate(#"<h1>Title</h1><p>Updated:&nbsp;<time>June 1, 2023</time></p><time>May 2, 2021</time>"#), "2021-05-02")
         XCTAssertEqual(QuoteCheck.pageDate(#"<h1>Title</h1><div class="byline">Published <time>May 2, 2021</time>, updated <time>June 1, 2023</time></div>"#), "2021-05-02", "dated children judged one by one")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<aside class="related"><h1>Title</h1><time>June 1, 2023</time></aside><time>May 2, 2021</time>"#), "2021-05-02")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<h1>Title</h1><p>Related: <time>June 1, 2023</time></p><time>May 2, 2021</time>"#), "2021-05-02")
         XCTAssertEqual(QuoteCheck.pageDate(#"<meta content="2019-03-03" name="date"><meta name="pubdate" content="2020-04-04">"#), "2019-03-03", "document order")
         XCTAssertEqual(QuoteCheck.pageDate(#"<script type="application/ld+json">{"@type": "Article", "datePublished": "2021-02-29"}</script><h1>T</h1><time>May 2, 2021</time>"#), "2021-05-02")
         XCTAssertEqual(QuoteCheck.pageDate(#"<h1>FEATURE: Meet the man</h1><time class="time" datetime="2020-51-09">09 Apr 2020</time>"#), "2020-04-09")
@@ -1245,6 +1250,25 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(QuoteCheck.statedNumbers("one million cycles").contains("1000000"))
         XCTAssertEqual(Set(QuoteCheck.statedNumbers("five. Six motors")), ["5", "6"])
         XCTAssertEqual(Set(QuoteCheck.statedNumbers("five and six motors")), ["5", "6"])
+        XCTAssertEqual(Set(QuoteCheck.statedNumbers("five,six motors")), ["5", "6"])
+        XCTAssertEqual(QuoteCheck.statedNumbers("85.06 mph", inOrder: true), ["85.06"])
+        XCTAssertEqual(QuoteCheck.statedNumbers("1,200 kg", inOrder: true), ["1200"])
+        XCTAssertEqual(QuoteCheck.statedNumbers("Mk4", inOrder: true), ["4"]); XCTAssertEqual(QuoteCheck.statedNumbers("v2", inOrder: true), ["2"])
+        XCTAssertFalse(QuoteCheck.statedNumbers("One of the devices flew").contains("1"))
+        XCTAssertTrue(QuoteCheck.statedNumbers("a single unit").contains("1"))
+        // Decimals and compact versions are compared whole.
+        var exact = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [
+            ["id": "F1", "claim": "Record", "value": "85.06", "label": "CLAIM", "sources": [["url": "https://a.org/6", "publisher": "A", "date": "2020", "quote": "a record of 85.09 mph"]]],
+            ["id": "F2", "claim": "Version", "value": "Mk4", "label": "CLAIM", "sources": [["url": "https://a.org/6", "publisher": "A", "date": "2020", "quote": "the Mk III suit"]]],
+            ["id": "F3", "claim": "Mass", "value": "1,200", "label": "CLAIM", "sources": [["url": "https://a.org/6", "publisher": "A", "date": "2020", "quote": "it weighs 1200 kg"]]]]])))
+        exact.checkQuotes(fetcher: TestPages(pages: ["https://a.org/6": "<p>A record of 85.09 mph; the Mk III suit; it weighs 1200 kg.</p>"], fallback: nil))
+        XCTAssertTrue(exact.rows[0].unconfirmed); XCTAssertTrue(exact.rows[1].unconfirmed); XCTAssertFalse(exact.rows[2].unconfirmed)
+        // A counted noun keeps its bounds and rates.
+        XCTAssertFalse(QuoteCheck.found("The device has 5 engines", in: "<p>The device has 5 engines or more.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The device has 5 engines", in: "<p>The device has 5 engines per wing.</p>"))
+        XCTAssertFalse(QuoteCheck.found("A capacity of 100 passengers", in: "<p>A capacity of 100 passengers or fewer.</p>"))
+        XCTAssertTrue(QuoteCheck.found("The device has 5 engines", in: "<p>The device has 5 engines that turn.</p>"))
+        XCTAssertTrue(QuoteCheck.found("The device has 5 engines", in: "<p>The device has 5 engines - the arms hold two.</p>"))
         // A worded or Roman value is checked like a digit one.
         var romanRow = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [
             ["id": "F1", "claim": "Version", "value": "Mk XII", "label": "CLAIM", "sources": [["url": "https://a.org/5", "publisher": "A", "date": "2020", "quote": "The current Mk IV device is lighter"]]],
