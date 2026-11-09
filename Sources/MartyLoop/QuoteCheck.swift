@@ -475,8 +475,12 @@ public enum QuoteCheck {
     /// The claim word that none of the found quotes states, or nil: each share or comparison word of the value and
     /// claim, and for a value in words (no number) at least one of its content words.
     @MainActor static func unstatedWord(value: String, claim: String, quotes: [String]) -> String? {
-        func words(_ t: String) -> [String] { t.lowercased().split { !$0.isLetter }.map(String.init) }
-        let quoted = Set(quotes.flatMap(words).map(singular))
+        // ("all-up weight" is a compound, no share; an editorial insertion "[most of]" in a quote is no page text.)
+        func words(_ t: String) -> [String] {
+            t.lowercased().replacingOccurrences(of: "all[-\u{2011}](?=[a-z])", with: "all", options: .regularExpression)
+                .split { !$0.isLetter }.map(String.init)
+        }
+        let quoted = Set(quotes.map { $0.replacingOccurrences(of: #"\[[^\]]*\]"#, with: " ", options: .regularExpression) }.flatMap(words).map(singular))
         for w in words(value + " " + claim) where shareWords.contains(w) && !quoted.contains(singular(w)) { return w }
         guard statedNumbers(value, inOrder: true).isEmpty else { return nil }
         // (Only function words are left out: a short term or acronym, "LPG", "gas", "Jet A", must be stated too.)
@@ -687,6 +691,9 @@ public enum QuoteCheck {
                 let qualifiesTwo = (["a", "an"].contains(inner) && timeUnits.contains(second))
                     || (["and", "or"].contains(inner) && (boundTails.contains(second) || second == "more" || second == "less"))
                     || (inner == "at" && ["most", "least"].contains(second)) || (inner == "up" && second == "to")
+                    // ("(for 30 seconds)", "(during two minutes)": a duration; "(for example, …)" is an aside)
+                    || (["for", "during", "over", "within", "under", "in", "after"].contains(inner)
+                        && (second.first?.isNumber == true || numberWords[second] != nil || ["a", "an", "up", "about", "around"].contains(second)))
                 if !qualifies, !qualifiesTwo { close() }
             }
             // A hyphen between two words ("five-engine", "suit - with") is punctuation: next to a number it stays

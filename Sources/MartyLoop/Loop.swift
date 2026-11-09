@@ -991,11 +991,19 @@ extension MartyLoop {
                 // Only a comparison of a pose ("one arm is raised more than the other") is sourced by a posed view, and
                 // only when it makes no share claim ("the arm supports carry most of the load" is still checked).
                 // The comparison must itself be about the pose: "raised more than the other", "higher than the other".
+                // Every other comparison in the sentence must be absent: the pose comparison is cut out and the rest
+                // checked with the same share and comparison detector ("… and provides two thirds of the support").
+                let poseComparison = #"(?i)\b(raised|lowered|tilted|bent|angled)\s+(?:much\s+|far\s+)?(?:more|less|further|higher|lower)\s+than(?:\s+the\s+other)?\b|\b(higher|lower|further)\s+than\s+the\s+other\b"#
                 guard !posed.isEmpty,
                       sentence.range(of: #"(?i)\b(arm|arms|shoulder|shoulders|leg|legs|limb|limbs)\b"#, options: .regularExpression) != nil,
-                      sentence.range(of: #"(?i)\b(raised|lowered|tilted|bent|angled)\s+(?:much\s+|far\s+)?(?:more|less|further|higher|lower)\s+than\b|\b(higher|lower|further)\s+than\s+the\s+other\b"#, options: .regularExpression) != nil,
-                      sentence.range(of: #"(?i)\b(most|all|half|majority|share|load|lift|thrust|bulk|mainly|mostly|fuel|power|speed|weight|mass|energy|force|twice|times)\b"#, options: .regularExpression) == nil
+                      sentence.range(of: poseComparison, options: .regularExpression) != nil
                 else { return true }
+                let rest = sentence.replacingOccurrences(of: poseComparison, with: " ", options: .regularExpression)
+                let restWords = Set(rest.lowercased().split { !$0.isLetter }.map(String.init))
+                if rest.range(of: Self.comparativeWords, options: .regularExpression) != nil || !restWords.isDisjoint(with: QuoteCheck.shareWords)
+                    || rest.range(of: #"(?i)\b(fuel|power|speed|weight|mass|energy|force|load|lift|thrust|support|work|times)\b"#, options: .regularExpression) != nil {
+                    return true
+                }
                 return false
             }
             // Direction words that disagree with the posed step count with the unsourced sentences.
@@ -1095,7 +1103,7 @@ extension MartyLoop {
     }
 
     // "all the" and "all its" are left out: "the upward parts of all the thrusts balance the weight" is no share claim.
-    static let comparativeWords = #"(?i)\b(most|mostly|majority|all of|the bulk|nearly all|almost all|mainly|largely|more than|less than|twice|half of|half the|half its|half their|(?:a|one|two|a single) (?:third|quarter|fifth)s? of|two thirds|one third|three quarters|the largest|the biggest|the lion's share)\b"#
+    static let comparativeWords = #"(?i)\b(most|mostly|majority|all of|the bulk|nearly all|almost all|mainly|largely|more than|less than|twice|half of|half the|half its|half their|(?:a|one|two|three|a single)[\s\-\x{2011}](?:third|quarter|fifth)s?(?:\s+of)?|the largest|the biggest|the lion's share)\b"#
     /// (An attribution, "reported", "<publisher> claims", is no hedge.)
     static let hedgeWords = #"(?i)\b(about|roughly|around|approximately|estimated?|schematic|not checked|may|might|perhaps|likely)\b"#
 
