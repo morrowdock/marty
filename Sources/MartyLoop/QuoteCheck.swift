@@ -199,9 +199,9 @@ public enum QuoteCheck {
             t = t.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
             t = decodeEntities(t)
             // Reference marks of the page ("[3]", "[edit]", "[citation needed]") are not quoted text.
+            // A superscripted reference ("^[1]") goes with its mark; then any other reference mark.
+            t = t.replacingOccurrences(of: #"\^\s*\[(?:\d{1,3}|[a-z]|edit|citation needed|note \d+)\]"#, with: "", options: [.regularExpression, .caseInsensitive])
             t = t.replacingOccurrences(of: #"\[(?:\d{1,3}|[a-z]|edit|citation needed|note \d+)\]"#, with: "", options: [.regularExpression, .caseInsensitive])
-            // A superscript mark left with nothing after it (a removed "[1]" reference) is dropped.
-            t = t.replacingOccurrences(of: #"\^(?=[\s.,;:!?)]|$)"#, with: "", options: .regularExpression)
         }
         // Unicode superscripts likewise ("10³" is "10^3", "10⁻³" is "10^-3"), before NFKC would fold them to digits.
         t = markedSuperscripts(t)
@@ -217,15 +217,25 @@ public enum QuoteCheck {
         t = t.unicodeScalars.filter { !["\u{200B}", "\u{200C}", "\u{200D}", "\u{2060}", "\u{FEFF}", "\u{00AD}", "\u{180E}"].contains($0) }
             .reduce(into: "") { $0.unicodeScalars.append($1) }
         t = t.lowercased()
-        for (a, b) in [("\u{2018}", "'"), ("\u{2019}", "'"), ("\u{201A}", "'"), ("\u{201B}", "'"), ("\u{2032}", "'"),
-                       ("\u{201C}", "\""), ("\u{201D}", "\""), ("\u{201E}", "\""), ("\u{2033}", "\""), ("\u{00AB}", "\""), ("\u{00BB}", "\""),
+        for (a, b) in [("\u{2018}", "'"), ("\u{2019}", "'"), ("\u{201A}", "'"), ("\u{201B}", "'"),
+                       ("\u{201C}", "\""), ("\u{201D}", "\""), ("\u{201E}", "\""), ("\u{00AB}", "\""), ("\u{00BB}", "\""),
                        ("\u{2010}", "-"), ("\u{2011}", "-"), ("\u{2012}", "-"), ("\u{2013}", "-"), ("\u{2014}", "-"), ("\u{2015}", "-"),
                        ("\u{2212}", "-"), ("\u{00A0}", " "), ("\u{202F}", " "), ("\u{2009}", " "), ("\u{2026}", "...")] {
             t = t.replacingOccurrences(of: a, with: b)
         }
+        // A prime after a digit is a unit mark ("5′11″", "5'11\""), kept, never a quote mark (dropping it would make "511").
+        t = t.replacingOccurrences(of: "(?<=[0-9])'", with: "\u{2032}", options: .regularExpression)
+            .replacingOccurrences(of: "(?<=[0-9])\"", with: "\u{2032}\u{2032}", options: .regularExpression)   // as NFKC writes ″
         // Quote marks are dropped on both sides: a page that quotes a figure ("'1,050 bhp'") still matches.
         t = t.replacingOccurrences(of: #"['"`]"#, with: "", options: .regularExpression)
         t = t.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        // Number operators bind without spaces ("10 ^ 3", "3 / 4", "1 : 30", "10 ± 2", "10 x 20", "≥ 10", "10 m / s"), so a
+        // number is one expression however the page spaces it.
+        t = t.replacingOccurrences(of: "(?<=[0-9]) ?[x\u{00D7}] ?(?=[0-9])", with: "\u{00D7}", options: .regularExpression)
+        t = t.replacingOccurrences(of: "(?<=[0-9]) ?([\\^/\u{2044}\u{00B1}:]) ?(?=[0-9+.-])", with: "$1", options: .regularExpression)
+        t = t.replacingOccurrences(of: "([\u{00B1}<>\u{2264}\u{2265}~\u{2248}$\u{20AC}\u{00A3}\u{00A5}]) (?=[0-9])", with: "$1", options: .regularExpression)
+        t = t.replacingOccurrences(of: "(?<=[a-z]) ?([\\^/]) ?(?=[a-z0-9])", with: "$1", options: .regularExpression)
+        t = t.replacingOccurrences(of: "(?<=[0-9]) (?=[%\u{2030}\u{00B0}\u{2032}\u{2033}])", with: "", options: .regularExpression)
         // Spaces around a dash vary ("suit—with", "suit - with", "at − 5"): none on either side. A quote part that
         // starts with a sign ("-5 degrees") is matched after a letter but not after a digit (see `match`).
         t = t.replacingOccurrences(of: #" ?- ?"#, with: "-", options: .regularExpression)
@@ -273,9 +283,17 @@ public enum QuoteCheck {
 
     static func decodeEntities(_ s: String) -> String {
         var t = s
-        for (e, c) in [("&nbsp;", "\u{00A0}"), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"),
-                       ("&rsquo;", "'"), ("&lsquo;", "'"), ("&ldquo;", "\""), ("&rdquo;", "\""), ("&ndash;", "-"), ("&mdash;", "-"),
-                       ("&hellip;", "..."), ("&deg;", "\u{00B0}"), ("&times;", "\u{00D7}")] {
+        // Named entities (the common ones; "&amp;" last, so "&amp;minus;" stays text), then numeric ones below.
+        for (e, c) in [("&nbsp;", "\u{00A0}"), ("&thinsp;", "\u{2009}"), ("&hairsp;", "\u{200A}"), ("&ensp;", " "), ("&emsp;", " "),
+                       ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"),
+                       ("&rsquo;", "'"), ("&lsquo;", "'"), ("&sbquo;", "'"), ("&ldquo;", "\""), ("&rdquo;", "\""), ("&bdquo;", "\""),
+                       ("&laquo;", "\u{00AB}"), ("&raquo;", "\u{00BB}"), ("&ndash;", "\u{2013}"), ("&mdash;", "\u{2014}"), ("&minus;", "\u{2212}"),
+                       ("&hellip;", "..."), ("&deg;", "\u{00B0}"), ("&times;", "\u{00D7}"), ("&divide;", "\u{00F7}"), ("&plusmn;", "\u{00B1}"),
+                       ("&le;", "\u{2264}"), ("&ge;", "\u{2265}"), ("&asymp;", "\u{2248}"), ("&prime;", "\u{2032}"), ("&Prime;", "\u{2033}"),
+                       ("&sup1;", "\u{00B9}"), ("&sup2;", "\u{00B2}"), ("&sup3;", "\u{00B3}"), ("&frac14;", "\u{00BC}"), ("&frac12;", "\u{00BD}"),
+                       ("&frac34;", "\u{00BE}"), ("&frasl;", "\u{2044}"), ("&permil;", "\u{2030}"), ("&euro;", "\u{20AC}"), ("&pound;", "\u{00A3}"),
+                       ("&yen;", "\u{00A5}"), ("&cent;", "\u{00A2}"), ("&micro;", "\u{00B5}"), ("&middot;", "\u{00B7}"), ("&shy;", "\u{00AD}"),
+                       ("&zwj;", "\u{200D}"), ("&zwnj;", "\u{200C}"), ("&amp;", "&")] {
             t = t.replacingOccurrences(of: e, with: c)
         }
         guard let re = try? NSRegularExpression(pattern: #"&#(x?)([0-9a-fA-F]+);"#) else { return t }
@@ -324,32 +342,35 @@ public enum QuoteCheck {
               parts.reduce(0, { $0 + $1.text.count }) >= minimumPart else { return nil }
         // A number is a whole token: "5" is not inside "1.5", ".5" or "-5", and "144" is not inside "1,144", "1 144"
         // (a grouping space) or "144.5".
-        func boundary(_ i: String.Index, before: Bool, signed: Bool = false, decimalLead: Bool = false, numeric: Bool = false) -> Bool {
+        // A number is a whole expression: the match may not start or end inside one ("10–20", "10±2", "1:30",
+        // "1.5×10^6", "3/4", "1,144", "-5", "€500", "10%", "10m²"). See `numberStarts`, `numberGoesOn`.
+        func boundary(_ i: String.Index, before: Bool, signed: Bool = false, numeric: Bool = false, unitEnd: Bool = false) -> Bool {
             if before {
                 guard i != p.startIndex else { return true }
                 let j = p.index(before: i), c = p[j]
-                // A signed or decimal-led part ("-3", ".5") may follow a letter or a space, never a digit or another
-                // joiner ("10^-3" is an exponent, "-.5" another value).
+                // A signed or decimal-led part ("-3", ".5") may follow a letter or a space, never a digit or a joiner
+                // ("10^-3" is an exponent, "-.5" another value), nor an exponent marker after a digit ("2e-3").
                 if signed {
-                    if c.isNumber || Self.numberJoiners.contains(c) { return false }
-                    // Nor an exponent marker after a digit ("2e-3" is 0.002).
+                    if c.isNumber || Self.numberStarts.contains(c) { return false }
                     if c == "e", j != p.startIndex, p[p.index(before: j)].isNumber { return false }
                     return true
                 }
                 if c.isLetter || c.isNumber { return false }
-                // A sign, a decimal point, a separator, an exponent mark or a fraction bar right before a number is
-                // part of it ("-5", ".5", "1,144", "10^3", "1+1/2", "3/4"): a quote without it is a different value.
-                if numeric, Self.numberJoiners.contains(c) { return false }
+                if numeric, Self.numberStarts.contains(c) { return false }
                 return true
             }
             guard i != p.endIndex else { return true }
             let c = p[i]
             if c.isLetter || c.isNumber { return false }
-            // A number that goes on ("144.5", "1,144", "10^3", "3/4", "1+1/2") is not this one.
-            if numeric, let k = p.index(i, offsetBy: 1, limitedBy: p.endIndex), k != p.endIndex {
-                if c == "." || c == ",", p[k].isNumber { return false }
-                if "^/\u{2044}+".contains(c), p[k].isNumber || p[k] == "-" || p[k] == "+" { return false }
+            let k = p.index(after: i)
+            let next: Character? = k < p.endIndex ? p[k] : nil
+            if numeric {
+                if Self.numberGoesOn.contains(c) { return false }
+                // A decimal, a group, a range or a fraction goes on with a digit ("144.5", "1,144", "10-20", "3/4").
+                if ".,-/:".contains(c), let n = next, n.isNumber || n == "-" || n == "." { return false }
             }
+            // A unit goes on with a power or a denominator ("10 m^2", "10 m/s").
+            if unitEnd, "^/".contains(c), let n = next, n.isLetter || n.isNumber || n == "-" { return false }
             return true
         }
         var from = p.startIndex
@@ -359,11 +380,10 @@ public enum QuoteCheck {
             var hit: Range<String.Index>? = nil
             // A sign ("-5") may follow a letter or a space, never a digit; a leading decimal point (".5") neither a
             // digit nor a sign ("-.5" is another value).
-            let decimalLead = (part.first == "." || part.first == ",") && part.dropFirst().first?.isNumber == true
-            let signed = decimalLead || (part.first == "-" && part.dropFirst().first?.isNumber == true)
+            let signed = (part.first == "." || part.first == "," || part.first == "-") && part.dropFirst().first?.isNumber == true
             while let r = p.range(of: part, range: search..<p.endIndex) {
-                if (!needBefore || boundary(r.lowerBound, before: true, signed: signed, decimalLead: decimalLead, numeric: part.first?.isNumber == true))
-                    && (!needAfter || boundary(r.upperBound, before: false, numeric: part.last?.isNumber == true)) { hit = r; break }
+                if (!needBefore || boundary(r.lowerBound, before: true, signed: signed, numeric: part.first?.isNumber == true))
+                    && (!needAfter || boundary(r.upperBound, before: false, numeric: part.last?.isNumber == true, unitEnd: part.last?.isLetter == true)) { hit = r; break }
                 search = p.index(after: r.lowerBound)
             }
             guard let r = hit else { return nil }
@@ -374,9 +394,14 @@ public enum QuoteCheck {
 
     public static func found(_ quote: String, in page: String, html: Bool = true) -> Bool { match(quote, in: page, html: html) != nil }
 
-    /// Characters that join a number to the one before it: a decimal point, a separator, a sign, an exponent mark,
-    /// a fraction bar.
-    static let numberJoiners: Set<Character> = [".", ",", "-", "^", "/", "\u{2044}", "+"]
+    /// Characters right before a number that make it part of a larger expression or qualify it: a decimal point, a
+    /// separator, a sign or range dash, an exponent mark, a fraction bar, a factor, a tolerance, a ratio or time
+    /// colon, a comparison, a currency sign, a percent, a degree, a prime.
+    static let numberStarts: Set<Character> = [".", ",", "-", "^", "/", "\u{2044}", "+", "\u{00D7}", "\u{00B1}", ":", "<", ">",
+        "\u{2264}", "\u{2265}", "~", "\u{2248}", "$", "\u{20AC}", "\u{00A3}", "\u{00A5}", "%", "\u{2030}", "\u{00B0}", "\u{2032}", "\u{2033}"]
+    /// Characters right after a number that always go on with it: an exponent, a fraction bar, a sum, a factor, a
+    /// tolerance, a percent, a per-mille, a degree, a prime (a colon goes on only with a digit, "1:30").
+    static let numberGoesOn: Set<Character> = ["^", "\u{2044}", "+", "\u{00D7}", "\u{00B1}", "%", "\u{2030}", "\u{00B0}", "\u{2032}", "\u{2033}"]
 
     /// A number written with plain spaces between groups of 3 digits ("1 144", "12 500 000"; the first group 1 to 3
     /// digits) is one number ("1,144"), on the page and in the quote: a page may group with plain spaces, and a model

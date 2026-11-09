@@ -66,7 +66,18 @@ the MCP server uses), so a run needs no MCP client.
    groups thousands, on the page and in the quote alike, when the first group
    is 1 to 3 digits); a leading decimal point
    is kept (".5 litres" is not "5 litres"), and a part that starts with a sign
-   or a decimal point, "-5 degrees", may follow a letter but not a digit). A found
+   or a decimal point, "-5 degrees", may follow a letter but not a digit).
+   A number is a whole expression: number operators bind without spaces
+   ("10 ^ 3", "3 / 4", "1 : 30", "10 ± 2", "10 x 20", "≥ 10", "10 m / s",
+   "10 %"), and a quote's number may not start right after a joiner or
+   qualifier (sign, range dash, "^", "/", "×", "±", ":", a comparison, a
+   currency sign, "%", a degree, a prime) nor end right before a continuation
+   (a decimal, group, range, fraction or time going on with a digit, "^", "×",
+   "±", "+", "%", a degree, a prime), and a unit may not end before a power or
+   a denominator ("10 m" is not "10 m/s" or "10 m²"); named entities
+   (`&minus;`, `&thinsp;`, `&sup3;`, `&frac12;`, `&plusmn;`, `&ge;`, `&euro;`,
+   ...) are decoded first, and a prime after a digit stays a unit mark
+   ("5′11″" is not "511").
    Each source's date comes only from its fetched page: its publication date
    (HTML comments ignored: its page-level publication meta tag outside
    scripts, styles and templates, by property or
