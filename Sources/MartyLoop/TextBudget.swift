@@ -144,6 +144,8 @@ import MartyEngine
     static func cutAtWord(_ t: String, limit: Int) -> String? {
         // A text with a list (numbered or bulleted items, or items in a sentence) is never cut.
         if t.range(of: #"(^|\s)(\d{1,2}[.)]|[-\u{2022}*\u{2013}])\s"#, options: .regularExpression) != nil { return nil }
+        // Nor one with an abbreviation, whose period is no sentence end ("e.g.", "approx.").
+        if t.range(of: #"(?i)\b(e\.g|i\.e|etc|vs|approx|fig|no|cf|ca|incl|max|min|mr|mrs|dr|st)\."#, options: .regularExpression) != nil { return nil }
         let marked = t.replacingOccurrences(of: #"(?<=[.!?])\s+"#, with: "\u{1}", options: .regularExpression)
         var sentences = marked.split(separator: "\u{1}").map { String($0).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         guard sentences.count > 1 else { return nil }

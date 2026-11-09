@@ -285,7 +285,7 @@ public enum MartyPrompts {
 
     public static func anchorLines(_ issues: [[String: Any]], anchoredParts: Set<String> = []) -> String? {
         guard !issues.isEmpty else { return nil }
-        // Every issue, once (the same text from two views is one line), up to 40 lines and the total count.
+        // Every issue, once (the same text from two views is one line), with the total count.
         var seen = Set<String>()
         let lines = issues.compactMap { i -> String? in
             let id = i["id"] as? String ?? "?"
@@ -321,9 +321,8 @@ public enum MartyPrompts {
             }
             return seen.insert(line).inserted ? line : nil
         }
-        let shown = lines.prefix(40)
+        let shown = lines
         return "Label, pointer and arrow issues the engine refused: \(lines.count) issue\(lines.count == 1 ? "" : "s")"
-            + (lines.count > shown.count ? " (the first \(shown.count) shown)" : "")
             + " (each dot must sit visibly on the part it names and each arrow must be visible in every view that shows it;"
             + " apply a suggestion exactly; all suggestions were checked together):\n" + shown.joined(separator: "\n")
     }

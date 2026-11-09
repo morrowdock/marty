@@ -1103,8 +1103,8 @@ final class MartyLoopTests: XCTestCase {
                      "noSuggest": ["cause": "covered", "alternatives": ["Ghost `casing` in this view.", "Leave `c` out of this view."]],
                      "repair": "Ghost `casing`."])
         let text = try XCTUnwrap(MartyPrompts.anchorLines(many, anchoredParts: MartyLoop.anchoredParts(doc)))
-        XCTAssertTrue(text.hasPrefix("Label, pointer and arrow issues the engine refused: 46 issues (the first 40 shown)"), text)
-        XCTAssertEqual(text.split(separator: "\n").count, 41)
+        XCTAssertTrue(text.hasPrefix("Label, pointer and arrow issues the engine refused: 46 issues"), text)
+        XCTAssertEqual(text.split(separator: "\n").count, 47, "every issue is listed")
         let one = try XCTUnwrap(MartyPrompts.anchorLines([many[45]], anchoredParts: MartyLoop.anchoredParts(doc)))
         XCTAssertFalse(one.contains("Ghost `casing`"), one)
         XCTAssertTrue(one.contains("Leave `c` out of this view."), one)
@@ -1129,6 +1129,8 @@ final class MartyLoopTests: XCTestCase {
         let fa = try XCTUnwrap(f["attempts"] as? [[String: Any]])
         XCTAssertEqual(f["changed"] as? Bool, true, "\(fa)")
         XCTAssertTrue((fa.first?["autoFixed"] as? [String] ?? []).contains("lShaft"), "\(fa)")
+        XCTAssertEqual(f["autoFixed"] as? [String], ["lShaft"])
+        XCTAssertTrue(model.prompts[3].user.contains("and Marty moved the annotations `lShaft`"), model.prompts[3].user)
 
         // Ghost advice: anchored parts, parts inside them, the same component instance as an alias; negations kept.
         let anchored: Set<String> = ["shaft.input", "casing"]
@@ -1148,6 +1150,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertNil(TextBudget.cutAtWord("The shaft rotates in its bearings. 1. Fit bearing. 2. Tighten guard.", limit: 60))
         XCTAssertNil(TextBudget.cutAtWord("The shaft rotates in its bearings and turns freely. - Do not touch.", limit: 55))
         XCTAssertNil(TextBudget.cutAtWord(String(repeating: "x", count: 60) + ". Then the shaft turns and", limit: 64), "an unfinished sentence is not dropped")
+        XCTAssertNil(TextBudget.cutAtWord("The shaft turns in two bearings on a base. The same holds for e.g. a guarded shaft.", limit: 60), "an abbreviation")
     }
 
     func testAnchorIssuesInRepairs() throws {

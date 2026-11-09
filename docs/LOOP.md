@@ -298,7 +298,7 @@ the MCP server uses), so a run needs no MCP client.
    (`annotation.anchor.hidden`, `.off`, `.untested`) gets the engine's anchor
    issues (`anchor` first, then `anchorIssues`, then a hidden arrow refusal's
    `arrow` and `arrowIssues` with the visible share; every distinct issue, under a
-   header with the total count, the first 40 shown): the dot, the cause,
+   header with the total count): the dot, the cause,
    the step or beat, the part, what hides it or is nearer, the engine's
    checked suggestion (`suggest`, shown with at most 3 decimals as the engine's
    repair line writes it, with the instruction to apply it exactly) or why there
@@ -320,7 +320,9 @@ the MCP server uses), so a run needs no MCP client.
    ids in `autoFixed`, and when the document is still refused every repair
    (engine, fact, lint) starts from the auto-fixed document. An assembly
    follow-up patch cannot move annotations, so there Marty applies the
-   suggestions to the patched whole document and checks it in full. Every repair (author and follow-up)
+   suggestions to the patched whole document and checks it in full; the
+   direction check, the repair baseline, `forceArrowsMoved` and the answer's
+   change line then use that document (the follow-up records `autoFixed`). Every repair (author and follow-up)
    also gets the refusal's full structured detail (the engine's `repair`
    line, and `location`, `limit`, `actual`, `path`, `cause`, `by`, `closer`,
    `fix`, `suggest`, `detail` when present, nulls left out) and the texts of the

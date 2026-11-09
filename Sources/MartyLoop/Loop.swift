@@ -549,6 +549,8 @@ public final class MartyLoop {
         var attempts: [[String: Any]] = []
         var noChange = false
         var acceptedPatch: Any? = nil
+        // Annotations Marty moved by the engine's checked suggestions in the accepted follow-up (beyond the patch).
+        var acceptedAutoFixed: [String] = []
         var acceptedStep: [String: Any]? = nil
         var acceptedPush: PoseText.Push? = nil
         var stepPush: PoseText.Push? = nil
@@ -600,6 +602,7 @@ public final class MartyLoop {
             // to the patched whole document, which is checked again (at most 3 rounds); the accepted model is then that
             // document (its `ref`), and the attempt lists the fixed ids.
             var patchAutoFixed: [String] = []
+            var fixedWhole: [String: Any]? = nil
             if (r["ok"] as? Bool) != true, !Self.anchorIssues(r).isEmpty,
                var whole = (try? engine.patch(document: nil, ref: ref, patch: merged, components: components, returnDocument: true, strict: false))?["document"] {
                 var rr = r, round = 0
@@ -610,7 +613,7 @@ public final class MartyLoop {
                     guard let r2 = try? engine.check(document: fixed, ref: nil, components: components, strict: true) else { break }
                     whole = fixed; rr = r2; patchAutoFixed += applied
                 }
-                if !patchAutoFixed.isEmpty { r = rr }
+                if !patchAutoFixed.isEmpty { r = rr; fixedWhole = whole as? [String: Any] }
             }
             // A title or steps patch that leaves every step's effective pose and visibility as before changes only words.
             if (r["ok"] as? Bool) == true, viewsOnly, Self.effectiveViews(r) == Self.effectiveViews(report) {
@@ -633,8 +636,9 @@ public final class MartyLoop {
             }
             // The words of each changed posed step (from a "step" reply or a raw steps patch) must agree with what its
             // shown thrust arrows do at the pose; the engine poses the patched document itself.
+            // (After an auto-fix, the document checked is the fixed whole document, not the patch replayed.)
             if (r["ok"] as? Bool) == true,
-               let patched = (try? engine.patch(document: nil, ref: ref, patch: merged, components: components, returnDocument: true, strict: true))?["document"] as? [String: Any] {
+               let patched = fixedWhole ?? (try? engine.patch(document: nil, ref: ref, patch: merged, components: components, returnDocument: true, strict: true))?["document"] as? [String: Any] {
                 let base = (try? JSONSerialization.jsonObject(with: Data(docText.utf8))) as? [String: Any]
                 let says = (patched["steps"] as? [[String: Any]] ?? []).map { $0["say"] as? String ?? "" }
                 let baseSays = (base?["steps"] as? [[String: Any]] ?? []).map { $0["say"] as? String ?? "" }
@@ -648,7 +652,7 @@ public final class MartyLoop {
             if !patchAutoFixed.isEmpty { o["autoFixed"] = patchAutoFixed }
             note(i, o); attempts.append(o)
             if (r["ok"] as? Bool) == true {
-                after = r; acceptedPatch = merged; acceptedPush = stepPush
+                after = r; acceptedPatch = merged; acceptedPush = stepPush; acceptedAutoFixed = patchAutoFixed
                 // The accepted step as checked (after trimming): from the patched steps at its place.
                 if stepReply != nil, let steps = (merged as? [String: Any])?["steps"] as? [Any] {
                     let n = (reply["replace"] as? NSNumber).map { $0.intValue - 1 } ?? steps.count - 1
@@ -668,7 +672,11 @@ public final class MartyLoop {
                 }
             }
             user = MartyPrompts.followUpUser(question: question, document: docText, report: before, followUp: followUp, table: factBlock)
-                + "\n\nYour previous reply:\n\(text)\n\nThe engine refused the patch with reason `\(reason)`"
+                + "\n\nYour previous reply:\n\(text)"
+                + (fixedWhole.map { "\n\n(Marty applied the engine's checked anchor and arrow suggestions for "
+                    + patchAutoFixed.map { "`\($0)`" }.joined(separator: ", ") + " to the patched model; this is the whole document after your patch and them. "
+                    + "A patch cannot move annotations: keep your patch, or change it so the model stays valid.)\n" + MartyJSON.string(["document": $0]) } ?? "")
+                + "\n\nThe engine refused the patch with reason `\(reason)`"
                 + ((r["part"] as? String).map { " on part `\($0)`" } ?? "") + "." + (MartyPrompts.hint(for: reason).map { " \($0)" } ?? "")
                 + ((r["visibility"] as? [String: Any]).flatMap(MartyPrompts.visibilityLine).map { " \($0)" } ?? "")
                 + ((r["limit"] as? [String: Any]).flatMap(MartyPrompts.limitLine).map { " \($0)" } ?? "")
@@ -706,8 +714,12 @@ public final class MartyLoop {
             moved = Self.movedForceArrows(annotations: doc["annotations"], parts: doc["parts"] as? [[String: Any]] ?? [],
                                           moved: Set((p["parts"] as? [String: Any] ?? [:]).keys).union(Self.viewMovedIds(before: report, after: after ?? [:])),
                                           all: !Set(p.keys).isDisjoint(with: ["params", "constraints", "joints"]))
+            // Arrows Marty moved by the engine's checked suggestions are moved too.
+            let arrowIds = Set(((doc["annotations"] as? [String: Any])?["arrows"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String })
+            moved += acceptedAutoFixed.filter { arrowIds.contains($0) && !moved.contains($0) }
             result["forceArrowsMoved"] = moved
         }
+        if !acceptedAutoFixed.isEmpty { result["autoFixed"] = acceptedAutoFixed }
         if let acceptedStep { result["step"] = acceptedStep }
         if let acceptedPush { result["push"] = acceptedPush.summary }
         // Given figures go to a modelled answer only; the refused answer keeps to the report before.
@@ -716,7 +728,10 @@ public final class MartyLoop {
             + Self.numberLeaves(after?["ratios"]) + Self.numberLeaves(acceptedPatch)
         let answer = writeAnswer(system: modelled ? MartyPrompts.answerSystem() : MartyPrompts.answerRefusedSystem(),
                                  user: MartyPrompts.answerUser(followUp: followUp, before: before, after: after.map { Self.compact(Self.summary($0)) },
-                                                               patch: acceptedPatch.map { Self.compact($0) }, ratiosChanged: ratiosChanged,
+                                                               patch: acceptedPatch.map { Self.compact($0) + (acceptedAutoFixed.isEmpty ? ""
+                                                                   : " (and Marty moved the annotations " + acceptedAutoFixed.map { "`\($0)`" }.joined(separator: ", ")
+                                                                   + " so they stay visible; their direction and length are unchanged)") },
+                                                               ratiosChanged: ratiosChanged,
                                                                refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAPatch,
                                                                movedForceArrows: moved, given: given, table: modelled ? factBlock : nil,
                                                                push: acceptedPush?.summary),
