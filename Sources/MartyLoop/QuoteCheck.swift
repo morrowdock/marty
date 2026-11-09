@@ -456,11 +456,10 @@ public enum QuoteCheck {
     }
 
     /// Words that end a noun phrase: connectors, articles and common verbs.
+    /// (Only words that are never nouns: "power", "drive", "run" or "turn" may head a compound, "engine power".)
     static let phraseBreaks: Set<String> = ["with", "of", "for", "to", "from", "in", "on", "at", "by", "and", "or", "but", "that", "which",
-        "the", "a", "an", "its", "their", "his", "her", "is", "are", "was", "were", "be", "has", "have", "had", "carry", "carries", "use", "uses",
-        "hold", "holds", "provide", "provides", "power", "powers", "drive", "drives", "give", "gives", "make", "makes", "sit", "sits",
-        "run", "runs", "fly", "flies", "work", "works", "produce", "produces", "generate", "generates", "turn", "turns", "spin", "spins",
-        "lift", "lifts", "push", "pushes", "fire", "fires", "burn", "burns", "can", "will", "must", "may", "each", "only", "also"]
+        "the", "a", "an", "its", "their", "his", "her", "is", "are", "was", "were", "be", "has", "have", "had", "carries",
+        "provides", "produces", "generates", "sits", "can", "will", "must", "may", "each", "only", "also", "contains", "weighs"]
 
     /// A plural noun as its singular ("batteries" battery, "boxes" box, "engines" engine).
     static func singular(_ w: String) -> String {
@@ -485,6 +484,14 @@ public enum QuoteCheck {
         // its claim's head is one ("Current model").
         let claimHead = claimWords.prefix { !connectors.contains($0) }.filter { $0.count >= 3 && !filler.contains($0) }.last
         if tokens.contains(where: identifiers.contains) || claimHead.map(identifiers.contains) == true { return [] }
+        // A measured quantity takes no count word: a unit after the value's number ("1 kg") or a measurement claim
+        // ("Dry mass", "Thrust"); its number must be stated.
+        let measures: Set<String> = ["mass", "weight", "thrust", "force", "power", "speed", "velocity", "length", "height", "width", "depth",
+            "diameter", "radius", "range", "distance", "time", "duration", "pressure", "temperature", "capacity", "energy", "volume", "area",
+            "rate", "price", "cost", "altitude", "endurance", "payload", "efficiency", "torque", "voltage", "frequency", "size"]
+        let at0 = tokens.firstIndex { $0.first?.isNumber == true || numberWords[$0] != nil || ordinals[$0] != nil }
+        if let at0, tokens[(at0 + 1)...].contains(where: { isUnitWord($0) }) { return [] }
+        if let head = claimHead, measures.contains(head) || measures.contains(singular(head)) { return [] }
         let at = tokens.firstIndex { $0.first?.isNumber == true || numberWords[$0] != nil || ordinals[$0] != nil }
         if let at {
             let phrase = tokens[(at + 1)...].prefix { !connectors.contains($0) }.filter { $0.allSatisfy(\.isLetter) && $0.count >= 3 && !filler.contains($0) }

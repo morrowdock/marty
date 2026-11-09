@@ -1392,7 +1392,8 @@ final class MartyLoopTests: XCTestCase {
         _ = try MartyLoop(model: ScriptedAdapter(replies: ["The model shows steering and does not model airflow."]), out: tempOut(), options: .init())
             .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &predicate)
         XCTAssertNil(predicate["answerPosedLint"])
-        for honestLine in ["The model shows rotation and the engine does not model airflow.", "The model shows rotation and airflow is not modelled."] {
+        for honestLine in ["The model shows rotation and the engine does not model airflow.", "The model shows rotation and airflow is not modelled.",
+                           "The model shows rotation and the engine's internal airflow is not modelled.", "The model does not show airflow and depicts the arms turning."] {
             var r: [String: Any] = [:]
             _ = try MartyLoop(model: ScriptedAdapter(replies: [honestLine]), out: tempOut(), options: .init())
                 .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &r)
@@ -1438,7 +1439,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertFalse(QuoteCheck.statesCountWord("1", "A new model of the device uses five engines", entities: QuoteCheck.countedWords(value: "Version 1", claim: "Current model")))
         XCTAssertFalse(QuoteCheck.statesCountWord("1", "The product uses a housing with rotors mounted inside", entities: QuoteCheck.countedWords(value: "1 rotor", claim: "Rotors")))
         XCTAssertFalse(QuoteCheck.statesCountWord("2", "Both arms carry engines to provide thrust", entities: QuoteCheck.countedWords(value: "2 engines per arm", claim: "Arm engines")))
-        XCTAssertTrue(QuoteCheck.statesCountWord("2", "both rear engines run", entities: QuoteCheck.countedWords(value: "2", claim: "Rear engines on this model")))
+        XCTAssertTrue(QuoteCheck.statesCountWord("2", "both rear engines are mounted low", entities: QuoteCheck.countedWords(value: "2", claim: "Rear engines on this model")))
         XCTAssertEqual(QuoteCheck.countedWords(value: "2", claim: "Arm engines"), ["engines"])
         XCTAssertEqual(QuoteCheck.countedWords(value: "1", claim: "Suit model"), [])
         XCTAssertFalse(QuoteCheck.statesCountWord("2", "Both arms carry three engines each", entities: QuoteCheck.countedWords(value: "2", claim: "Arm engines")))
@@ -1449,6 +1450,11 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertFalse(QuoteCheck.statesCountWord("1", "In a jet suit, engines provide the thrust needed for flight", entities: QuoteCheck.countedWords(value: "1 engine", claim: "Engines")))
         XCTAssertFalse(QuoteCheck.statesCountWord("1", "The device uses a rotor housing containing several rotors", entities: QuoteCheck.countedWords(value: "1 rotor", claim: "Rotors")))
         XCTAssertFalse(QuoteCheck.statesCountWord("2", "Both engine mounting brackets are attached to the airframe", entities: QuoteCheck.countedWords(value: "2 engines", claim: "Engines")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("2", "Both engine power and fuel consumption are shown on the display", entities: QuoteCheck.countedWords(value: "2 engines", claim: "Engines")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "It has a battery power supply", entities: QuoteCheck.countedWords(value: "1 battery", claim: "Batteries")))
+        XCTAssertEqual(QuoteCheck.countedWords(value: "1 kg", claim: "Dry mass"), [])
+        XCTAssertEqual(QuoteCheck.countedWords(value: "1", claim: "Thrust"), [])
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "a thrust of fifty newtons", entities: QuoteCheck.countedWords(value: "1 N", claim: "Thrust")))
         XCTAssertEqual(rows.rows[3].sources[0].check, "quote too short to check")
     }
 

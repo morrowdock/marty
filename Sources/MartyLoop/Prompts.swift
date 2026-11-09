@@ -488,9 +488,10 @@ public enum MartyPrompts {
     /// no source.
     /// The answer repair when it denies a motion that a posed beat or step already shows.
     public static let answerPosedRepair = """
-        These sentences say the model does not show a motion, but the model already poses parts in the views below. \
-        Say which beat or step shows it ("beat N shows this"), and never say the model does not show it. Reply with \
-        the whole answer text only:
+        The model already poses parts in the views below. If one of these sentences says the model does not show a \
+        motion that one of those views shows, rewrite it to say which beat or step shows it ("beat N shows this"). \
+        Keep every honest limit about other things (airflow, scale, inside parts) as it is. Reply with the whole \
+        answer text only:
         """
 
     public static let answerComparativeRepair = """

@@ -982,7 +982,7 @@ extension MartyLoop {
                 // ("and" joins phrases as often as clauses, so it does not split: "the arms and shoulders moving".)
                 // ("and" splits only where a new predicate follows, with or without its subject: "shows steering and
                 // does not model airflow", "and the engine does not …"; not "the arms and shoulders moving".)
-                let clauses = sentence.replacingOccurrences(of: #"(?i)\s+(?:but|while|whereas|although|though|yet)\s+|\s*[\x{2014}\x{2013}]\s*|\s+-\s+|\s+and\s+(?=(?:[\w']+\s+){0,3}(?:does|do|did|is|are|was|were|has|have|had|can|cannot|could|will|would|isn't|doesn't|aren't|wasn't|don't)\b)"#, with: ";", options: .regularExpression)
+                let clauses = sentence.replacingOccurrences(of: #"(?i)\s+(?:but|while|whereas|although|though|yet)\s+|\s*[\x{2014}\x{2013}]\s*|\s+-\s+|\s+and\s+(?=(?:[\w'\x{2019}-]+\s+){0,6}(?:does|do|did|is|are|was|were|has|have|had|can|cannot|could|will|would|isn't|doesn't|aren't|wasn't|don't)\b)|\s+and\s+(?=(?:shows|depicts|models|animates|includes|uses|keeps|holds|has)\b)"#, with: ";", options: .regularExpression)
                     .components(separatedBy: CharacterSet(charactersIn: ",;:()"))
                 for clause in clauses {
                     let cns = clause as NSString
