@@ -237,6 +237,8 @@ public enum QuoteCheck {
         t = t.replacingOccurrences(of: "(?<![<>])>=|=>", with: "\u{2265}", options: .regularExpression)
             .replacingOccurrences(of: "<=(?!>)|=<", with: "\u{2264}", options: .regularExpression)
         t = t.replacingOccurrences(of: "(?<=[0-9)]) ?[x\u{00D7}\u{00B7}\u{22C5}\u{2219}] ?(?=[0-9]|[.-][0-9])", with: "\u{00D7}", options: .regularExpression)
+        // Between a unit and a number, a spaced "x" multiplies too ("10 cm x 20 cm").
+        t = t.replacingOccurrences(of: "(?<=\\p{L}) x (?=[0-9]|[.-][0-9])", with: " \u{00D7} ", options: .regularExpression)
         t = t.replacingOccurrences(of: "(?<=[0-9]) ?([\\^/\u{2044}\u{00B1}:+]) ?(?=[0-9+.-])", with: "$1", options: .regularExpression)
         t = t.replacingOccurrences(of: "([\u{00B1}<>\u{2264}\u{2265}~\u{2248}$\u{20AC}\u{00A3}\u{00A5}]) (?=[0-9]|[.-][0-9])", with: "$1", options: .regularExpression)
         t = t.replacingOccurrences(of: "(?<=[a-z]) ?([\\^/]) ?(?=[a-z0-9])", with: "$1", options: .regularExpression)
@@ -270,6 +272,13 @@ public enum QuoteCheck {
     /// A quote mark after a digit is a prime (a unit mark: "5'11\"", "5’11”" are 5′11″; ″ as NFKC writes it, ′′) unless
     /// it closes a quotation of its own kind that is open in the same block ("“The turbine produces 144”",
     /// "\"5'11\"\"" is a quoted 5′11″). Straight double quotes pair in order; a block mark ends every quotation.
+    /// Words that scale the number before them.
+    static let magnitudes: Set<String> = ["hundred", "thousand", "million", "billion", "trillion", "k", "m", "bn", "mn", "mln", "tn", "lakh", "crore"]
+    /// Time units after "a", "an", "each" or "every" in a rate.
+    static let timeUnits: Set<String> = ["second", "sec", "s", "minute", "min", "hour", "hr", "h", "day", "week", "month", "year", "yr"]
+    /// Unit symbols that multiply a unit before them when written apart ("kw h", "n m", "a h").
+    static let unitSymbols: Set<String> = ["h", "s", "m", "g", "kg", "km", "w", "kw", "v", "j", "n", "pa", "hz", "mol", "k", "cd", "l"]
+
     /// Whether a number starts at `i` and the mark `close` follows it right away ("10'" in "'10'").
     static func closesAfterNumber(_ chars: [Character], _ i: Int, _ close: Character) -> Bool {
         var i = i
@@ -286,7 +295,8 @@ public enum QuoteCheck {
             let prev = out.last, next: Character? = i + 1 < chars.count ? chars[i + 1] : nil
             let afterDigit = prev?.isNumber == true, beforeDigit = next?.isNumber == true
             // A number may start with a sign or a decimal point ("'-10'", "'.5'").
-            let beforeNumber = beforeDigit || (next.map { "-+.\u{2212}".contains($0) } == true && i + 2 < chars.count && chars[i + 2].isNumber)
+            let beforeNumber = beforeDigit || (next.map { "-+.\u{2212}".contains($0) } == true && i + 2 < chars.count
+                && (chars[i + 2].isNumber || (chars[i + 2] == "." && i + 3 < chars.count && chars[i + 3].isNumber)))
             let afterWord = prev.map { $0.isLetter || $0.isNumber } ?? false, beforeLetter = next?.isLetter == true
             switch c {
             case "\u{2}": curlyDouble = 0; curlySingle = 0; straightDouble = false; straightSingle = false; out.append(c)
@@ -407,6 +417,9 @@ public enum QuoteCheck {
             var t = String(raw), after = false
             func trimEnd() { while let c = t.last, ".,;:!?".contains(c) { t.removeLast(); after = true } }
             trimEnd()
+            // A unit abbreviation's period after a number ("10 in.", "5 ft.", "3 lb.") does not end the quantity.
+            if after, raw.last == ".", !raw.dropLast().contains(where: { ".,;:!?".contains($0) }), t.count <= 3,
+               t.allSatisfy({ $0.isLetter }), let before = out.last, before.hasDigit, !before.closedAfter { after = false }
             if t.contains(where: { $0.isLetter }), !t.contains(where: { $0.isNumber }) {
                 t = t.trimmingCharacters(in: CharacterSet(charactersIn: "()[]{}"))
                 trimEnd()
@@ -512,6 +525,13 @@ public enum QuoteCheck {
                 let unitEnd = w[last].hasLetter && !(w[last].text.first?.isNumber ?? false)
                 // A unit goes on: "per …", or a power or quotient unit ("10 m s^-1", "10 metres per second").
                 if unitEnd, quantityEnd(w, last) != nil, next.text == "per" || next.text.contains("^") || next.text.contains("/") { return false }
+                // A number goes on with a magnitude ("$10 million", "3 bn").
+                if w[last].hasDigit, Self.magnitudes.contains(next.text) { return false }
+                if quantityEnd(w, last) != nil {
+                    // A rate ("10 metres a second", "5 litres each hour") or a unit product ("10 kw h").
+                    if ["a", "an", "each", "every"].contains(next.text), let t = after, Self.timeUnits.contains(t.text) { return false }
+                    if unitEnd, Self.unitSymbols.contains(next.text) { return false }
+                }
                 let dashBeforeWord = next.text == "-" && !unitEnd && !(after.map { $0.hasDigit || $0.text.first == "." || isSign($0) } ?? false)
                 if bare(next), !dashBeforeWord { return false }
                 if next.text == "to", e + 2 < p.count, p[e + 2].hasDigit || isSign(p[e + 2]) { return false }

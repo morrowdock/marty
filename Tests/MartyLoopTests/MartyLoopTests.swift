@@ -1557,6 +1557,21 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(QuoteCheck.found("The sensor displays .5 when ready", in: "<p>The sensor displays '.5' when ready.</p>"), "The sensor displays .5 when ready | The sensor displays '.5' when ready.")
         XCTAssertTrue(QuoteCheck.found("It runs 10 metres a day on the track", in: "<p>It runs 10 metres a day on the track.</p>"), "It runs 10 metres a day on the track | It runs 10 metres a day on the track.")
         XCTAssertTrue(QuoteCheck.found("The suit flew 10 km over the lake", in: "<p>The suit flew 10 km over the lake.</p>"), "The suit flew 10 km over the lake | The suit flew 10 km over the lake.")
+        // Round 20: unit abbreviation periods, magnitudes, rates, unit products, ASCII x after a unit.
+        XCTAssertFalse(QuoteCheck.found("The length is 10 in.", in: "<p>The length is 10 in. to 20 in.</p>"), "The length is 10 in. | The length is 10 in. to 20 in.")
+        XCTAssertFalse(QuoteCheck.found("The length is 10 in.", in: "<p>The length is 10 in. ± 2 in.</p>"), "The length is 10 in. | The length is 10 in. ± 2 in.")
+        XCTAssertFalse(QuoteCheck.found("Annual revenue reached $10", in: "<p>Annual revenue reached $10 million.</p>"), "Annual revenue reached $10 | Annual revenue reached $10 million.")
+        XCTAssertFalse(QuoteCheck.found("Annual revenue reached $10", in: "<p>Annual revenue reached $10 bn last year.</p>"), "Annual revenue reached $10 | Annual revenue reached $10 bn last year.")
+        XCTAssertFalse(QuoteCheck.found("The measured speed is 10 metres", in: "<p>The measured speed is 10 metres a second.</p>"), "The measured speed is 10 metres | The measured speed is 10 metres a second.")
+        XCTAssertFalse(QuoteCheck.found("The battery stores 10 kW", in: "<p>The battery stores 10 kW h of energy.</p>"), "The battery stores 10 kW | The battery stores 10 kW h of energy.")
+        XCTAssertFalse(QuoteCheck.found("The plate measures 10 cm", in: "<p>The plate measures 10 cm x 20 cm.</p>"), "The plate measures 10 cm | The plate measures 10 cm x 20 cm.")
+        XCTAssertTrue(QuoteCheck.found("The plate measures 10 cm x 20 cm", in: "<p>The plate measures 10 cm × 20 cm.</p>"), "The plate measures 10 cm x 20 cm | The plate measures 10 cm × 20 cm.")
+        XCTAssertTrue(QuoteCheck.found("Annual revenue reached $10 million", in: "<p>Annual revenue reached $10 million.</p>"), "Annual revenue reached $10 million | Annual revenue reached $10 million.")
+        XCTAssertTrue(QuoteCheck.found("The suit weighs 27 kg", in: "<p>The suit weighs 27 kg. It flies.</p>"), "The suit weighs 27 kg | The suit weighs 27 kg. It flies.")
+        XCTAssertTrue(QuoteCheck.found("It covers 10 metres a day on the track", in: "<p>It covers 10 metres a day on the track.</p>"), "It covers 10 metres a day on the track | It covers 10 metres a day on the track.")
+        XCTAssertTrue(QuoteCheck.found("The sensor displays -.5 when ready", in: "<p>The sensor displays '-.5' when ready.</p>"), "The sensor displays -.5 when ready | The sensor displays '-.5' when ready.")
+        XCTAssertTrue(QuoteCheck.found("The length is 10 in. and the width", in: "<p>The length is 10 in. and the width is 4 in.</p>"), "The length is 10 in. and the width | The length is 10 in. and the width is 4 in.")
+        XCTAssertTrue(QuoteCheck.found("it flew 10 km in a test run", in: "<p>it flew 10 km in a test run</p>"), "it flew 10 km in a test run | it flew 10 km in a test run")
         // Table cells are separate; inline markup joins.
         let specs = "<p>Maximum thrust of the rig</p><table><tr><th>Motors</th><td>1</td><td>144 kgf</td></tr></table>"
         XCTAssertFalse(QuoteCheck.found("Maximum thrust [\u{2026}] 1,144 kgf", in: specs))

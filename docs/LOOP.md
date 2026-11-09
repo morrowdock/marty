@@ -75,7 +75,10 @@ the MCP server uses), so a run needs no MCP client.
    a signed part never follows a word with a digit ("2e-3" is not "-3"); a
    part that ends with a number or a unit after one may not be followed by
    such a word, nor by "per" or a power or quotient unit ("10 m" is not
-   "10 m s⁻¹", "10 metres" not "10 metres per second"); a quantity's unit may
+   "10 m s⁻¹", "10 metres" not "10 metres per second" or "10 metres a second",
+   "10 kW" not "10 kW h", "10 cm" not "10 cm x 20 cm"), nor by a magnitude
+   ("$10" is not "$10 million"); a unit abbreviation's period after a number
+   ("10 in.") does not end the quantity; a quantity's unit may
    be a few words with unit symbols ("10 degrees Celsius", "10 N-m", "10 m/s"); a range in words is whole at both ends ("10 to 20 bar" and
    "between 10 degrees Celsius and 20 degrees Celsius" give neither end); a gap glued to a number keeps these rules
    ("[…]5 degrees" is not "−5 degrees"); a dash before a word is punctuation
