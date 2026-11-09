@@ -272,6 +272,23 @@ public enum QuoteCheck {
     /// A quote mark after a digit is a prime (a unit mark: "5'11\"", "5’11”" are 5′11″; ″ as NFKC writes it, ′′) unless
     /// it closes a quotation of its own kind that is open in the same block ("“The turbine produces 144”",
     /// "\"5'11\"\"" is a quoted 5′11″). Straight double quotes pair in order; a block mark ends every quotation.
+    /// Spelled or symbolic unit words that make a bare number a quantity ("10 percent", "100 watt", "10 m").
+    static func isUnitWord(_ t: String) -> Bool {
+        if isUnitSymbol(t) || timeUnits.contains(t) || magnitudes.contains(t) { return true }
+        let spelled = ["percent", "percentage", "pct", "bar", "psi", "rpm", "mph", "kph", "kmh", "knot", "knots", "hp", "bhp", "kgf", "lbf",
+                       "btu", "db", "decibel", "decibels", "degree", "degrees", "kelvin", "celsius", "fahrenheit", "foot", "feet", "inch",
+                       "inches", "yard", "yards", "mile", "miles", "ton", "tons", "tonne", "tonnes", "pound", "pounds", "lb", "lbs", "ounce",
+                       "ounces", "oz", "gallon", "gallons", "gal", "horsepower", "calorie", "calories", "kcal", "ft", "in"]
+        if spelled.contains(t) { return true }
+        return t.range(of: "^(kilo|mega|giga|tera|milli|micro|nano|centi|deci)?(watt|volt|amp|ampere|joule|newton|pascal|metre|meter|gram|litre|liter|hertz|second|ohm|watt-hour)s?$",
+                       options: .regularExpression) != nil
+    }
+
+    /// Written bounds and approximations right before a number: the quote must keep them ("up to 10", "at least 10").
+    static let boundWords: Set<String> = ["than", "least", "most", "about", "around", "approximately", "approx", "nearly", "almost",
+        "roughly", "over", "under", "above", "below", "upto", "max", "maximum", "min", "minimum", "circa", "ca", "estimated", "est",
+        "exceeding", "beyond", "within", "some", "nearly", "up"]
+
     /// Ordinary words that may follow a quantity with a unit without continuing it.
     static let proseAfterQuantity: Set<String> = ["of", "at", "on", "in", "for", "with", "from", "into", "over", "under", "and", "or", "the",
         "its", "his", "her", "their", "is", "was", "are", "were", "be", "been", "has", "had", "have", "which", "that", "when", "while", "after",
@@ -436,11 +453,11 @@ public enum QuoteCheck {
             var t = String(raw), after = false
             func trimEnd() { while let c = t.last, ".,;:!?".contains(c) { t.removeLast(); after = true } }
             trimEnd()
-            // A unit abbreviation's period after a number does not end the quantity when a range or a tolerance goes
-            // on ("10 in. to 20 in.", "10 in. ± 2 in."); before anything else it may end a sentence ("10 s. A second").
+            // A unit abbreviation's period after a number ("10 in.", "10 gal.", "10 cu. ft.") does not end the
+            // quantity: what may follow it is decided in `match` (a sentence after it, "10 s. A second", then misses).
             if after, raw.last == ".", !raw.dropLast().contains(where: { ".,;:!?".contains($0) }), t.count <= 3,
-               t.allSatisfy({ $0.isLetter }), let before = out.last, before.hasDigit, !before.closedAfter, n + 1 < raws.count,
-               ["to", "-", "\u{00D7}", "x", "and"].contains(String(raws[n + 1])) || raws[n + 1].first == "\u{00B1}" { after = false }
+               t.allSatisfy({ $0.isLetter }), let before = out.last, before.hasDigit || before.text.count <= 3, !before.closedAfter,
+               out.count >= 1, out.suffix(2).contains(where: { $0.hasDigit }) { after = false }
             if t.contains(where: { $0.isLetter }), !t.contains(where: { $0.isNumber }) {
                 t = t.trimmingCharacters(in: CharacterSet(charactersIn: "()[]{}"))
                 trimEnd()
@@ -529,6 +546,8 @@ public enum QuoteCheck {
                 if bare(prev) { return false }
                 // The end of a range in words ("10 to 20 bar", "10 bar to 20 bar").
                 // The end of a "between … and …" range.
+                // A written bound or approximation ("up to 10", "at least 10", "less than 10", "about 10").
+                if Self.boundWords.contains(prev.text) || (prev.text == "to" && s >= 2 && p[s - 2].text == "up") { return false }
                 if (prev.text == "and" || prev.text == "to"), !prev.closedBefore, s >= 2, let k = quantityEnd(p, s - 2) {
                     if prev.text == "to" { return false }
                     if p[max(0, k - 3)..<k].contains(where: { $0.text == "between" }) { return false }
@@ -553,6 +572,13 @@ public enum QuoteCheck {
                 // hours", "100 v a", "10 litres every fifteen minutes").
                 let withUnit = (w[last].hasDigit && w[last].text.contains { !$0.isNumber && !".,".contains($0) }) || (unitEnd && quantityEnd(w, last) != nil)
                 if withUnit, !Self.proseAfterQuantity.contains(next.text) { return false }
+                // An allowed word that leads into another quantity or a time continues it ("10 cm by 20 cm",
+                // "10 litres in 30 seconds", "10 kg over 2 hours").
+                if withUnit || w[last].hasDigit, let t = after,
+                   t.hasDigit || isSign(t) || Self.countWords.contains(t.text) || ((t.text == "a" || t.text == "an") && e + 3 < p.count && Self.timeUnits.contains(p[e + 3].text)),
+                   ["by", "in", "over", "for", "within", "under", "every", "each"].contains(next.text) { return false }
+                // After a bare number, a unit word goes on ("10 percent", "100 watt hours", "10 m").
+                if !withUnit, w[last].hasDigit, Self.isUnitWord(next.text) { return false }
                 // A number goes on with a magnitude ("$10 million", "3 bn").
                 if w[last].hasDigit, Self.magnitudes.contains(next.text) { return false }
                 if quantityEnd(w, last) != nil {

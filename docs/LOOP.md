@@ -83,8 +83,13 @@ the MCP server uses), so a run needs no MCP client.
    by a hard boundary or an ordinary prose word ("of", "at", "in", "over",
    "tall", ...), so any other word, which may continue the unit, a rate or a
    product ("100 amp hours", "100 V A", "10 litres every fifteen minutes"),
-   leaves the quote unmatched; a unit abbreviation's period after a number
-   ("10 in.") does not end the quantity when a range or a tolerance follows; a quantity's unit may
+   leaves the quote unmatched, and an allowed word that leads into another
+   quantity or a time ("10 cm by 20 cm", "10 litres in 30 seconds") does too;
+   a bare number may not be followed by a unit word ("10 percent", "100 watt
+   hours", "10 m"); a unit abbreviation's period after a number ("10 in.",
+   "10 gal.") never ends the quantity; a part that starts with a number may
+   not follow a written bound or approximation ("up to", "at least", "less
+   than", "about", "over", ...); a quantity's unit may
    be a few words with unit symbols ("10 degrees Celsius", "10 N-m", "10 m/s"); a range in words is whole at both ends ("10 to 20 bar" and
    "between 10 degrees Celsius and 20 degrees Celsius" give neither end); a gap glued to a number keeps these rules
    ("[…]5 degrees" is not "−5 degrees"); a dash before a word is punctuation
