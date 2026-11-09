@@ -1189,6 +1189,9 @@ final class MartyLoopTests: XCTestCase {
         let example: [String: Any] = ["v": 2, "kind": "assembly", "title": "A suit", "parts": [] as [Any],
                                       "annotations": ["labels": [["id": "lE", "at": ["world": [0, 0, 0]], "text": "Thrust: not published", "unchecked": "assumed example"]]]]
         XCTAssertEqual(FactCheck.findings(example, evidence: .init()).first?.kind, "notPublished")
+        let exampleNote: [String: Any] = ["v": 2, "kind": "assembly", "title": "A suit", "parts": [] as [Any],
+            "annotations": ["labels": [["id": "lI", "at": ["world": [0, 0, 0]], "text": "Interior (example)", "unchecked": "assumed example; internal details are not published"]]]]
+        XCTAssertEqual(FactCheck.findings(exampleNote, evidence: .init()).first?.field, "annotation.lI.unchecked")
         // The answer lint flags it too.
         XCTAssertFalse(MartyLoop.unsourcedSentences("The current version is not published.", sources: []).isEmpty)
 
@@ -1203,6 +1206,10 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(QuoteCheck.pageDate(#"<h1>T</h1><time class="updated">June 1, 2023</time> <time class="published">May 2, 2021</time>"#), "2021-05-02")
         XCTAssertEqual(QuoteCheck.pageDate(#"<h1>T</h1><p>Updated: <time>June 1, 2023</time></p><span class="date">May 2, 2021</span>"#), "2021-05-02")
         XCTAssertEqual(QuoteCheck.pageDate(#"<h1>T</h1><span class="byline">By A. Writer</span><time>May 2, 2021</time>"#), "2021-05-02", "a date-free byline is skipped")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<h1>Title</h1><div class="modified"><time>June 1, 2023</time></div><time class="published">May 2, 2021</time>"#), "2021-05-02")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<h1>Title</h1><aside id="related"><div><time>June 1, 2023</time></div></aside><time>May 2, 2021</time>"#), "2021-05-02")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<h1>Title</h1><p>Updated:&nbsp;<time>June 1, 2023</time></p><time>May 2, 2021</time>"#), "2021-05-02")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<h1>Title</h1><div class="byline">Published <time>May 2, 2021</time>, updated <time>June 1, 2023</time></div>"#), "2021-05-02", "dated children judged one by one")
         XCTAssertEqual(QuoteCheck.pageDate(#"<meta content="2019-03-03" name="date"><meta name="pubdate" content="2020-04-04">"#), "2019-03-03", "document order")
         XCTAssertEqual(QuoteCheck.pageDate(#"<script type="application/ld+json">{"@type": "Article", "datePublished": "2021-02-29"}</script><h1>T</h1><time>May 2, 2021</time>"#), "2021-05-02")
         XCTAssertEqual(QuoteCheck.pageDate(#"<h1>FEATURE: Meet the man</h1><time class="time" datetime="2020-51-09">09 Apr 2020</time>"#), "2020-04-09")
@@ -1235,6 +1242,15 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertFalse(QuoteCheck.statedNumbers("there are twenty-four modules").contains("4"))
         XCTAssertEqual(QuoteCheck.statedNumbers("two hundred and five units"), ["205"])
         XCTAssertTrue(QuoteCheck.statedNumbers("the Mk XII suit").contains("12"))
+        XCTAssertTrue(QuoteCheck.statedNumbers("one million cycles").contains("1000000"))
+        XCTAssertEqual(Set(QuoteCheck.statedNumbers("five. Six motors")), ["5", "6"])
+        XCTAssertEqual(Set(QuoteCheck.statedNumbers("five and six motors")), ["5", "6"])
+        // A worded or Roman value is checked like a digit one.
+        var romanRow = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [
+            ["id": "F1", "claim": "Version", "value": "Mk XII", "label": "CLAIM", "sources": [["url": "https://a.org/5", "publisher": "A", "date": "2020", "quote": "The current Mk IV device is lighter"]]],
+            ["id": "F2", "claim": "Count", "value": "twenty-five", "label": "CLAIM", "sources": [["url": "https://a.org/5", "publisher": "A", "date": "2020", "quote": "it has five motors"]]]]])))
+        romanRow.checkQuotes(fetcher: TestPages(pages: ["https://a.org/5": "<p>The current Mk IV device is lighter, and it has five motors.</p>"], fallback: nil))
+        XCTAssertTrue(romanRow.rows[0].unconfirmed); XCTAssertTrue(romanRow.rows[1].unconfirmed)
 
         // Generic hints for anchor and arrow refusals do not advise ghosting the part in the way.
         for r in ["annotation.arrow.hidden.aSteer", "annotation.anchor.hidden.lCore", "annotation.arrow.untested.a", "annotation.anchor.untested.l"] {
@@ -1253,6 +1269,8 @@ final class MartyLoopTests: XCTestCase {
         let setCells = ((((fixedOp?["beats"] as? [[String: Any]])?.first?["ops"] as? [[String: Any]])?.first)?["value"] as? [[Any]])
         XCTAssertEqual(setCells?[0][1] as? String, "85.06")
         XCTAssertEqual((((fixedOp?["over"] as? [String: Any])?["t"] as? [String: Any])?["cells"] as? [[Any]])?[0][1] as? String, "136.891")
+        let sci = MartyLoop.exactTableNumbers(["cells": [[1.5e-10]]]) as? [String: Any]
+        XCTAssertEqual((sci?["cells"] as? [[Any]])?[0][0] as? String, "1.5e-10")
     }
 
     func testAnchorIssuesInRepairs() throws {

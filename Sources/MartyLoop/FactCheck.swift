@@ -241,9 +241,11 @@ import MartyEngine
         }
         // An "assumed example" label is exempt from the number check, not from the absence rule.
         for (field, text, note) in exampleTexts(d) where !citesAbsenceRow(text, evidence) && !citesAbsenceRow(note, evidence) {
-            if let r = text.range(of: absence, options: .regularExpression) {
-                let x = Finding(field: field, token: String(text[r]), kind: "notPublished")
-                if !out.contains(x) { out.append(x) }
+            for (f, t) in [(field, text), (field + ".unchecked", note)] {
+                if let r = t.range(of: absence, options: .regularExpression) {
+                    let x = Finding(field: f, token: String(t[r]), kind: "notPublished")
+                    if !out.contains(x) { out.append(x) }
+                }
             }
         }
         return Array(out.prefix(limit))

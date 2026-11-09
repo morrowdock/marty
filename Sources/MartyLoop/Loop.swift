@@ -183,7 +183,9 @@ public final class MartyLoop {
                         row.map { cell -> Any in
                             guard let n = cell as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() else { return cell }
                             let d = n.doubleValue
-                            return d.rounded() == d ? cell : MartyLoop.trimmedDecimal("\(d)")
+                            let written = "\(d)"
+                            // Scientific notation stays as written ("1.5e-10"; trimming would change its exponent).
+                            return d.rounded() == d ? cell : (written.contains("e") ? written : MartyLoop.trimmedDecimal(written))
                         }
                     }
                 }

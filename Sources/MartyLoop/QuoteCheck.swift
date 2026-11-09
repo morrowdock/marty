@@ -332,38 +332,61 @@ public enum QuoteCheck {
         "seven": "7", "eight": "8", "nine": "9", "ten": "10", "eleven": "11", "twelve": "12", "thirteen": "13", "fourteen": "14",
         "fifteen": "15", "sixteen": "16", "seventeen": "17", "eighteen": "18", "nineteen": "19", "twenty": "20", "thirty": "30",
         "forty": "40", "fifty": "50", "sixty": "60", "seventy": "70", "eighty": "80", "ninety": "90", "hundred": "100",
-        "thousand": "1000", "single": "1", "twin": "2", "pair": "2", "dozen": "12"]
+        "thousand": "1000", "million": "1000000", "billion": "1000000000", "single": "1", "twin": "2", "pair": "2", "dozen": "12"]
 
     /// The numbers a quote states: its digits, number words ("five"), and Roman version numerals after a version
     /// word ("Mk IV" is 4).
-    @MainActor static func statedNumbers(_ quote: String) -> [String] {
-        var out = MartyLoop.numbers(quote)
-        let words = quote.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
-        // A run of number words is one number ("twenty-four" is 24, "two hundred and five" 205), never its parts.
+    @MainActor static func statedNumbers(_ quote: String, inOrder: Bool = false) -> [String] {
+        // Words with whether sentence punctuation follows them (a number-word run never crosses it).
+        var words: [(w: String, stop: Bool)] = []
+        for raw in quote.lowercased().split(whereSeparator: { $0.isWhitespace }) {
+            let stop = raw.last.map { ".,;:!?)".contains($0) } ?? false
+            for (k, part) in raw.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).enumerated() {
+                words.append((String(part), false))
+                _ = k
+            }
+            if stop, !words.isEmpty { words[words.count - 1].stop = true }
+        }
+        var found: [(Int, String)] = []
         var i = 0
         while i < words.count {
-            if numberWords[words[i]] != nil {
+            let w = words[i].w
+            if w.first?.isNumber == true {
+                for n in MartyLoop.numbers(w) { found.append((i, n)) }
+                i += 1; continue
+            }
+            if numberWords[w] != nil {
+                // A run of number words is one number ("twenty-four" is 24, "two hundred and five" 205, "one
+                // million" 1000000), never its parts; "and" joins only after a scale word ("five and six" are two).
                 var total = 0, current = 0, j = i
                 while j < words.count {
-                    let w = words[j]
-                    if w == "and", j + 1 < words.count, numberWords[words[j + 1]] != nil, j > i { j += 1; continue }
-                    guard let v = numberWords[w].flatMap(Int.init) else { break }
-                    if w == "hundred" { current = max(current, 1) * 100 }
-                    else if w == "thousand" { total += max(current, 1) * 1000; current = 0 }
-                    else if w == "dozen" { current = max(current, 1) * 12 }
-                    else { current += v }
+                    let x = words[j].w
+                    if x == "and", j > i, ["hundred", "thousand", "million", "billion"].contains(words[j - 1].w),
+                       j + 1 < words.count, numberWords[words[j + 1].w] != nil, !words[j - 1].stop { j += 1; continue }
+                    guard let v = numberWords[x].flatMap(Int.init) else { break }
+                    switch x {
+                    case "hundred": current = max(current, 1) * 100
+                    case "thousand": total += max(current, 1) * 1_000; current = 0
+                    case "million": total += max(current, 1) * 1_000_000; current = 0
+                    case "billion": total += max(current, 1) * 1_000_000_000; current = 0
+                    case "dozen": current = max(current, 1) * 12
+                    default: current += v
+                    }
+                    let stop = words[j].stop
                     j += 1
+                    if stop { break }
                 }
-                out.append(String(total + current))
+                found.append((i, String(total + current)))
                 i = j
                 continue
             }
-            if i > 0, ["mk", "mark", "version", "gen", "generation", "series", "type", "model"].contains(words[i - 1]), let r = romanValue(words[i]) {
-                out.append(String(r))
+            if i > 0, ["mk", "mark", "version", "gen", "generation", "series", "type", "model"].contains(words[i - 1].w), let r = romanValue(w) {
+                found.append((i, String(r)))
             }
             i += 1
         }
-        return out
+        let ordered = found.map(\.1)
+        return inOrder ? ordered : Array(Set(ordered + MartyLoop.numbers(quote)))
     }
 
     /// The value of a Roman numeral (i to mmmcmxcix), or nil.
@@ -782,20 +805,47 @@ public enum QuoteCheck {
     static func shownDate(_ html: String) -> String? {
         guard let h1 = html.range(of: #"(?is)<h1\b[^>]*>.*?</h1\s*>"#, options: .regularExpression) else { return nil }
         let after = String(html[h1.upperBound...].prefix(3_000))
-        let marked = #"(?is)<time\b([^>]*)>(.*?)</time\s*>|<([a-z0-9]+)\b([^>]*(?:class|id|itemprop)\s*=\s*["'][^"']*(?:date|byline|publish|posted)[^"']*["'][^>]*)>(.*?)</\3\s*>"#
-        guard let mre = try? NSRegularExpression(pattern: marked) else { return nil }
         let ans = after as NSString
-        // Each candidate in order: skipped when it, or the text or a container right before it, is an "updated",
-        // "modified" or "related" one, or when it holds no date.
-        for m in mre.matches(in: after, range: NSRange(location: 0, length: ans.length)) {
-            let isTime = m.range(at: 1).location != NSNotFound
-            let attrs = ans.substring(with: m.range(at: isTime ? 1 : 4)).lowercased()
-            let inner = ans.substring(with: m.range(at: isTime ? 2 : 5))
-            let before = ans.substring(with: NSRange(location: max(0, m.range.location - 300), length: min(300, m.range.location))).lowercased()
-            let plainBefore = before.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
-            if ["updat", "modif", "related", "revis"].contains(where: { attrs.contains($0) }) { continue }
-            if before.range(of: #"class\s*=\s*["'][^"']*(related|more-stories|recommend)"#, options: .regularExpression) != nil { continue }
-            if plainBefore.range(of: #"(updated|modified|revised|last edited)\s*:?\s*$"#, options: .regularExpression) != nil { continue }
+        guard let tagRe = try? NSRegularExpression(pattern: #"<(/?)([a-zA-Z0-9]+)\b([^>]*)>"#) else { return nil }
+        let tags = tagRe.matches(in: after, range: NSRange(location: 0, length: ans.length))
+        let void: Set<String> = ["br", "img", "meta", "link", "input", "hr", "wbr", "source", "area", "col", "embed", "param", "track"]
+        func bad(_ attrs: String) -> Bool {
+            let a = attrs.lowercased()
+            return ["updat", "modif", "related", "revis", "recommend", "more-stories"].contains { a.contains($0) }
+        }
+        func isCandidate(_ name: String, _ attrs: String) -> Bool {
+            name == "time" || attrs.range(of: #"(?i)(?:class|id|itemprop)\s*=\s*["'][^"']*(?:date|byline|publish|posted)[^"']*["']"#, options: .regularExpression) != nil
+        }
+        // Walk the tags with a stack of open elements; each candidate is judged by its own attributes, its open
+        // ancestors (an "updated" or "related" container), the words right before it and its own text. A candidate
+        // that contains another candidate is left to its children.
+        var stack: [(name: String, attrs: String, index: Int)] = []
+        for (k, t) in tags.enumerated() {
+            let closing = ans.substring(with: t.range(at: 1)) == "/"
+            let name = ans.substring(with: t.range(at: 2)).lowercased()
+            let attrs = ans.substring(with: t.range(at: 3))
+            if closing {
+                if let at = stack.lastIndex(where: { $0.name == name }) { stack.removeSubrange(at...) }
+                continue
+            }
+            if void.contains(name) || attrs.hasSuffix("/") { continue }
+            defer { stack.append((name, attrs, k)) }
+            guard isCandidate(name, attrs), !bad(attrs), !stack.contains(where: { bad($0.attrs) }) else { continue }
+            // The element's inner markup, to its matching close tag.
+            var depth = 0, end: Int? = nil, nested = false
+            for u in tags[(k + 1)...] {
+                let c = ans.substring(with: u.range(at: 1)) == "/"
+                let n = ans.substring(with: u.range(at: 2)).lowercased()
+                if !c, isCandidate(n, ans.substring(with: u.range(at: 3))) { nested = true }
+                if n == name { if c { if depth == 0 { end = u.range.location; break }; depth -= 1 } else { depth += 1 } }
+            }
+            guard let close = end, !nested else { continue }
+            let innerStart = t.range.location + t.range.length
+            let inner = ans.substring(with: NSRange(location: innerStart, length: close - innerStart))
+            let before = decodeEntities(ans.substring(with: NSRange(location: max(0, t.range.location - 300), length: min(300, t.range.location))))
+                .replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
+                .replacingOccurrences(of: "\u{00A0}", with: " ").lowercased()
+            if before.range(of: #"(updated|modified|revised|last edited)\s*:?\s*$"#, options: .regularExpression) != nil { continue }
             let text = decodeEntities(inner.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression))
                 .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             if text.lowercased().range(of: #"\b(updated|modified|revised)\b"#, options: .regularExpression) != nil { continue }
@@ -953,8 +1003,8 @@ extension FactTable {
             }
             // The row's value must be what a found quote states: its headline number in one of them. A value computed
             // from other figures (a ratio of two rows' numbers) is no published fact: the row is left out.
-            if !rows[n].unconfirmed, after != .unknown, let headline = MartyLoop.numbers(rows[n].value).first,
-               !foundQuotes.flatMap(QuoteCheck.statedNumbers).contains(headline) {
+            if !rows[n].unconfirmed, after != .unknown, let headline = QuoteCheck.statedNumbers(rows[n].value, inOrder: true).first,
+               !foundQuotes.flatMap({ QuoteCheck.statedNumbers($0) }).contains(headline) {
                 downgrades.append("\(rows[n].id): value \(rows[n].value) is in none of its found quotes (computed, not published); left out")
                 after = .unknown
                 rows[n].unconfirmed = true
