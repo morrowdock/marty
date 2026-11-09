@@ -980,7 +980,8 @@ extension MartyLoop {
             guard !posed.isEmpty, let dre = try? NSRegularExpression(pattern: Self.denials) else { return [] }
             return Self.sentences(text).filter { sentence in
                 // ("and" joins phrases as often as clauses, so it does not split: "the arms and shoulders moving".)
-                let clauses = sentence.replacingOccurrences(of: #"(?i)\s+(?:but|while|whereas|although|though|yet)\s+|\s*[\x{2014}\x{2013}]\s*|\s+-\s+"#, with: ";", options: .regularExpression)
+                // ("and" splits only where a new predicate follows: "shows steering and does not model airflow".)
+                let clauses = sentence.replacingOccurrences(of: #"(?i)\s+(?:but|while|whereas|although|though|yet)\s+|\s*[\x{2014}\x{2013}]\s*|\s+-\s+|\s+and\s+(?=(?:does|do|did|is|are|was|were|has|have|had|can|cannot|could|will|would|it|they|this|that|its)\b)"#, with: ";", options: .regularExpression)
                     .components(separatedBy: CharacterSet(charactersIn: ",;:()"))
                 for clause in clauses {
                     let cns = clause as NSString

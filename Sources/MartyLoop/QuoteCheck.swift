@@ -425,7 +425,7 @@ public enum QuoteCheck {
         let wanted = Set(entities.map(singular))
         guard !wanted.isEmpty else { return false }
         // One clause at a time: a cue never reaches into the next sentence, clause or parenthesis.
-        for clause in quote.lowercased().components(separatedBy: CharacterSet(charactersIn: ".;:!?()[]\u{2014}\u{2013}")) {
+        for clause in quote.lowercased().components(separatedBy: CharacterSet(charactersIn: ".,;:!?()[]\u{2014}\u{2013}")) {
             if statesCountWord(headline, clause: clause.split { !$0.isLetter && !$0.isNumber }.map(String.init), cue: cue, wanted: wanted) { return true }
         }
         return false
@@ -439,13 +439,13 @@ public enum QuoteCheck {
             for j in (i + 1)..<min(words.count, i + 4) {
                 let x = words[j]
                 if wanted.contains(singular(x)) {
-                    // The noun must be the phrase's head, not a modifier of another noun ("a jet engine mount"): a
-                    // plural is a head ("both rear engines run"); a singular followed by a plain word that is no verb
-                    // form (-s, -ed, -ing) or connector modifies it.
-                    let next = j + 1 < words.count ? words[j + 1] : nil
-                    if singular(x) == x, let n = next, !phraseBreaks.contains(n), !n.hasSuffix("ed"), !n.hasSuffix("ing"), !n.hasSuffix("s"),
-                       n.allSatisfy(\.isLetter), !(n.count > 3 && n.hasSuffix("ly")) { break }
-                    return true
+                    // The noun must be the phrase's head, not a modifier of another noun ("a jet engine mount", "both
+                    // rotor blades"): only the clause's end, a connector, a common verb, or an -ed, -ing or -ly word
+                    // may follow it; any other word may be the real head, so the cue counts nothing.
+                    guard j + 1 < words.count else { return true }
+                    let n = words[j + 1]
+                    if phraseBreaks.contains(n) || n.hasSuffix("ed") || n.hasSuffix("ing") || (n.count > 3 && n.hasSuffix("ly")) { return true }
+                    break
                 }
                 if x.first?.isNumber == true || numberWords[x] != nil || ordinals[x] != nil { break }
                 if phraseBreaks.contains(x) || x.hasSuffix("ing") || x.hasSuffix("ed") || (x.count > 3 && x.hasSuffix("s") && !x.hasSuffix("ss")) { break }
@@ -457,7 +457,9 @@ public enum QuoteCheck {
     /// Words that end a noun phrase: connectors, articles and common verbs.
     static let phraseBreaks: Set<String> = ["with", "of", "for", "to", "from", "in", "on", "at", "by", "and", "or", "but", "that", "which",
         "the", "a", "an", "its", "their", "his", "her", "is", "are", "was", "were", "be", "has", "have", "had", "carry", "carries", "use", "uses",
-        "hold", "holds", "provide", "provides", "power", "powers", "drive", "drives", "give", "gives", "make", "makes", "sit", "sits"]
+        "hold", "holds", "provide", "provides", "power", "powers", "drive", "drives", "give", "gives", "make", "makes", "sit", "sits",
+        "run", "runs", "fly", "flies", "work", "works", "produce", "produces", "generate", "generates", "turn", "turns", "spin", "spins",
+        "lift", "lifts", "push", "pushes", "fire", "fires", "burn", "burns", "can", "will", "must", "may", "each", "only", "also"]
 
     /// A plural noun as its singular ("batteries" battery, "boxes" box, "engines" engine).
     static func singular(_ w: String) -> String {
