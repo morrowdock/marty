@@ -21,7 +21,7 @@ import MartyEngine
 
         @MainActor public static func build(table: FactTable, question: String, report: [String: Any]?, model: Any?, extra: [String] = []) -> Evidence {
             var texts = [question] + extra
-            for r in table.rows {
+            for r in table.rows where !r.unconfirmed {   // an unconfirmed row is no evidence
                 texts += [r.claim, r.value, r.appliesTo] + r.sources.map(\.date)
             }
             texts += MartyLoop.factTexts(report)

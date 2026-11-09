@@ -188,15 +188,26 @@ public enum QuoteCheck {
             t = t.replacingOccurrences(of: #"(?s)<!--.*?-->"#, with: " ", options: .regularExpression)
             t = t.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
             t = decodeEntities(t)
+            // Reference marks of the page ("[3]", "[edit]", "[citation needed]") are not quoted text.
+            t = t.replacingOccurrences(of: #"\[(?:\d{1,3}|[a-z]|edit|citation needed|note \d+)\]"#, with: "", options: [.regularExpression, .caseInsensitive])
         }
+        // Unicode compatibility forms (NFKC: ligatures, full-width forms, superscripts), then invisible characters
+        // (zero-width spaces and joiners, the word joiner U+2060, BOM, soft hyphen) are removed.
+        t = t.precomposedStringWithCompatibilityMapping
+        t = t.unicodeScalars.filter { !["\u{200B}", "\u{200C}", "\u{200D}", "\u{2060}", "\u{FEFF}", "\u{00AD}", "\u{180E}"].contains($0) }
+            .reduce(into: "") { $0.unicodeScalars.append($1) }
         t = t.lowercased()
-        for (a, b) in [("\u{2018}", "'"), ("\u{2019}", "'"), ("\u{201C}", "\""), ("\u{201D}", "\""), ("\u{2013}", "-"), ("\u{2014}", "-"),
-                       ("\u{2212}", "-"), ("\u{00A0}", " "), ("\u{00AD}", ""), ("\u{2026}", "...")] {
+        for (a, b) in [("\u{2018}", "'"), ("\u{2019}", "'"), ("\u{201A}", "'"), ("\u{201B}", "'"), ("\u{2032}", "'"),
+                       ("\u{201C}", "\""), ("\u{201D}", "\""), ("\u{201E}", "\""), ("\u{2033}", "\""), ("\u{00AB}", "\""), ("\u{00BB}", "\""),
+                       ("\u{2010}", "-"), ("\u{2011}", "-"), ("\u{2012}", "-"), ("\u{2013}", "-"), ("\u{2014}", "-"), ("\u{2015}", "-"),
+                       ("\u{2212}", "-"), ("\u{00A0}", " "), ("\u{202F}", " "), ("\u{2009}", " "), ("\u{2026}", "...")] {
             t = t.replacingOccurrences(of: a, with: b)
         }
         // Quote marks are dropped on both sides: a page that quotes a figure ("'1,050 bhp'") still matches.
         t = t.replacingOccurrences(of: #"['"`]"#, with: "", options: .regularExpression)
         t = t.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        // Spaces around a dash vary ("suit—with", "suit - with"): none on both sides.
+        t = t.replacingOccurrences(of: #" ?- ?"#, with: "-", options: .regularExpression)
         // A removed tag leaves a space before punctuation ("derail ."); drop it on both sides.
         t = t.replacingOccurrences(of: #" ([.,;:!?)\]])"#, with: "$1", options: .regularExpression)
             .replacingOccurrences(of: #"([(\[]) "#, with: "$1", options: .regularExpression)
@@ -231,10 +242,13 @@ public enum QuoteCheck {
     /// (split at an ellipsis), each at least `minimumPart` characters, in order, each starting and ending on a word
     /// boundary ("85 mph" does not match inside "185 mph").
     static func match(_ quote: String, in page: String, html: Bool = true) -> (page: String, ranges: [Range<String.Index>])? {
-        let q = normalized(quote, html: false)
+        // In a quote, an ellipsis and any bracketed insertion ("[...]", "[…]", "[s]", "[the suit]") are gaps.
+        var q = normalized(quote, html: false).replacingOccurrences(of: #"\[[^\]]{0,40}\]"#, with: "...", options: .regularExpression)
+        q = q.trimmingCharacters(in: CharacterSet(charactersIn: " .,;:!?"))   // a trailing period the page may not have
         let p = normalized(page, html: html)
-        let parts = q.components(separatedBy: "...").map { $0.trimmingCharacters(in: CharacterSet(charactersIn: " ,;:")) }.filter { !$0.isEmpty }
-        guard !parts.isEmpty, parts.allSatisfy({ $0.count >= minimumPart }) else { return nil }
+        let parts = q.components(separatedBy: "...").map { $0.trimmingCharacters(in: CharacterSet(charactersIn: " .,;:!?")) }.filter { !$0.isEmpty }
+        // Each part is at least 8 characters and all parts together at least 16 (a bare value is no evidence).
+        guard !parts.isEmpty, parts.allSatisfy({ $0.count >= minimumPart / 2 }), parts.reduce(0, { $0 + $1.count }) >= minimumPart else { return nil }
         func boundary(_ i: String.Index, before: Bool) -> Bool {
             if before { return i == p.startIndex || !(p[p.index(before: i)].isLetter || p[p.index(before: i)].isNumber) }
             return i == p.endIndex || !(p[i].isLetter || p[i].isNumber)
@@ -266,6 +280,23 @@ public enum QuoteCheck {
             let hi = p.index(r.upperBound, offsetBy: 160, limitedBy: p.endIndex) ?? p.endIndex
             return String(p[lo..<hi]).range(of: attribution, options: .regularExpression) != nil
         }
+    }
+
+    /// The page's publication date (YYYY-MM-DD) from its metadata: JSON-LD datePublished, the article:published_time
+    /// or date meta tags, or the first <time datetime>; nil when the page states none.
+    static func pageDate(_ html: String) -> String? {
+        let patterns = [#""datePublished"\s*:\s*"(\d{4}-\d{2}-\d{2})"#,
+                        #"(?i)<meta[^>]+(?:property|name)="(?:article:published_time|og:published_time|date|dc\.date|citation_publication_date|pubdate)"[^>]+content="(\d{4}[-/]\d{2}[-/]\d{2})"#,
+                        #"(?i)<meta[^>]+content="(\d{4}[-/]\d{2}[-/]\d{2})[^"]*"[^>]+(?:property|name)="(?:article:published_time|date|pubdate)""#,
+                        #"(?i)<time[^>]+datetime="(\d{4}-\d{2}-\d{2})"#]
+        for p in patterns {
+            guard let re = try? NSRegularExpression(pattern: p) else { continue }
+            let ns = html as NSString
+            if let m = re.firstMatch(in: html, range: NSRange(location: 0, length: min(ns.length, 400_000))), m.numberOfRanges > 1 {
+                return ns.substring(with: m.range(at: 1)).replacingOccurrences(of: "/", with: "-")
+            }
+        }
+        return nil
     }
 
     /// Words in a quote that mark a statement by the maker or one person: such a row is at most a CLAIM.
@@ -301,6 +332,11 @@ extension FactTable {
                     rows[n].sources[k].check = "quote found"
                     foundSites.insert(FactTable.site(finalHost))
                     if QuoteCheck.attributed(src.quote, in: body) { attributed = true }
+                    // The source date comes from the page when it states one (its publication date).
+                    if let d = QuoteCheck.pageDate(body), d != src.date {
+                        if !src.date.isEmpty { downgrades.append("\(rows[n].id): source date \(src.date) corrected from the page to \(d)") }
+                        rows[n].sources[k].date = d
+                    }
                 } else {
                     rows[n].sources[k].check = "quote not found"
                 }
@@ -312,6 +348,8 @@ extension FactTable {
             let inference = before == .plausible && rows[n].sources.isEmpty && rows[n].dropped == 0
             if foundSites.isEmpty, !inference, before != .unknown {
                 after = .unknown
+                // Not confirmed is not "not published": the row is left out of the author's table.
+                rows[n].unconfirmed = true
             } else if before == .verified, foundSites.count < 2 || attributed {
                 after = .claim
             }

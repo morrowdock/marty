@@ -5,6 +5,22 @@ import MartyGraphics
 import MartyEngine
 @testable import MartyLoop
 
+/// A research adapter for loop tests: a fixed research reply with chosen adapter facts, or a thrown error.
+final class ResearchStub: ModelAdapter {
+    let id = "research-stub"
+    let inner: ScriptedAdapter
+    let researchText: String?, researchMeta: [String: Any], error: AdapterError?
+    init(replies: [String], research: String?, meta: [String: Any] = [:], error: AdapterError? = nil) {
+        inner = ScriptedAdapter(replies: replies); researchText = research; researchMeta = meta; self.error = error
+    }
+    var supportsResearch: Bool { true }
+    func reply(system: String, user: String) throws -> ModelReply { try inner.reply(system: system, user: user) }
+    func research(system: String, user: String, limits: ResearchLimits) throws -> ModelReply {
+        if let error { throw error }
+        return ModelReply(text: researchText ?? "", seconds: 0, meta: researchMeta)
+    }
+}
+
 /// A page stub for the quote check: every test quote is on every page (tests never touch the network).
 struct TestPages: PageFetcher {
     var pages: [String: String] = [:]
@@ -1180,7 +1196,8 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(t.rows[1].sources[1].check, "page failed (404)")
         XCTAssertEqual(t.rows[3].sources[0].check, "quote not found")
         XCTAssertEqual(t.quoteChecks, 5, "each page is fetched once")
-        XCTAssertTrue(t.promptBlock.contains(#""check":"quote not found""#), t.promptBlock)
+        XCTAssertFalse(t.promptBlock.contains(#""id":"F4""#), "an unconfirmed row is left out: \(t.promptBlock)")
+        XCTAssertTrue(t.promptBlock.contains("not found on the cited pages"), t.promptBlock)
         var small = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [rows[0]]])))
         small.checkQuotes(fetcher: stub, budget: 1)
         XCTAssertEqual(small.rows[0].label, .claim, "one page checked: one site"); XCTAssertEqual(small.rows[0].sources[1].check, "not checked (budget)")
@@ -1237,7 +1254,7 @@ final class MartyLoopTests: XCTestCase {
         let rr = try XCTUnwrap(r["research"] as? [String: Any])
         XCTAssertEqual((rr["rows"] as? [[String: Any]])?.first?["label"] as? String, "UNKNOWN")
         XCTAssertEqual(rr["quoteChecks"] as? Int, 1)
-        XCTAssertTrue(model.prompts[0].user.contains(#""label":"UNKNOWN""#))
+        XCTAssertFalse(model.prompts[0].user.contains(#""claim":"Wheel teeth""#), "the unconfirmed row is not shown to the plan")
     }
 
     /// The fetcher's own deadline: a curl that hangs past it is stopped and reaped; output over the cap is refused.
@@ -1268,6 +1285,55 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(r.status, 200)
         XCTAssertTrue(QuoteCheck.found("variable-ratio transmission system commonly used on bicycles", in: r.body ?? ""), "the page text is matched")
         XCTAssertEqual(PinnedFetcher().fetch(URL(string: "http://127.0.0.1/")!).body, nil)
+    }
+
+    /// Round-2g quote misses: a word joiner before a dash, a trailing period, a bracketed insertion, full-width
+    /// digits, the page's reference marks. A row whose quotes are not found is left out of the author's table (never
+    /// "not published") and is no evidence; a page's publication date replaces the model's source date.
+    func testQuoteNormalizationAndUnconfirmedRows() throws {
+        let page = "<p>The suit\u{2060}\u{2014}with five engines[3]\u{2014}gives a thrust of \u{FF11}\u{FF14}\u{FF14} kgf in total.</p>"
+        XCTAssertTrue(QuoteCheck.found("The suit - with five engines - gives a thrust of 144 kgf in total.", in: page))
+        XCTAssertTrue(QuoteCheck.found("The suit [...] gives a thrust of 144 kgf in total", in: page))
+        XCTAssertTrue(QuoteCheck.found("with five engines [it] gives a thrust of 144 kgf", in: page))
+        XCTAssertFalse(QuoteCheck.found("gives a thrust of 155 kgf in total", in: page))
+        XCTAssertEqual(QuoteCheck.pageDate(#"<script type="application/ld+json">{"datePublished": "2019-07-12T10:00"}</script>"#), "2019-07-12")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<meta property="article:published_time" content="2020-03-05T00:00:00Z">"#), "2020-03-05")
+        XCTAssertNil(QuoteCheck.pageDate("<p>no date</p>"))
+        func src(_ url: String, _ quote: String, _ date: String) -> [String: Any] { ["url": url, "publisher": "P", "date": date, "quote": quote] }
+        let rows: [[String: Any]] = [
+            ["id": "F1", "claim": "Thrust", "value": "144", "unit": "kgf", "label": "CLAIM", "sources": [src("https://a.org/1", "gives a thrust of 144 kgf in total", "2017")]],
+            ["id": "F2", "claim": "Speed record", "value": "137", "unit": "km/h", "label": "CLAIM", "sources": [src("https://b.org/1", "set a record of 137 km/h", "2019")]]]
+        var t = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": rows])))
+        let dated = "<meta name=\"date\" content=\"2020-01-02\">" + page
+        t.checkQuotes(fetcher: TestPages(pages: ["https://a.org/1": dated, "https://b.org/1": "<p>Nothing here.</p>"], fallback: nil))
+        XCTAssertEqual(t.rows[0].sources[0].date, "2020-01-02", "the page's date")
+        XCTAssertTrue(t.downgrades.contains { $0.contains("source date 2017 corrected from the page to 2020-01-02") }, "\(t.downgrades)")
+        XCTAssertEqual(t.rows[1].label, .unknown); XCTAssertTrue(t.rows[1].unconfirmed)
+        XCTAssertFalse(t.promptBlock.contains("Speed record"), "an unconfirmed row is not shown")
+        XCTAssertTrue(t.promptBlock.contains("never call such a fact \"not published\""), t.promptBlock)
+        let e = FactCheck.Evidence.build(table: t, question: "q", report: nil, model: nil)
+        XCTAssertFalse(e.numbers.contains("137"), "an unconfirmed row is no evidence"); XCTAssertTrue(e.numbers.contains("144"))
+    }
+
+    /// Research stopped at its limit: the rows written so far make a partial table, warned about in the receipt and
+    /// the plan; with none, there is no table and the same warning.
+    func testPartialResearch() throws {
+        let row = #"{"id": "F1", "claim": "Wheel teeth", "value": "36", "label": "CLAIM", "sources": [{"url": "https://example.org/a", "publisher": "E", "date": "2020", "quote": "the wheel has 36 teeth"}]}"#
+        let plan = #"{"components": ["spurPair"], "primitives": []}"#
+        let good = #"{"document": \#(Self.spurReduction)}"#
+        let partial = ResearchStub(replies: [plan, good], research: #"{"needed": true, "rows": ["# + row + "]}", meta: ["partial": true])
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: partial, out: out, options: .init()).run(question: "q")
+        let block = try XCTUnwrap(r["research"] as? [String: Any])
+        XCTAssertEqual(block["partial"] as? Bool, true); XCTAssertNotNil(block["warning"])
+        XCTAssertTrue(partial.inner.prompts[0].user.contains("This table is PARTIAL"), partial.inner.prompts[0].user)
+        let none = ResearchStub(replies: [plan, good], research: nil, error: AdapterError(reason: "adapter.research.turns", detail: "x"))
+        let out2 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out2) }
+        let r2 = try MartyLoop(model: none, out: out2, options: .init()).run(question: "q")
+        XCTAssertNotNil((r2["research"] as? [String: Any])?["warning"])
+        XCTAssertTrue(none.inner.prompts[0].user.contains("Research stopped at its tool limit"), none.inner.prompts[0].user)
     }
 
     /// The research call streams its events: Marty counts each web tool use and stops the child past the limit.
@@ -1814,6 +1880,12 @@ final class ClaudeAdapterProcessTests: XCTestCase {
         XCTAssertThrowsError(try ClaudeCLIAdapter(model: "m", executable: eofOver, timeout: 30).research(system: "s", user: "u", limits: ResearchLimits(maxTurns: 2))) {
             XCTAssertEqual(($0 as? AdapterError)?.reason, "adapter.research.turns", "a tool use on the last unterminated line counts toward the limit")
         }
+        // Past the limit with ROW lines written: a partial table from them.
+        let rowText = #"{"type":"assistant","message":{"content":[{"type":"text","text":"ROW {\"id\": \"F1\", \"claim\": \"c\", \"label\": \"CLAIM\"}"}]}}"#
+        let withRows = try fake("cat >/dev/null; echo '\(rowText)'; for i in 1 2 3 4; do echo '\(use)'; done; sleep 20; echo '\(result)'")
+        let p = try ClaudeCLIAdapter(model: "m", executable: withRows, timeout: 30).research(system: "s", user: "u", limits: ResearchLimits(maxTurns: 3))
+        XCTAssertEqual(p.meta["partial"] as? Bool, true)
+        XCTAssertEqual(FactTable.parse(p.text)?.rows.first?.claim, "c")
         let many = try fake("cat >/dev/null; for i in 1 2 3 4 5 6; do echo '\(use)'; done; sleep 20; echo '\(result)'")
         XCTAssertThrowsError(try ClaudeCLIAdapter(model: "m", executable: many, timeout: 30).research(system: "s", user: "u", limits: ResearchLimits(maxTurns: 3))) {
             XCTAssertEqual(($0 as? AdapterError)?.reason, "adapter.research.turns")

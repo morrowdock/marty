@@ -125,6 +125,21 @@ public struct ClaudeCLIAdapter: ModelAdapter {
         return webToolUses(o)
     }
 
+    /// The "ROW {...}" lines in an assistant event's text blocks, as row objects.
+    static func rowLines(_ o: [String: Any]) -> [Any] {
+        guard o["type"] as? String == "assistant",
+              let content = (o["message"] as? [String: Any])?["content"] as? [[String: Any]] else { return [] }
+        var out: [Any] = []
+        for c in content where c["type"] as? String == "text" {
+            for line in (c["text"] as? String ?? "").split(separator: "\n") {
+                let t = line.trimmingCharacters(in: .whitespaces)
+                guard t.hasPrefix("ROW "), let row = try? JSONSerialization.jsonObject(with: Data(t.dropFirst(4).utf8)) as? [String: Any] else { continue }
+                out.append(row)
+            }
+        }
+        return out
+    }
+
     static func webToolUses(_ o: [String: Any]) -> [String: Int] {
         guard o["type"] as? String == "assistant",
               let content = (o["message"] as? [String: Any])?["content"] as? [[String: Any]] else { return [:] }
@@ -166,6 +181,8 @@ public struct ClaudeCLIAdapter: ModelAdapter {
             /// A research call's stream, parsed from every byte (not only the kept output): the unfinished line, the
             /// counts per tool, and the last "result" event.
             var line = Data(), lineTooLong = false, counts: [String: Int] = [:], result: Data? = nil
+            /// Rows the model wrote as "ROW {...}" lines in its text while researching (at most 20).
+            var rows: [Any] = []
         }
         let box = Box()
         let group = DispatchGroup()     // the two pipe readers
@@ -193,6 +210,7 @@ public struct ClaudeCLIAdapter: ModelAdapter {
             guard let o = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { return }
             for (k, v) in Self.webToolUses(o) { box.counts[k, default: 0] += v; box.toolUses += v }
             if o["type"] as? String == "result" { box.result = line }
+            for row in Self.rowLines(o) where box.rows.count < 20 { box.rows.append(row) }
             if box.toolUses > limit, !box.overBudget { box.overBudget = true; if p.isRunning { p.terminate() } }
         }
         let observe: ((Data) -> Void)? = toolLimit.map { limit in { d in
@@ -233,9 +251,16 @@ public struct ClaudeCLIAdapter: ModelAdapter {
         lock.lock()
         // A last line without a newline.
         if let limit = toolLimit, !box.line.isEmpty, !box.lineTooLong { handle(box.line, limit: limit) }
-        let out = box.out, err = box.err, overBudget = box.overBudget, streamCounts = box.counts, streamResult = box.result
+        let out = box.out, err = box.err, overBudget = box.overBudget, streamCounts = box.counts, streamResult = box.result, streamRows = box.rows
         lock.unlock()
-        if overBudget { throw AdapterError(reason: "adapter.research.turns", detail: "more than \(toolLimit ?? 0) web tool uses") }
+        // Stopped at the limit: the rows the model wrote so far make a partial table; with none, the call failed.
+        if overBudget {
+            guard !streamRows.isEmpty else { throw AdapterError(reason: "adapter.research.turns", detail: "more than \(toolLimit ?? 0) web tool uses") }
+            let text = String(decoding: (try? JSONSerialization.data(withJSONObject: ["needed": true, "rows": streamRows])) ?? Data(), as: UTF8.self)
+            return ModelReply(text: text, seconds: Date().timeIntervalSince(t0),
+                              meta: ["partial": true, "exit": Int(p.terminationStatus),
+                                     "webTools": ["web_search_requests": streamCounts["WebSearch"] ?? 0, "web_fetch_requests": streamCounts["WebFetch"] ?? 0]])
+        }
         // A research call's stream: the web tool uses counted from its events, the result from its last "result" event.
         var counted: [String: Int]? = nil
         var envData = out
