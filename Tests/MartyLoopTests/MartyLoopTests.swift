@@ -33,7 +33,7 @@ final class MartyLoopTests: XCTestCase {
         let author = MartyPrompts.authorSystem(parts: "", example: MartyExamples.formatExample).utf8.count
         print("prompt bytes: plan \(plan), author without parts \(author)")
         XCTAssertLessThan(plan, 12000)
-        XCTAssertLessThan(author, 12000)
+        XCTAssertLessThan(author, 12500)
     }
 
     /// The format example shows the explainer tools (section, ghost, a gravity force, an unchecked given number) and the
@@ -58,7 +58,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual((r["steps"] as? [String])?.count, 2)
         let plan = MartyPrompts.authorSystem(parts: "", example: MartyExamples.formatExample, explainer: MartyExamples.explainerExample).utf8.count
         print("prompt bytes: author with the explainer form, without parts \(plan)")
-        XCTAssertLessThan(plan, 14500)
+        XCTAssertLessThan(plan, 15000)
     }
 
     /// The plan chooses the explainer form: the author prompt gets the explainer section; the accepted explainer makes a
@@ -1048,6 +1048,78 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(PoseText.disagreements("The sideways parts don\u{2019}t balance out, so the sideways part pushes the suit.", push: pm).count, 1)
     }
 
+    /// The length budget: exact lengths for texts without placeholders (cut at a word when 60 % stays), both caps
+    /// for filled fields (a certain lower bound once placeholders are filled), texts with placeholders never cut,
+    /// patch part names, the accepted step as checked, and the repair detail.
+    func testLengthBudgetAndRepairDetail() throws {
+        var ex = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(MartyExamples.explainerExample.utf8)) as? [String: Any])
+        ex["title"] = "A shaft held in two bearings on a solid base plate, seen whole and then cut open to show"
+        XCTAssertEqual(TextBudget.issues(ex).map(\.line), ["title: 88 characters, the limit is 80"])
+        let (cut, paths) = TextBudget.trimmed(ex)
+        XCTAssertEqual(paths, ["title"])
+        let t = try XCTUnwrap((cut as? [String: Any])?["title"] as? String)
+        XCTAssertLessThanOrEqual(t.unicodeScalars.count, 80)
+        // The 60 % rule and its boundary.
+        XCTAssertNil(TextBudget.cutAtWord(String(repeating: "x", count: 50) + " " + String(repeating: "y", count: 60), limit: 80))
+        XCTAssertEqual(TextBudget.cutAtWord(String(repeating: "x", count: 70) + " " + String(repeating: "y", count: 20), limit: 80), String(repeating: "x", count: 70))
+        // The boundary: exactly 60 % stays (60 of 100) is cut; 59 of 100 is left.
+        XCTAssertEqual(TextBudget.cutAtWord(String(repeating: "x", count: 60) + " " + String(repeating: "y", count: 39), limit: 80), String(repeating: "x", count: 60))
+        XCTAssertNil(TextBudget.cutAtWord(String(repeating: "x", count: 59) + " " + String(repeating: "y", count: 40), limit: 80))
+        // Surrounding white space is not counted after filling (the engine strips it).
+        let padded: [String: Any] = ["v": 2, "kind": "assembly", "title": "t", "annotations": ["labels": [["id": "l", "at": ["world": [0, 0, 0]],
+                                     "text": " " + String(repeating: "A", count: 58) + " {shaft.input.speed}"]]], "steps": [["say": "x"]]]
+        XCTAssertEqual(TextBudget.issues(padded), [])
+        // The explainer title is filled as authored: its spaces count.
+        var spaced = ex; spaced["title"] = " " + String(repeating: "A", count: 80)
+        XCTAssertEqual(TextBudget.issues(spaced).map(\.line), ["title: 81 characters, the limit is 80"])
+        spaced["title"] = " " + String(repeating: "A", count: 79) + "{x.y}"
+        XCTAssertEqual(TextBudget.issues(spaced).first?.atLeast, true)
+        // A caption with a placeholder is never cut; its authored length is reported exactly.
+        let say = "The wheel turns {pair.wheel.speed|abs|frac} " + String(repeating: "and keeps turning ", count: 14)
+        let d: [String: Any] = ["v": 2, "kind": "assembly", "title": "t", "steps": [["say": say]]]
+        XCTAssertEqual(TextBudget.trimmed(d).trimmed, [])
+        XCTAssertEqual(TextBudget.issues(d).first?.atLeast, false); XCTAssertEqual(TextBudget.issues(d).first?.path, "steps[1].say")
+        // Labels: a certain lower bound once filled; the reviewer's 54-character case is no issue and is not cut.
+        func label(_ text: String) -> [String: Any] {
+            ["v": 2, "kind": "assembly", "title": "t", "annotations": ["labels": [["id": "l", "at": ["world": [0, 0, 0]], "text": text]]], "steps": [["say": "x"]]]
+        }
+        let ok = String(repeating: "A", count: 52) + " {p.speed}"
+        XCTAssertEqual(TextBudget.issues(label(ok)), []); XCTAssertEqual(TextBudget.trimmed(label(ok)).trimmed, [])
+        let over = String(repeating: "A", count: 58) + " {p.speed} {q.speed}"
+        XCTAssertEqual(TextBudget.issues(label(over)).map(\.line), ["labels[l].text: at least 62 characters once placeholders are filled, the limit is 60"])
+        XCTAssertEqual(TextBudget.issues(label(String(repeating: "A ", count: 125))).first?.limit, 240, "the authored cap of a label")
+        // A follow-up patch's part names (a map).
+        let patch: [String: Any] = ["parts": ["a": ["name": String(repeating: "word ", count: 14)]]]
+        XCTAssertEqual(TextBudget.issues(patch).map(\.path), ["parts[a].name"])
+        XCTAssertEqual(TextBudget.trimmed(patch).trimmed, ["parts[a].name"])
+        // The loop trims before the check and records it; the explainer is accepted.
+        let plan = #"{"form": "explainer", "components": ["shaftWithBearing"], "primitives": []}"#
+        let model = ScriptedAdapter(replies: [plan, #"{"document": "# + MartyJSON.string(ex) + "}"], research: [Self.exampleTable])
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: .init()).run(question: "q")
+        XCTAssertEqual(r["accepted"] as? Bool, true, "\(r["attempts"] ?? "")")
+        XCTAssertEqual((r["attempts"] as? [[String: Any]])?.first?["trimmed"] as? [String], ["title"])
+        // A posed follow-up step with an over-long caption: the receipt's step is the trimmed one that was checked.
+        let man: [String: Any] = ["v": 2, "kind": "assembly", "title": "A pilot", "units": "mm",
+                                  "parts": [["id": "pilot", "use": "mannequin"]], "steps": [["say": "A pilot."]]]
+        let longSay = String(repeating: "The arm moves out to the side ", count: 10)
+        let step = MartyJSON.string(["step": ["say": longSay, "pose": ["pilot": ["with": ["rightShoulder": 70]]]]] as [String: Any])
+        var options = MartyLoop.Options(); options.followUp = "What if the arm moves?"
+        let m2 = ScriptedAdapter(replies: [#"{"components": ["mannequin"], "primitives": []}"#, #"{"document": "# + MartyJSON.string(man) + "}", step, "The arm moves."])
+        let out2 = tempOut()
+        defer { try? FileManager.default.removeItem(at: out2) }
+        let f = try XCTUnwrap(try MartyLoop(model: m2, out: out2, options: options).run(question: "q")["followUp"] as? [String: Any])
+        XCTAssertEqual(f["changed"] as? Bool, true, "\(f["attempts"] ?? "")")
+        XCTAssertLessThanOrEqual(((f["step"] as? [String: Any])?["say"] as? String ?? "x").unicodeScalars.count, 240)
+        // The repair detail lists the engine's structured fields and the long texts.
+        let detail = try XCTUnwrap(MartyLoop.refusalDetail(["reason": "x", "location": ["statement": 3, "view": "header", "beat": NSNull()],
+                                                             "repair": "Shorten the title to 80 characters.", "limit": 80, "actual": 88], document: ex))
+        XCTAssertTrue(detail.contains("Engine repair: Shorten the title") && detail.contains(#""actual":88"#) && detail.contains("title: 88 characters"), detail)
+        XCTAssertFalse(detail.contains("null"), detail)
+        XCTAssertTrue(MartyPrompts.authorSystem(parts: "", example: "").contains("title 80, step say 240"))
+    }
+
     func testReplyJSON() {
         XCTAssertEqual(ReplyJSON.object(#"{"a":1}"#)?["a"] as? Int, 1)
         XCTAssertEqual(ReplyJSON.object("Here:\n```json\n{\"a\": 2}\n```\nDone.")?["a"] as? Int, 2)
@@ -1102,7 +1174,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual((receipt["engine"] as? [String: Any])?["revision"] as? String, MartyPin.engineRevision)
         let ctx = try XCTUnwrap(receipt["contextBytes"] as? [String: Int])
         XCTAssertLessThan(try XCTUnwrap(ctx["plan"]), 12000, "plan context grew: \(ctx)")
-        XCTAssertLessThan(try XCTUnwrap(ctx["author"]), 13500, "author context grew: \(ctx)")
+        XCTAssertLessThan(try XCTUnwrap(ctx["author"]), 14000, "author context grew: \(ctx)")
     }
 
     func testLoopStopsAfterTheRepairLimit() throws {

@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-08. Prompts `marty-prompts/15`. Engine pin as in
+Status: early preview, 2026-11-08. Prompts `marty-prompts/16`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -110,7 +110,19 @@ the MCP server uses), so a run needs no MCP client.
    beside the 3D model); other prompts stay smaller. It gets a short format guide, the `explain` entries of the
    chosen ids (components without their full definitions) and one small
    accepted example. It answers with `{"document": ..., "components": [...]}`.
-3. **Check.** The engine checks the document in its strict profile (also
+3. **Check.** Before the check, Marty applies the length budget: every text
+   over the engine's limit (title 80, step say 240, part name 60, label and
+   arrow text 60 after placeholders are filled, unchecked 60; explainer title
+   80, beat say 200, note 60; the guide states them; a label also has an
+   authored cap of 240 and an explainer title of 320) is cut at the last word
+   that fits, but only a text without placeholders (its length is exact) and
+   only when at least 60 % of it stays (the attempt lists the cut paths in
+   `trimmed`). A text with placeholders is never cut; its repair states the
+   authored length exactly, and for a filled cap a certain lower bound (each
+   placeholder at least 1 character). Follow-up patches (also their part-name
+   maps) and changed explainers are trimmed the same way; the accepted
+   follow-up step in the receipt is the trimmed one that was checked. The engine checks the
+   document in its strict profile (also
    refuses idle joints and turn axes that miss their part). An accepted
    document gets a `ref`. Then Marty checks its facts (`fact.unsourced.<field>`):
    every typed number, year and product version ("Mk 4", "Mark II", "Gen 3",
@@ -166,7 +178,12 @@ the MCP server uses), so a run needs no MCP client.
    (`annotation.anchor.hidden`, `.off`, `.untested`) gets the engine's anchor
    issues (`anchor` first, then `anchorIssues`, at most 6): the dot, the cause,
    the step or beat, the part, what hides it or is nearer, and the engine's
-   own fix; the attempt keeps `anchor`. A `parts.resolved` refusal gets the engine's
+   own fix; the attempt keeps `anchor`. Every repair (author and follow-up)
+   also gets the refusal's full structured detail (the engine's `repair`
+   line, and `location`, `limit`, `actual`, `path`, `cause`, `by`, `closer`,
+   `fix`, `suggest`, `detail` when present, nulls left out) and the texts of the
+   refused document over their length limit, measured as the engine counts
+   them. A `parts.resolved` refusal gets the engine's
    limit detail the same way (the resolved count, the limit and the component
    instances that add the most parts; attempt key `limit`). A `parts.count`
    refusal from component expansion has no detail at the pin and gets a hint. Only what the engine returned is
@@ -313,8 +330,8 @@ adapter.
 
 The receipt records `contextBytes` for the plan and author prompts, and the
 size and SHA-256 of every prompt. Tests fail when the plan prompt grows over
-12,000 bytes or the author prompt over 13,500 bytes (the author prompt without component
-entries: 12,000 bytes, and 14,500 bytes with the explainer form). For comparison, the
+12,000 bytes or the author prompt over 14,000 bytes (the author prompt without component
+entries: 12,500 bytes, and 15,000 bytes with the explainer form). For comparison, the
 v1 eval harness sent about 25,600 bytes of engine docs in every call.
 
 ## Run receipt (`marty.run-receipt/v1`)

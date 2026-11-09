@@ -91,3 +91,14 @@ enum Decode {
         return .success(j)
     }
 }
+
+/// The engine's text limits at the pin (Unicode scalars), for Marty's length budget. Labels, arrows and explainer
+/// titles count after `{fact}` placeholders are filled; captions count as authored.
+public enum MartyTextLimits {
+    public static let title = MGSolidLimits.title, partName = MGSolidLimits.name, stepSay = MGSolidLimits.say
+    public static let unchecked = MGSolidLimits.unchecked, annotationText = MGSolidAnnotationLimits.text
+    public static let explainerTitle = MGExplainerLimits.title, beatSay = MGExplainerLimits.say, note = MGExplainerLimits.noteText
+    /// Authored caps of texts that are also limited after filling: annotation text and the explainer title (4 x).
+    public static let annotationRaw = MGSolidAnnotationLimits.rawTextFactor * MGSolidAnnotationLimits.text
+    public static let explainerTitleRaw = 4 * MGExplainerLimits.title
+}

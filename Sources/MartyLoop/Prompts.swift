@@ -5,7 +5,7 @@ import Foundation
 /// author step sees a short format guide plus `explain` entries for the parts the plan chose. The receipt records the
 /// size and SHA-256 of every prompt, so a change in context is always measured.
 public enum MartyPrompts {
-    public static let version = "marty-prompts/15"
+    public static let version = "marty-prompts/16"
 
     static let role = """
         You are Marty, a teacher who explains how things work with checked 3D models. A deterministic engine \
@@ -147,6 +147,8 @@ public enum MartyPrompts {
           fuel, and the side forces and turning moments balance), never "thrust equals weight"; fuel burns with the
           oxygen in the compressed air; thrust is the reaction to the gas accelerated out of the nozzle. Steering: name
           the part that really moves (the limb or mount a unit is fixed to).
+        - Lengths (characters; labels count after {fact} placeholders are filled): title 80, step say 240, part name
+          60, label and arrow text 60, unchecked 60; explainer beat say 200, note 60. Marty cuts longer text at a word.
         - If the engine cannot show part of the subject, build the best schematic and say so in the title or a step
           (for example "schematic: chain not modelled"). Never present an unchecked fake as real.
         """
@@ -223,7 +225,8 @@ public enum MartyPrompts {
 
     public static func repairUser(question: String, plan: String, previous: String, reason: String, part: String?, hint: String?,
                                   facts: String? = nil, readBack: String? = nil, visibility: [String: Any]? = nil,
-                                  limit: [String: Any]? = nil, table: String? = nil, anchors: [[String: Any]] = []) -> String {
+                                  limit: [String: Any]? = nil, table: String? = nil, anchors: [[String: Any]] = [],
+                                  detail: String? = nil) -> String {
         var s = "Question: \(question)\n\nYour plan:\n\(plan)\n\nYour previous reply:\n\(previous)\n\n"
         if let table { s += "\(table)\n\n" }
         s += "The engine refused it with reason `\(reason)`" + (part.map { " on part `\($0)`" } ?? "") + "."
@@ -231,6 +234,7 @@ public enum MartyPrompts {
         if let v = visibility.flatMap(visibilityLine) { s += " \(v)" }
         if let l = limit.flatMap(limitLine) { s += " \(l)" }
         if let a = anchorLines(anchors) { s += "\n\(a)" }
+        if let detail { s += "\n\(detail)" }
         if let facts { s += "\n\nFacts the engine solved for this model (name: value):\n\(facts)" }
         if let readBack { s += "\n\nEngine read-back (where each part is and how it moves):\n\(readBack)" }
         return s + "\n\nFix the cause and reply with the corrected JSON object only (same reply format)."
