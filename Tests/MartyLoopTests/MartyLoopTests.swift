@@ -1438,6 +1438,15 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(QuoteCheck.found("The flow rate measures 10 m/s", in: "<p>The flow rate measures 10 m / s</p>"), "The flow rate measures 10 m/s")
         XCTAssertTrue(QuoteCheck.found("It ran at 10: then it stopped", in: "<p>It ran at 10: then it stopped</p>"), "It ran at 10: then it stopped")
         XCTAssertTrue(QuoteCheck.found("Maximum thrust is 144 kgf in total", in: "<p>Maximum thrust is 144 kgf<sup>[1]</sup> in total</p>"), "Maximum thrust is 144 kgf in total")
+        XCTAssertFalse(QuoteCheck.found("10 bar is required for operation", in: "<p>&gt;= 10 bar is required for operation.</p>"))
+        XCTAssertFalse(QuoteCheck.found("10 bar is required for operation", in: "<p>=< 10 bar is required for operation.</p>"))
+        XCTAssertFalse(QuoteCheck.found(".5 inches in cross section", in: "<p>The stock is 2 x .5 inches in cross section.</p>"))
+        XCTAssertFalse(QuoteCheck.found(".5 inches in cross section", in: "<p>The stock is 2 \u{00D7} .5 inches in cross section.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The processor has 4", in: "<p>The processor has 4 + 4 cores.</p>"))
+        XCTAssertFalse(QuoteCheck.found("1/2 inch thick plate", in: "<p>A 1 + 1/2 inch thick plate</p>"))
+        XCTAssertTrue(QuoteCheck.found("The rating was 10", in: "<p>The rating was \u{201C}10\u{201D} on this scale.</p>"))
+        XCTAssertTrue(QuoteCheck.found("The rating was 10 on this scale", in: "<p>The rating was \"10\" on this scale.</p>"))
+        XCTAssertTrue(QuoteCheck.found("x >= 10 bar is required", in: "<p>x &ge; 10 bar is required</p>"))
         // Table cells are separate; inline markup joins.
         let specs = "<p>Maximum thrust of the rig</p><table><tr><th>Motors</th><td>1</td><td>144 kgf</td></tr></table>"
         XCTAssertFalse(QuoteCheck.found("Maximum thrust [\u{2026}] 1,144 kgf", in: specs))
