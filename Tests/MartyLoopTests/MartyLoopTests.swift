@@ -1544,6 +1544,19 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(QuoteCheck.found("The sensor displays 10 when ready", in: "<p>The sensor displays ‘10’ when ready.</p>"), "The sensor displays 10 when ready | The sensor displays ‘10’ when ready.")
         XCTAssertTrue(QuoteCheck.found("The model from the 90s stands tall", in: "<p>The model from the '90s stands tall</p>"), "The model from the 90s stands tall | The model from the '90s stands tall")
         XCTAssertTrue(QuoteCheck.found("It stays at 10 degrees Celsius during operation", in: "<p>It stays at 10 degrees Celsius during operation.</p>"), "It stays at 10 degrees Celsius during operation | It stays at 10 degrees Celsius during operation.")
+        // Round 19: compound units in ranges and tolerances; unit continuations; signed quoted numbers.
+        XCTAssertFalse(QuoteCheck.found("The rated torque is 10 N-m", in: "<p>The rated torque is 10 N-m to 20 N-m.</p>"), "The rated torque is 10 N-m | The rated torque is 10 N-m to 20 N-m.")
+        XCTAssertFalse(QuoteCheck.found("The rated torque is 10 N-m", in: "<p>The rated torque is 10 N-m ± 2 N-m.</p>"), "The rated torque is 10 N-m | The rated torque is 10 N-m ± 2 N-m.")
+        XCTAssertFalse(QuoteCheck.found("20 N-m is the operating torque", in: "<p>10 N-m to 20 N-m is the operating torque.</p>"), "20 N-m is the operating torque | 10 N-m to 20 N-m is the operating torque.")
+        XCTAssertFalse(QuoteCheck.found("The flow velocity is 10 m/s", in: "<p>The flow velocity is 10 m/s ± 2 m/s.</p>"), "The flow velocity is 10 m/s | The flow velocity is 10 m/s ± 2 m/s.")
+        XCTAssertFalse(QuoteCheck.found("The flow velocity is 10 m", in: "<p>The flow velocity is 10 m s⁻¹ at the outlet.</p>"), "The flow velocity is 10 m | The flow velocity is 10 m s⁻¹ at the outlet.")
+        XCTAssertFalse(QuoteCheck.found("The measured speed is 10 metres", in: "<p>The measured speed is 10 metres per second.</p>"), "The measured speed is 10 metres | The measured speed is 10 metres per second.")
+        XCTAssertTrue(QuoteCheck.found("The rated torque is 10 N-m to 20 N-m", in: "<p>The rated torque is 10 N-m to 20 N-m.</p>"), "The rated torque is 10 N-m to 20 N-m | The rated torque is 10 N-m to 20 N-m.")
+        XCTAssertTrue(QuoteCheck.found("The flow velocity is 10 m s⁻¹ at the outlet", in: "<p>The flow velocity is 10 m s⁻¹ at the outlet.</p>"), "The flow velocity is 10 m s⁻¹ at the outlet | The flow velocity is 10 m s⁻¹ at the outlet.")
+        XCTAssertTrue(QuoteCheck.found("The sensor displays -10 when ready", in: "<p>The sensor displays '-10' when ready.</p>"), "The sensor displays -10 when ready | The sensor displays '-10' when ready.")
+        XCTAssertTrue(QuoteCheck.found("The sensor displays .5 when ready", in: "<p>The sensor displays '.5' when ready.</p>"), "The sensor displays .5 when ready | The sensor displays '.5' when ready.")
+        XCTAssertTrue(QuoteCheck.found("It runs 10 metres a day on the track", in: "<p>It runs 10 metres a day on the track.</p>"), "It runs 10 metres a day on the track | It runs 10 metres a day on the track.")
+        XCTAssertTrue(QuoteCheck.found("The suit flew 10 km over the lake", in: "<p>The suit flew 10 km over the lake.</p>"), "The suit flew 10 km over the lake | The suit flew 10 km over the lake.")
         // Table cells are separate; inline markup joins.
         let specs = "<p>Maximum thrust of the rig</p><table><tr><th>Motors</th><td>1</td><td>144 kgf</td></tr></table>"
         XCTAssertFalse(QuoteCheck.found("Maximum thrust [\u{2026}] 1,144 kgf", in: specs))

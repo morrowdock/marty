@@ -272,6 +272,8 @@ public enum QuoteCheck {
     /// "\"5'11\"\"" is a quoted 5′11″). Straight double quotes pair in order; a block mark ends every quotation.
     /// Whether a number starts at `i` and the mark `close` follows it right away ("10'" in "'10'").
     static func closesAfterNumber(_ chars: [Character], _ i: Int, _ close: Character) -> Bool {
+        var i = i
+        if i < chars.count, "-+\u{2212}".contains(chars[i]) { i += 1 }
         var k = i
         while k < chars.count, chars[k].isNumber || chars[k] == "." || chars[k] == "," { k += 1 }
         return k > i && k < chars.count && chars[k] == close && !(k + 1 < chars.count && chars[k + 1].isNumber)
@@ -283,12 +285,14 @@ public enum QuoteCheck {
         for (i, c) in chars.enumerated() {
             let prev = out.last, next: Character? = i + 1 < chars.count ? chars[i + 1] : nil
             let afterDigit = prev?.isNumber == true, beforeDigit = next?.isNumber == true
+            // A number may start with a sign or a decimal point ("'-10'", "'.5'").
+            let beforeNumber = beforeDigit || (next.map { "-+.\u{2212}".contains($0) } == true && i + 2 < chars.count && chars[i + 2].isNumber)
             let afterWord = prev.map { $0.isLetter || $0.isNumber } ?? false, beforeLetter = next?.isLetter == true
             switch c {
             case "\u{2}": curlyDouble = 0; curlySingle = 0; straightDouble = false; straightSingle = false; out.append(c)
             case "\u{201C}", "\u{201E}": curlyDouble += 1; out.append(c)
             case "\u{2018}", "\u{201A}":   // "‘90s" opens nothing; "‘10’" does
-                if !beforeDigit || closesAfterNumber(chars, i + 1, "\u{2019}") { curlySingle += 1 }; out.append(c)
+                if !beforeNumber || closesAfterNumber(chars, i + 1, "\u{2019}") { curlySingle += 1 }; out.append(c)
             case "\u{201D}":
                 if afterDigit, beforeDigit || curlyDouble == 0 { out += "\u{2032}\u{2032}" } else { curlyDouble = max(0, curlyDouble - 1); out.append(c) }
             case "\u{2019}":
@@ -301,7 +305,7 @@ public enum QuoteCheck {
                 if afterDigit, beforeDigit || !straightSingle { out += "\u{2032}" }   // "5'11", "5' tall"
                 else if afterWord, beforeLetter { out.append(c) }                     // an apostrophe: "it's"
                 else if afterWord { straightSingle = false; out.append(c) }           // closes "'compact'"
-                else if beforeDigit, closesAfterNumber(chars, i + 1, "'") { straightSingle = true; out.append(c) }   // "'10'"
+                else if beforeNumber, closesAfterNumber(chars, i + 1, "'") { straightSingle = true; out.append(c) }   // "'10'"
                 else if beforeDigit { out.append(c) }                                 // an elision: "'90s"
                 else if beforeLetter { straightSingle = true; out.append(c) }         // opens "'compact'"
                 else { out.append(c) }
@@ -451,12 +455,20 @@ public enum QuoteCheck {
         // ("10 degrees celsius"); nil when there is none.
         func quantityEnd(_ ws: [Token], _ i: Int) -> Int? {
             var k = i
-            while k >= 0, k > i - 4 {
-                if ws[k].hasDigit { return k }
-                guard ws[k].text.allSatisfy({ $0.isLetter }), k == i || !ws[k].closedAfter else { return nil }
+            while k >= 0, k > i - 6 {
+                if ws[k].hasDigit, !unitWord(ws[k]) { return k }
+                guard unitWord(ws[k]), k == i || !ws[k].closedAfter else { return nil }
                 k -= 1
             }
             return nil
+        }
+        // A unit word: letters with unit symbols ("m", "n·m", "m/s", "m^2", "s^", "µm", "°c") or a compound
+        // unit's hyphen.
+        func unitWord(_ t: Token) -> Bool {
+            if t.text == "-" { return true }
+            guard t.hasLetter else { return false }
+            return t.text.allSatisfy { $0.isLetter || $0.isNumber || "/^\u{00B7}\u{22C5}_\u{00B0}%".contains($0) }
+                && !(t.text.first?.isNumber ?? false)
         }
         func bare(_ t: Token) -> Bool { !t.hasLetter }
         // A letters-only quote word glued to a gap may be completed by it, unless it is a unit after a number.
@@ -497,7 +509,9 @@ public enum QuoteCheck {
                 // A dash goes on with a number only when a number follows it ("10 - 20"); before a word it is
                 // punctuation ("1,050 bhp - the company").
                 let after = e + 2 < p.count ? p[e + 2] : nil
-                let unitEnd = w[last].hasLetter && !w[last].hasDigit
+                let unitEnd = w[last].hasLetter && !(w[last].text.first?.isNumber ?? false)
+                // A unit goes on: "per …", or a power or quotient unit ("10 m s^-1", "10 metres per second").
+                if unitEnd, quantityEnd(w, last) != nil, next.text == "per" || next.text.contains("^") || next.text.contains("/") { return false }
                 let dashBeforeWord = next.text == "-" && !unitEnd && !(after.map { $0.hasDigit || $0.text.first == "." || isSign($0) } ?? false)
                 if bare(next), !dashBeforeWord { return false }
                 if next.text == "to", e + 2 < p.count, p[e + 2].hasDigit || isSign(p[e + 2]) { return false }
