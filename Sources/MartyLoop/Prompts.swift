@@ -267,7 +267,8 @@ public enum MartyPrompts {
             let id = i["id"] as? String ?? "?"
             var w: [String] = []
             if let c = i["cause"] as? String { w.append(c) }
-            let view = (i["step"] as? Int).map { "step \($0)" } ?? (i["beat"] as? Int).map { "beat \($0)" }
+            // An explainer's authored beat comes first (its internal solid step need not have the same number).
+            let view = (i["beat"] as? Int).map { "beat \($0)" } ?? (i["step"] as? Int).map { "step \($0)" }
             if let view { w.append(view) }
             if let p = i["part"] as? String { w.append("on `\(p)`") }
             if let b = i["by"] as? String { w.append("hidden by `\(b)`") }
@@ -277,12 +278,12 @@ public enum MartyPrompts {
             if let sug = i["suggest"], !(sug is NSNull) {
                 line += ": set its \"\(key)\" to exactly " + shortJSON(sug) + " (checked by the engine)"
             } else if let none = i["noSuggest"] as? [String: Any] {
-                let cause = none["cause"] as? String ?? "none"
+                // The engine's readable cause and its own alternatives for that cause (leave the label out of the
+                // view's list, ghost the part in the way, change the camera, ...).
+                let cause = (none["cause"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? (none["code"] as? String) ?? "none"
                 line += ": no checked suggestion (\(cause))"
-                if ["hidden", "framing"].contains(cause) {
-                    let blocker = (none["by"] as? String ?? i["by"] as? String).map { "`\($0)`" } ?? "the part in the way"
-                    line += "; remove `\(id)` from \(view.map { "the annotate list of " + $0 } ?? "that view's annotate list"), or section or ghost \(blocker) there, or change that view's camera"
-                }
+                let alts = (none["alternatives"] as? [String] ?? []).filter { !$0.isEmpty }
+                if !alts.isEmpty { line += "; do one of: " + alts.joined(separator: " ") }
             }
             if let r = (i["repair"] as? String) ?? (i["fix"] as? String), !r.isEmpty { line += ". Engine: " + r }
             return line

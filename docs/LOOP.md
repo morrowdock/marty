@@ -216,10 +216,11 @@ the MCP server uses), so a run needs no MCP client.
    the step or beat, the part, what hides it or is nearer, the engine's
    checked suggestion (`suggest`, shown with at most 3 decimals as the engine's
    repair line writes it, with the instruction to apply it exactly) or why there
-   is none (`noSuggest`; for a hidden or framing cause: remove the label from
-   that view's annotate list, section or ghost the part in the way there, or
-   change that view's camera), and the engine's one-line `repair`; the attempt
-   keeps `anchor`. Every repair (author and follow-up)
+   is none (`noSuggest`: its readable cause and the engine's own alternatives
+   for that cause, such as leaving the label out of the view's annotate list,
+   ghosting the part in the way or changing the camera), and the engine's
+   one-line `repair`; the view named is the explainer beat when there is one
+   (else the step); the attempt keeps `anchor`. Every repair (author and follow-up)
    also gets the refusal's full structured detail (the engine's `repair`
    line, and `location`, `limit`, `actual`, `path`, `cause`, `by`, `closer`,
    `fix`, `suggest`, `detail` when present, nulls left out) and the texts of the
