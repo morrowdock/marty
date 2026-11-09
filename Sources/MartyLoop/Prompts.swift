@@ -6,7 +6,7 @@ import MartyEngine
 /// author step sees a short format guide plus `explain` entries for the parts the plan chose. The receipt records the
 /// size and SHA-256 of every prompt, so a change in context is always measured.
 public enum MartyPrompts {
-    public static let version = "marty-prompts/19"
+    public static let version = "marty-prompts/20"
 
     static let role = """
         You are Marty, a teacher who explains how things work with checked 3D models. A deterministic engine \
@@ -148,6 +148,7 @@ public enum MartyPrompts {
           fuel, and the side forces and turning moments balance), never "thrust equals weight"; fuel burns with the
           oxygen in the compressed air; thrust is the reaction to the gas accelerated out of the nozzle. Steering: name
           the part that really moves (the limb or mount a unit is fixed to).
+        - Free text (a figure, a note) is a label on a {"world": [x, y, z]} anchor beside the model, not on a part.
         - Lengths (characters; labels count after {fact} placeholders are filled): title 80, step say 240, part name
           60, label and arrow text 60, unchecked 60; explainer beat say 200, note 60. Marty cuts longer text at a word.
         - If the engine cannot show part of the subject, build the best schematic and say so in the title or a step
@@ -230,14 +231,14 @@ public enum MartyPrompts {
     public static func repairUser(question: String, plan: String, previous: String, reason: String, part: String?, hint: String?,
                                   facts: String? = nil, readBack: String? = nil, visibility: [String: Any]? = nil,
                                   limit: [String: Any]? = nil, table: String? = nil, anchors: [[String: Any]] = [],
-                                  detail: String? = nil) -> String {
+                                  detail: String? = nil, anchoredParts: Set<String> = []) -> String {
         var s = "Question: \(question)\n\nYour plan:\n\(plan)\n\nYour previous reply:\n\(previous)\n\n"
         if let table { s += "\(table)\n\n" }
         s += "The engine refused it with reason `\(reason)`" + (part.map { " on part `\($0)`" } ?? "") + "."
         if let hint { s += " \(hint)" }
         if let v = visibility.flatMap(visibilityLine) { s += " \(v)" }
         if let l = limit.flatMap(limitLine) { s += " \(l)" }
-        if let a = anchorLines(anchors) { s += "\n\(a)" }
+        if let a = anchorLines(anchors, anchoredParts: anchoredParts) { s += "\n\(a)" }
         if let detail { s += "\n\(detail)" }
         if let facts { s += "\n\nFacts the engine solved for this model (name: value):\n\(facts)" }
         if let readBack { s += "\n\nEngine read-back (where each part is and how it moves):\n\(readBack)" }
@@ -263,11 +264,34 @@ public enum MartyPrompts {
 
     /// The engine's label and pointer dot issues (`anchor`, `anchorIssues`): at most 6, each with the view, the part,
     /// what is in the way, the engine's checked suggestion (to apply exactly) or why there is none, and its repair line.
-    public static func anchorLines(_ issues: [[String: Any]]) -> String? {
+    /// Whether `text` advises ghosting (or hiding) a part that a label or arrow is anchored on, so following it would hide
+    /// that annotation. A part counts when it is anchored, inside an anchored part ("casing.inner" for "casing"), or
+    /// in the same component instance as an anchored inner name or alias ("shaft.shaft" for "shaft.input": the
+    /// engine resolves aliases to inner parts). Negated advice ("do not ghost `x`") is kept.
+    public static func ghostsAnchored(_ text: String, _ anchored: Set<String>) -> Bool {
+        guard !anchored.isEmpty,
+              let re = try? NSRegularExpression(pattern: #"(?i)(?<!not )(?<!n't )(?<!never )\b(?:ghost|hide)\s+`?([A-Za-z0-9_.\-]+)`?"#) else { return false }
+        let ns = text as NSString
+        let low = Set(anchored.map { $0.lowercased() })
+        for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            let target = ns.substring(with: m.range(at: 1)).lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            for a in low {
+                if target == a || target.hasPrefix(a + ".") { return true }
+                if let inst = a.split(separator: ".").first.map(String.init), a.contains("."), target == inst || target.hasPrefix(inst + ".") { return true }
+            }
+        }
+        return false
+    }
+
+    public static func anchorLines(_ issues: [[String: Any]], anchoredParts: Set<String> = []) -> String? {
         guard !issues.isEmpty else { return nil }
-        let lines = issues.prefix(6).map { i -> String in
+        // Every issue, once (the same text from two views is one line), with the total count.
+        var seen = Set<String>()
+        let lines = issues.compactMap { i -> String? in
             let id = i["id"] as? String ?? "?"
             var w: [String] = []
+            let isArrow = i["check"] as? String == "arrow"
+            if isArrow { w.append("arrow" + ((i["share"] as? Double).map { ", \(Int(($0 * 100).rounded(.down))) % visible" } ?? "")) }
             if let c = i["cause"] as? String { w.append(c) }
             // An explainer's authored beat comes first (its internal solid step need not have the same number).
             let view = (i["beat"] as? Int).map { "beat \($0)" } ?? (i["step"] as? Int).map { "step \($0)" }
@@ -277,21 +301,30 @@ public enum MartyPrompts {
             if let c = i["closer"] as? String { w.append("`\(c)` is nearer") }
             var line = "- `\(id)` (" + w.joined(separator: ", ") + ")"
             let key = i["kind"] as? String == "pointer" || i["kind"] as? String == "arrow" ? "to" : "at"
-            if let sug = i["suggest"], !(sug is NSNull) {
+            if isArrow, let sug = i["suggest"] as? [String: Any] {
+                // The engine's move keeps the arrow's vector in every view that shows it.
+                line += ": move it: " + ["from", "to"].compactMap { k in sug[k].map { "set its \"\(k)\" to exactly " + shortJSON($0) } }.joined(separator: " and ")
+                    + " (checked by the engine)"
+            } else if let sug = i["suggest"], !(sug is NSNull) {
                 line += ": set its \"\(key)\" to exactly " + shortJSON(sug) + " (checked by the engine)"
             } else if let none = i["noSuggest"] as? [String: Any] {
                 // The engine's readable cause and its own alternatives for that cause (leave the label out of the
                 // view's list, ghost the part in the way, change the camera, ...).
                 let cause = (none["cause"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? (none["code"] as? String) ?? "none"
                 line += ": no checked suggestion (\(cause))"
-                let alts = (none["alternatives"] as? [String] ?? []).filter { !$0.isEmpty }
+                // An alternative that ghosts a part some label is anchored on would hide that label: dropped.
+                let alts = (none["alternatives"] as? [String] ?? []).filter { !$0.isEmpty && !ghostsAnchored($0, anchoredParts) }
                 if !alts.isEmpty { line += "; do one of: " + alts.joined(separator: " ") }
             }
-            if let r = (i["repair"] as? String) ?? (i["fix"] as? String), !r.isEmpty { line += ". Engine: " + r }
-            return line
+            if let r = (i["repair"] as? String) ?? (i["fix"] as? String), !r.isEmpty, !ghostsAnchored(r, anchoredParts) {
+                line += ". Engine: " + r
+            }
+            return seen.insert(line).inserted ? line : nil
         }
-        return "Label and pointer dots the engine refused (each must sit visibly on the part it names; apply a suggestion exactly):\n"
-            + lines.joined(separator: "\n")
+        let shown = lines
+        return "Label, pointer and arrow issues the engine refused: \(lines.count) issue\(lines.count == 1 ? "" : "s")"
+            + " (each dot must sit visibly on the part it names and each arrow must be visible in every view that shows it;"
+            + " apply a suggestion exactly; all suggestions were checked together):\n" + shown.joined(separator: "\n")
     }
 
     /// The engine's `parts.resolved` detail (the report's `limit`): the resolved count, the limit and the instances
@@ -359,6 +392,8 @@ public enum MartyPrompts {
             ("check.fact", "A claim names no fact. Use a fact name the engine solved."),
             ("annotation.anchor.off", "A label dot or pointer tip is not on the part it names, or another part is nearer to it: put it on that part's surface (an offset in the part's own frame), using the engine's fix below."),
             ("annotation.anchor.hidden", "A label dot or pointer tip is hidden, ghosted, off screen or covered by another part in a view that shows it: move it to a face of its part that faces the camera, ghost the part in the way, or change the camera, as the engine's fix below says."),
+            ("annotation.arrow.hidden", "An arrow (force, flow, motion or pointer) is mostly hidden or off screen in a view that shows it: apply the engine's checked move below (it keeps the arrow's direction and length in every view), or ghost the part in the way, or leave the arrow out of that view."),
+            ("annotation.arrow.untested", "The engine's arrow test ran out of budget: show fewer arrows in that view, or hide or ghost parts that are not needed there."),
             ("annotation.anchor.untested", "The engine's anchor test ran out of budget: show fewer labels in that view, or hide or ghost parts that are not needed there."),
             ("parts.count", "\"parts\" holds 1 to 48 entries, and component expansion may make at most 96 parts (a microTurbojet is 11, a mannequin 12): use fewer component instances, or plain shapes for the units that are not cut open."),
             ("parts.resolved", "The model has too many parts after component and repeat expansion: use fewer component instances, or plain shapes for the units that are not cut open."),

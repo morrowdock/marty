@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-08. Prompts `marty-prompts/19`. Engine pin as in
+Status: early preview, 2026-11-09. Prompts `marty-prompts/20`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -199,7 +199,9 @@ the MCP server uses), so a run needs no MCP client.
    and no share or comparison without a row, a `{fact}` or a hedge. Each inside
    label is anchored on the named inner part, not on the casing or body, and an
    inside whose real parts are not public is labelled "<class>-style <kind>
-   (example)" with "Not confirmed <brand> hardware". The same general honesty rules apply to
+   (example)" with "Not confirmed <brand> hardware". Free text (a figure, a
+   note) is a label on a `{"world": [x, y, z]}` anchor beside the model, not on
+   a part. The same general honesty rules apply to
    every subject: a load share is quoted with its source, never invented; no
    performance figure is derived from the simple model; the product version and
    years are named; an inside whose real parts are not public is labelled on
@@ -228,10 +230,14 @@ the MCP server uses), so a run needs no MCP client.
    over the engine's limit (title 80, step say 240, part name 60, label and
    arrow text 60 after placeholders are filled, unchecked 60; explainer title
    80, beat say 200, note 60; the guide states them; a label also has an
-   authored cap of 240 and an explainer title of 320) is cut at the last word
-   that fits, but only a text without placeholders (its length is exact) and
-   only when at least 60 % of it stays (the attempt lists the cut paths in
-   `trimmed`). A text with placeholders is never cut; its repair states the
+   authored cap of 240 and an explainer title of 320) is cut only by dropping
+   whole trailing sentences that hold no number, no placeholder and no list
+   (no comma), only complete sentences, never in a text with a numbered or
+   bulleted list, only in a text of more than one sentence without placeholders
+   (its length is exact), and only when at least 60 % of it stays (the attempt
+   lists the cut paths in `trimmed`). A cut never shortens a list, a clause or
+   a one-phrase text (a title, a name): those are refused and the repair asks
+   the model to shorten them. A text with placeholders is never cut; its repair states the
    authored length exactly, and for a filled cap a certain lower bound (each
    placeholder at least 1 character). Follow-up patches (also their part-name
    maps) and changed explainers are trimmed the same way; the accepted
@@ -290,15 +296,33 @@ the MCP server uses), so a run needs no MCP client.
    cause and the step or beat; the attempt in the receipt keeps the detail
    (also in follow-up repairs). A label or pointer dot refusal
    (`annotation.anchor.hidden`, `.off`, `.untested`) gets the engine's anchor
-   issues (`anchor` first, then `anchorIssues`, at most 6): the dot, the cause,
+   issues (`anchor` first, then `anchorIssues`, then a hidden arrow refusal's
+   `arrow` and `arrowIssues` with the visible share; every distinct issue, under a
+   header with the total count): the dot, the cause,
    the step or beat, the part, what hides it or is nearer, the engine's
    checked suggestion (`suggest`, shown with at most 3 decimals as the engine's
    repair line writes it, with the instruction to apply it exactly) or why there
    is none (`noSuggest`: its readable cause and the engine's own alternatives
    for that cause, such as leaving the label out of the view's annotate list,
    ghosting the part in the way or changing the camera), and the engine's
-   one-line `repair`; the view named is the explainer beat when there is one
-   (else the step); the attempt keeps `anchor`. Every repair (author and follow-up)
+   one-line `repair`; an alternative or repair line that would ghost or hide a
+   part some label or arrow is anchored on, a part inside it, or a part of the
+   same component instance as an anchored alias ("shaft.shaft" for
+   "shaft.input"), is dropped, here and in the refusal detail (it would hide
+   that dot; "do not ghost" advice is kept);
+   the view named is the explainer beat when there is one
+   (else the step); the attempt keeps `anchor`. Before any repair call (author and follow-up) Marty
+   applies the engine's checked suggestions itself (a label's `at`, a
+   pointer's `to`, and a hidden arrow's `from` and `to` from `arrow` /
+   `arrowIssues`; the engine checks all printed suggestions together, so they
+   are applied at once; an id given two different values for one field is a
+   conflict and is left alone) and checks again, up to 3 rounds; the attempt lists the fixed
+   ids in `autoFixed`, and when the document is still refused every repair
+   (engine, fact, lint) starts from the auto-fixed document. An assembly
+   follow-up patch cannot move annotations, so there Marty applies the
+   suggestions to the patched whole document and checks it in full; the
+   direction check, the repair baseline, `forceArrowsMoved` and the answer's
+   change line then use that document (the follow-up records `autoFixed`). Every repair (author and follow-up)
    also gets the refusal's full structured detail (the engine's `repair`
    line, and `location`, `limit`, `actual`, `path`, `cause`, `by`, `closer`,
    `fix`, `suggest`, `detail` when present, nulls left out) and the texts of the

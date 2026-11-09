@@ -138,21 +138,25 @@ import MartyEngine
         return (out, cut)
     }
 
-    /// `t` cut at the last word that fits in `limit` (no dangling joiner or punctuation; a final period kept when
-    /// the original ended with one and it fits), or nil when less than 60 % would stay.
+    /// `t` with whole trailing sentences dropped until it fits in `limit`: only sentences that hold no number, no
+    /// placeholder and no list are dropped (a cut never shortens a list or a clause), and at least 60 % stays; else
+    /// nil (the repair asks the model to shorten).
     static func cutAtWord(_ t: String, limit: Int) -> String? {
-        var kept: [String] = []
-        for w in t.split(separator: " ", omittingEmptySubsequences: false).map(String.init) {
-            if (kept + [w]).joined(separator: " ").unicodeScalars.count > limit { break }
-            kept.append(w)
+        // A text with a list (numbered or bulleted items, or items in a sentence) is never cut.
+        if t.range(of: #"(^|\s)(\d{1,2}[.)]|[-\u{2022}*\u{2013}])\s"#, options: .regularExpression) != nil { return nil }
+        // Nor one with an abbreviation, whose period is no sentence end ("e.g.", "approx.").
+        if t.range(of: #"(?i)\b(e\.g|i\.e|etc|vs|approx|fig|no|cf|ca|incl|max|min|mr|mrs|dr|st)\."#, options: .regularExpression) != nil { return nil }
+        let marked = t.replacingOccurrences(of: #"(?<=[.!?])\s+"#, with: "\u{1}", options: .regularExpression)
+        var sentences = marked.split(separator: "\u{1}").map { String($0).trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard sentences.count > 1 else { return nil }
+        while sentences.count > 1, sentences.joined(separator: " ").unicodeScalars.count > limit {
+            let last = sentences.removeLast()
+            // Only a complete sentence (ending in . ! or ?) without a number, a placeholder or a list is dropped.
+            guard let end = last.last, ".!?".contains(end) else { return nil }
+            if last.rangeOfCharacter(from: .decimalDigits) != nil || last.contains("{") || last.contains(",") { return nil }
         }
-        var s = kept.joined(separator: " ").trimmingCharacters(in: .whitespaces)
-        while let last = s.split(separator: " ").last, ["and", "or", "the", "a", "an", "of", "to", "with", "while"].contains(last.lowercased()) {
-            s = String(s.dropLast(last.count)).trimmingCharacters(in: .whitespaces)
-        }
-        s = s.trimmingCharacters(in: CharacterSet(charactersIn: ",;:- "))
-        guard !s.isEmpty, s.unicodeScalars.count * 10 >= t.unicodeScalars.count * 6 else { return nil }
-        if t.trimmingCharacters(in: .whitespaces).hasSuffix("."), !s.hasSuffix("."), s.unicodeScalars.count < limit { s += "." }
+        let s = sentences.joined(separator: " ")
+        guard s.unicodeScalars.count <= limit, s.unicodeScalars.count * 10 >= t.unicodeScalars.count * 6 else { return nil }
         return s
     }
 }

@@ -1063,6 +1063,96 @@ final class MartyLoopTests: XCTestCase {
 
     /// A label dot hidden inside another part is refused (annotation.anchor.hidden); the repair prompt carries the
     /// engine's anchor issues and fix, and the repaired example is accepted.
+    /// Round 2g item 4: suggestions applied by Marty (conflicts left alone), every issue listed with the count, and a
+    /// fix that ghosts an anchored part dropped.
+    func testAnchorSuggestionsAppliedAndConflictsDropped() throws {
+        let doc: [String: Any] = ["kind": "explainer", "solid": ["annotations": [
+            "labels": [["id": "a", "text": "A", "at": "x"], ["id": "b", "text": "B", "at": "y"], ["id": "c", "text": "C", "at": "casing"]],
+            "arrows": [["id": "p", "from": ["world": [0, 0, 0]], "to": "z"]]]] as [String: Any]]
+        let issues: [[String: Any]] = [
+            ["id": "a", "kind": "label", "suggest": ["part": "x", "offset": [0.1, 0, 0]]],
+            ["id": "b", "kind": "label", "suggest": ["part": "y", "offset": [0, 1, 0]]],
+            ["id": "b", "kind": "label", "suggest": ["part": "y", "offset": [0, -1, 0]]],   // another view: a conflict
+            ["id": "p", "kind": "pointer", "suggest": ["part": "z", "offset": [0, 0, 1]]],
+            ["id": "c", "kind": "label", "suggest": NSNull()]]
+        let (fixed, applied) = MartyLoop.applySuggestions(doc, issues)
+        XCTAssertEqual(applied, ["a", "p"])
+        let ann = try XCTUnwrap(((fixed as? [String: Any])?["solid"] as? [String: Any])?["annotations"] as? [String: Any])
+        let labels = try XCTUnwrap(ann["labels"] as? [[String: Any]])
+        XCTAssertEqual((labels[0]["at"] as? [String: Any])?["part"] as? String, "x")
+        XCTAssertEqual(labels[1]["at"] as? String, "y", "a conflicting suggestion is not applied")
+        XCTAssertEqual(((ann["arrows"] as? [[String: Any]])?[0]["to"] as? [String: Any])?["part"] as? String, "z")
+        // A hidden arrow's checked move sets its "from" (and "to"); a field given two values is a conflict.
+        let arrowFix: [[String: Any]] = [["id": "p", "check": "arrow", "suggest": ["from": ["world": [1, 0, 0]], "to": ["part": "z", "offset": [0, 0, 1]]]]]
+        let (moved, movedIds) = MartyLoop.applySuggestions(doc, arrowFix)
+        XCTAssertEqual(movedIds, ["p"])
+        let movedArrow = try XCTUnwrap(((((moved as? [String: Any])?["solid"] as? [String: Any])?["annotations"] as? [String: Any])?["arrows"] as? [[String: Any]])?.first)
+        XCTAssertEqual((movedArrow["from"] as? [String: Any])?["world"] as? [Int], [1, 0, 0])
+        let clash = arrowFix + [["id": "p", "kind": "pointer", "suggest": ["part": "z", "offset": [0, 0, 2]]]]
+        XCTAssertEqual(MartyLoop.applySuggestions(doc, clash).applied, [], "two values for one arrow's \"to\"")
+        let arrowText = try XCTUnwrap(MartyPrompts.anchorLines(MartyLoop.anchorIssues(["arrow": ["id": "p", "cause": "hidden", "share": 0.12, "beat": 2,
+                                                                                                    "suggest": ["from": ["world": [1, 0, 0]]]]])))
+        XCTAssertTrue(arrowText.contains("`p` (arrow, 12 % visible, hidden, beat 2): move it: set its \"from\" to exactly {\"world\":[1,0,0]}"), arrowText)
+        // Applying again changes nothing.
+        XCTAssertEqual(MartyLoop.applySuggestions(fixed, issues).applied, [])
+        XCTAssertEqual(MartyLoop.anchoredParts(doc), ["x", "y", "casing", "z"])
+
+        // All issues with the count; a ghost of an anchored part is dropped, other alternatives stay.
+        var many: [[String: Any]] = (1...45).map { ["id": "l\($0)", "kind": "label", "cause": "hidden"] }
+        many.append(["id": "c", "kind": "label", "cause": "hidden", "by": "casing",
+                     "noSuggest": ["cause": "covered", "alternatives": ["Ghost `casing` in this view.", "Leave `c` out of this view."]],
+                     "repair": "Ghost `casing`."])
+        let text = try XCTUnwrap(MartyPrompts.anchorLines(many, anchoredParts: MartyLoop.anchoredParts(doc)))
+        XCTAssertTrue(text.hasPrefix("Label, pointer and arrow issues the engine refused: 46 issues"), text)
+        XCTAssertEqual(text.split(separator: "\n").count, 47, "every issue is listed")
+        let one = try XCTUnwrap(MartyPrompts.anchorLines([many[45]], anchoredParts: MartyLoop.anchoredParts(doc)))
+        XCTAssertFalse(one.contains("Ghost `casing`"), one)
+        XCTAssertTrue(one.contains("Leave `c` out of this view."), one)
+        XCTAssertTrue(MartyPrompts.anchorLines([many[45]])!.contains("Ghost `casing`"))
+    }
+
+    /// PR #25 review: an assembly follow-up patch cannot move annotations, so Marty applies the engine's checked
+    /// suggestions to the patched whole document; ghost advice is filtered everywhere (aliases, negations, detail).
+    func testFollowUpPatchAutoFixAndGhostFilters() throws {
+        let plan = #"{"inScope": true, "subject": "shaft", "beats": ["a shaft in bearings"], "components": ["shaftWithBearing", "housingBase"], "primitives": [], "honesty": ""}"#
+        let author = #"{"document": \#(MartyExamples.formatExample), "components": []}"#
+        let patch = #"{"patch": {"parts": {"shaft.upperBearing": {"at": [0, 0, -20]}}}}"#
+        let answer = "The upper bearing moves down, and the shaft label moves with the engine's check so it stays visible."
+        let model = ScriptedAdapter(replies: [plan, author, patch, answer])
+        var options = MartyLoop.Options()
+        options.followUp = "What if the upper bearing sat lower?"
+        let out = tempOut()
+        defer { try? FileManager.default.removeItem(at: out) }
+        let r = try MartyLoop(model: model, out: out, options: options).run(question: "How is a shaft held?")
+        XCTAssertEqual(r["accepted"] as? Bool, true, "\(r["attempts"] ?? "")")
+        let f = try XCTUnwrap(r["followUp"] as? [String: Any])
+        let fa = try XCTUnwrap(f["attempts"] as? [[String: Any]])
+        XCTAssertEqual(f["changed"] as? Bool, true, "\(fa)")
+        XCTAssertTrue((fa.first?["autoFixed"] as? [String] ?? []).contains("lShaft"), "\(fa)")
+        XCTAssertEqual(f["autoFixed"] as? [String], ["lShaft"])
+        XCTAssertTrue(model.prompts[3].user.contains("and Marty moved the annotations `lShaft`"), model.prompts[3].user)
+
+        // Ghost advice: anchored parts, parts inside them, the same component instance as an alias; negations kept.
+        let anchored: Set<String> = ["shaft.input", "casing"]
+        XCTAssertTrue(MartyPrompts.ghostsAnchored("Ghost `shaft.shaft` in step 1.", anchored))
+        XCTAssertTrue(MartyPrompts.ghostsAnchored("ghost casing.inner here", anchored))
+        XCTAssertTrue(MartyPrompts.ghostsAnchored("Hide `casing` in this view.", anchored))
+        XCTAssertFalse(MartyPrompts.ghostsAnchored("Do not ghost `casing`.", anchored))
+        XCTAssertFalse(MartyPrompts.ghostsAnchored("Ghost `base.base` in step 1.", anchored))
+        // The engine's top-level repair line is filtered the same way in the refusal detail.
+        let refusal: [String: Any] = ["reason": "annotation.anchor.hidden.lCore", "repair": "Label lCore is hidden by casing. Ghost `casing` in step 1.",
+                                      "cause": "hidden"]
+        let detail = MartyLoop.refusalDetail(refusal, document: nil, anchored: anchored) ?? ""
+        XCTAssertFalse(detail.contains("Ghost `casing`"), detail)
+        XCTAssertTrue(MartyLoop.refusalDetail(refusal, document: nil, anchored: [])?.contains("Ghost `casing`") == true)
+
+        // The length cut never shortens a list, numbered or bulleted.
+        XCTAssertNil(TextBudget.cutAtWord("The shaft rotates in its bearings. 1. Fit bearing. 2. Tighten guard.", limit: 60))
+        XCTAssertNil(TextBudget.cutAtWord("The shaft rotates in its bearings and turns freely. - Do not touch.", limit: 55))
+        XCTAssertNil(TextBudget.cutAtWord(String(repeating: "x", count: 60) + ". Then the shaft turns and", limit: 64), "an unfinished sentence is not dropped")
+        XCTAssertNil(TextBudget.cutAtWord("The shaft turns in two bearings on a base. The same holds for e.g. a guarded shaft.", limit: 60), "an abbreviation")
+    }
+
     func testAnchorIssuesInRepairs() throws {
         let hidden = MartyExamples.formatExample.replacingOccurrences(of: #""offset":[0,-6,40]"#, with: #""offset":[0,0,60]"#)
         XCTAssertNotEqual(hidden, MartyExamples.formatExample)
@@ -1071,12 +1161,16 @@ final class MartyLoopTests: XCTestCase {
         let out = tempOut()
         defer { try? FileManager.default.removeItem(at: out) }
         let r = try MartyLoop(model: model, out: out, options: .init()).run(question: "q")
+        // Marty applies the engine's checked suggestion itself and checks again: accepted with no repair call.
         XCTAssertEqual(r["accepted"] as? Bool, true, "\(r["attempts"] ?? "")")
         let first = try XCTUnwrap((r["attempts"] as? [[String: Any]])?.first)
-        XCTAssertEqual(first["reason"] as? String, "annotation.anchor.hidden.lShaft")
-        XCTAssertNotNil(first["anchor"])
-        let repair = model.prompts[2].user
-        XCTAssertTrue(repair.contains("Label and pointer dots the engine refused") && repair.contains("apply a suggestion exactly"), repair)
+        XCTAssertNil(first["reason"] as? String)
+        XCTAssertEqual(first["autoFixed"] as? [String], ["lShaft"])
+        XCTAssertEqual(model.prompts.count, 2, "plan and author only")
+        // The repair text for the same issues (as the engine reports them), counted and complete.
+        let report = try MartyEngine(outputRoot: nil).check(document: hidden, ref: nil, components: [], strict: true)
+        let repair = try XCTUnwrap(MartyPrompts.anchorLines(MartyLoop.anchorIssues(report)))
+        XCTAssertTrue(repair.contains("Label, pointer and arrow issues the engine refused: 2 issues") && repair.contains("apply a suggestion exactly"), repair)
         XCTAssertTrue(repair.contains(#"set its "at" to exactly {"offset":[5.412,-2.381,53.055],"part":"shaft.shaft"}"#), repair)
         XCTAssertTrue(repair.contains("Engine: Label lShaft (step 1) is hidden behind shaft.upperBearing"), repair)
         XCTAssertEqual(MartyPrompts.shortJSON(["b": [1.0, -0.0004, 2.5], "a": "x\"y", "c": true]), #"{"a":"x\"y","b":[1,0,2.5],"c":true}"#)
@@ -1103,16 +1197,15 @@ final class MartyLoopTests: XCTestCase {
         var ex = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(MartyExamples.explainerExample.utf8)) as? [String: Any])
         ex["title"] = "A shaft held in two bearings on a solid base plate, seen whole and then cut open to show"
         XCTAssertEqual(TextBudget.issues(ex).map(\.line), ["title: 88 characters, the limit is 80"])
-        let (cut, paths) = TextBudget.trimmed(ex)
-        XCTAssertEqual(paths, ["title"])
-        let t = try XCTUnwrap((cut as? [String: Any])?["title"] as? String)
-        XCTAssertLessThanOrEqual(t.unicodeScalars.count, 80)
-        // The 60 % rule and its boundary.
-        XCTAssertNil(TextBudget.cutAtWord(String(repeating: "x", count: 50) + " " + String(repeating: "y", count: 60), limit: 80))
-        XCTAssertEqual(TextBudget.cutAtWord(String(repeating: "x", count: 70) + " " + String(repeating: "y", count: 20), limit: 80), String(repeating: "x", count: 70))
-        // The boundary: exactly 60 % stays (60 of 100) is cut; 59 of 100 is left.
-        XCTAssertEqual(TextBudget.cutAtWord(String(repeating: "x", count: 60) + " " + String(repeating: "y", count: 39), limit: 80), String(repeating: "x", count: 60))
-        XCTAssertNil(TextBudget.cutAtWord(String(repeating: "x", count: 59) + " " + String(repeating: "y", count: 40), limit: 80))
+        // A one-phrase title is never cut (only whole sentences are): the repair asks the model to shorten it.
+        XCTAssertEqual(TextBudget.trimmed(ex).trimmed, [])
+        // Whole trailing sentences without numbers, placeholders or lists are dropped; at least 60 % stays.
+        func words(_ n: Int, _ c: Character) -> String { String(repeating: c, count: n) }
+        XCTAssertEqual(TextBudget.cutAtWord(words(60, "x") + ". " + words(30, "y") + ".", limit: 80), words(60, "x") + ".")
+        XCTAssertNil(TextBudget.cutAtWord(words(40, "x") + ". " + words(50, "y") + ".", limit: 80), "less than 60 % would stay")
+        XCTAssertNil(TextBudget.cutAtWord(words(60, "x") + ". It holds 5 engines.", limit: 70), "a sentence with a number is not dropped")
+        XCTAssertNil(TextBudget.cutAtWord(words(60, "x") + ". Units on the left arm, right arm, back.", limit: 70), "a list is not shortened")
+        XCTAssertNil(TextBudget.cutAtWord("Units on the left arm, right arm, back and " + words(60, "z"), limit: 80), "one sentence is never cut")
         // Surrounding white space is not counted after filling (the engine strips it).
         let padded: [String: Any] = ["v": 2, "kind": "assembly", "title": "t", "annotations": ["labels": [["id": "l", "at": ["world": [0, 0, 0]],
                                      "text": " " + String(repeating: "A", count: 58) + " {shaft.input.speed}"]]], "steps": [["say": "x"]]]
@@ -1139,19 +1232,19 @@ final class MartyLoopTests: XCTestCase {
         // A follow-up patch's part names (a map).
         let patch: [String: Any] = ["parts": ["a": ["name": String(repeating: "word ", count: 14)]]]
         XCTAssertEqual(TextBudget.issues(patch).map(\.path), ["parts[a].name"])
-        XCTAssertEqual(TextBudget.trimmed(patch).trimmed, ["parts[a].name"])
-        // The loop trims before the check and records it; the explainer is accepted.
+        XCTAssertEqual(TextBudget.trimmed(patch).trimmed, [], "a name is one phrase: not cut")
+        // The loop does not cut the title; the refusal's repair carries the exact length.
         let plan = #"{"form": "explainer", "components": ["shaftWithBearing"], "primitives": []}"#
         let model = ScriptedAdapter(replies: [plan, #"{"document": "# + MartyJSON.string(ex) + "}"], research: [Self.exampleTable])
         let out = tempOut()
         defer { try? FileManager.default.removeItem(at: out) }
         let r = try MartyLoop(model: model, out: out, options: .init()).run(question: "q")
-        XCTAssertEqual(r["accepted"] as? Bool, true, "\(r["attempts"] ?? "")")
-        XCTAssertEqual((r["attempts"] as? [[String: Any]])?.first?["trimmed"] as? [String], ["title"])
+        XCTAssertEqual((r["attempts"] as? [[String: Any]])?.first?["reason"] as? String, "explainer.title")
+        XCTAssertTrue(model.prompts[2].user.contains("title: 88 characters, the limit is 80"), model.prompts[2].user)
         // A posed follow-up step with an over-long caption: the receipt's step is the trimmed one that was checked.
         let man: [String: Any] = ["v": 2, "kind": "assembly", "title": "A pilot", "units": "mm",
                                   "parts": [["id": "pilot", "use": "mannequin"]], "steps": [["say": "A pilot."]]]
-        let longSay = String(repeating: "The arm moves out to the side ", count: 10)
+        let longSay = "The arm moves out to steer. " + String(repeating: "It is a schematic view of the move. ", count: 8)
         let step = MartyJSON.string(["step": ["say": longSay, "pose": ["pilot": ["with": ["rightShoulder": 70]]]]] as [String: Any])
         var options = MartyLoop.Options(); options.followUp = "What if the arm moves?"
         let m2 = ScriptedAdapter(replies: [#"{"components": ["mannequin"], "primitives": []}"#, #"{"document": "# + MartyJSON.string(man) + "}", step, "The arm moves."])
