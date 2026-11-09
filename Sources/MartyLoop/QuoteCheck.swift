@@ -191,6 +191,10 @@ public enum QuoteCheck {
             // Reference marks of the page ("[3]", "[edit]", "[citation needed]") are not quoted text.
             t = t.replacingOccurrences(of: #"\[(?:\d{1,3}|[a-z]|edit|citation needed|note \d+)\]"#, with: "", options: [.regularExpression, .caseInsensitive])
         }
+        // A digit-grouping space (no-break, narrow no-break or thin, before a group of 3 digits: "1 144 kgf") is a
+        // thousands separator, so the number stays one token ("144" is not inside it). Before NFKC, which makes
+        // these spaces plain.
+        t = t.replacingOccurrences(of: "(?<=[0-9])[\u{00A0}\u{202F}\u{2009}](?=[0-9]{3}(?![0-9]))", with: ",", options: .regularExpression)
         // Unicode compatibility forms (NFKC: ligatures, full-width forms, superscripts), then invisible characters
         // (zero-width spaces and joiners, the word joiner U+2060, BOM, soft hyphen) are removed.
         t = t.precomposedStringWithCompatibilityMapping
@@ -217,7 +221,7 @@ public enum QuoteCheck {
 
     static func decodeEntities(_ s: String) -> String {
         var t = s
-        for (e, c) in [("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"),
+        for (e, c) in [("&nbsp;", "\u{00A0}"), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"),
                        ("&rsquo;", "'"), ("&lsquo;", "'"), ("&ldquo;", "\""), ("&rdquo;", "\""), ("&ndash;", "-"), ("&mdash;", "-"),
                        ("&hellip;", "..."), ("&deg;", "\u{00B0}"), ("&times;", "\u{00D7}")] {
             t = t.replacingOccurrences(of: e, with: c)
@@ -248,7 +252,7 @@ public enum QuoteCheck {
         let gap = "\u{1}"
         var q = normalized(quote, html: false).replacingOccurrences(of: #"\[[^\]]{0,40}\]"#, with: gap, options: .regularExpression)
             .replacingOccurrences(of: "...", with: gap)
-        q = trimEdges(q)   // a trailing period the page may not have
+        q = groupedThousands(trimEdges(q))   // a trailing period the page may not have
         let p = normalized(page, html: html)
         let raw = q.components(separatedBy: gap)
         // A part needs a word boundary on each side, except where a gap is glued to it (no space or punctuation
@@ -266,15 +270,17 @@ public enum QuoteCheck {
         // All parts together at least 16 characters, the longest at least 8 (a bare value is no evidence).
         guard let longest = parts.map(\.text.count).max(), longest >= minimumPart / 2,
               parts.reduce(0, { $0 + $1.text.count }) >= minimumPart else { return nil }
-        // A number is a whole token: "5" is not inside "1.5" and "144" is not inside "1,144" or "144.5" (a decimal
-        // point or a thousands separator between digits joins them).
+        // A number is a whole token: "5" is not inside "1.5", ".5" or "-5", and "144" is not inside "1,144", "1 144"
+        // (a grouping space) or "144.5".
         func boundary(_ i: String.Index, before: Bool, signed: Bool = false, numeric: Bool = false) -> Bool {
             if before {
                 guard i != p.startIndex else { return true }
                 let j = p.index(before: i), c = p[j]
                 if signed { return !c.isNumber }
                 if c.isLetter || c.isNumber { return false }
-                if numeric, c == "." || c == ",", j != p.startIndex, p[p.index(before: j)].isNumber { return false }
+                // A sign, a decimal point or a separator right before a number is part of it ("-5", ".5", "1,144"):
+                // a quote without it is a different value.
+                if numeric, c == "." || c == "," || c == "-" { return false }
                 return true
             }
             guard i != p.endIndex else { return true }
@@ -302,6 +308,21 @@ public enum QuoteCheck {
     }
 
     public static func found(_ quote: String, in page: String, html: Bool = true) -> Bool { match(quote, in: page, html: html) != nil }
+
+    /// In a quote, a number written with plain spaces between groups of 3 digits ("1 144", "12 500 000"; the first
+    /// group 1 to 3 digits) is one number, as the page's grouping space makes it ("1,144"): a model often copies a
+    /// narrow no-break space as a plain one.
+    static func groupedThousands(_ s: String) -> String {
+        guard let re = try? NSRegularExpression(pattern: #"(?<![0-9.,])[0-9]{1,3}(?: [0-9]{3})+(?![0-9])"#) else { return s }
+        let ns = s as NSString
+        var out = "", last = 0
+        for m in re.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
+            out += ns.substring(with: NSRange(location: last, length: m.range.location - last))
+            out += ns.substring(with: m.range).replacingOccurrences(of: " ", with: ",")
+            last = m.range.location + m.range.length
+        }
+        return out + ns.substring(from: last)
+    }
 
     /// Spaces and punctuation trimmed from both ends, except a leading decimal point or comma before a digit (".5
     /// litres" is not "5 litres").

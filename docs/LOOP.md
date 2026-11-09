@@ -52,7 +52,9 @@ the MCP server uses), so a run needs no MCP client.
    boundaries except where a gap is glued to a letter (a word completed in
    brackets, "engine[s]", "[T]he"), so a bare "85 mph" is no evidence and
    neither "85 mph" nor "[…]85 mph" matches "185 mph"; a number is a whole
-   token, so "5" does not match inside "1.5" nor "144" inside "1,144"; a leading decimal point
+   token, so "5" does not match inside "1.5", ".5" or "-5", nor "144" inside
+   "1,144" or "1 144" (a no-break, narrow or thin space before 3 digits on the
+   page, and a plain one in the quote, groups thousands); a leading decimal point
    is kept (".5 litres" is not "5 litres"), and a part that starts with a sign
    or a decimal point, "-5 degrees", may follow a letter but not a digit). A found
    Each source's date comes only from its fetched page: its publication date
