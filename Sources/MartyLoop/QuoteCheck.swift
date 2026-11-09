@@ -444,18 +444,23 @@ public enum QuoteCheck {
         return w
     }
 
-    /// The row's counted noun: the words of its value after the number ("1 rear engine": rear, engine), or else the
-    /// first content word of its claim ("Engine count for the jet suit": engine), never the product or context words.
+    /// The row's counted noun: the head noun of the value's phrase after its number, up to a connector ("1 rear
+    /// engine": engine; "2 engines per arm": engines), or else the first content word of its claim. A version or
+    /// model row counts nothing ("Version 1", "Current model": an identifier must be stated, never an article).
     static func countedWords(value: String, claim: String) -> Set<String> {
         let filler: Set<String> = ["the", "and", "with", "for", "per", "its", "of", "on", "in", "a", "an", "number", "count", "total", "each",
                                    "how", "many", "there", "are", "is", "current", "new", "latest", "main"]
-        // Only the words after the value's number name what is counted ("Version 1" counts nothing).
+        let identifiers: Set<String> = ["version", "model", "generation", "gen", "mark", "mk", "type", "series", "edition", "release", "variant"]
+        let connectors: Set<String> = ["per", "each", "on", "in", "for", "at", "of", "with", "by", "to", "from", "across", "under", "over"]
         let tokens = value.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
+        let claimWords = claim.lowercased().split { !$0.isLetter }.map(String.init)
+        if tokens.contains(where: identifiers.contains) || claimWords.contains(where: identifiers.contains) { return [] }
         let at = tokens.firstIndex { $0.first?.isNumber == true || numberWords[$0] != nil || ordinals[$0] != nil }
-        let after = at.map { Array(tokens[($0 + 1)...]) } ?? []
-        let valueWords = after.filter { $0.allSatisfy(\.isLetter) && $0.count >= 3 && !filler.contains($0) }
-        if !valueWords.isEmpty { return Set(valueWords) }
-        return Set(claim.lowercased().split { !$0.isLetter }.map(String.init).filter { $0.count >= 3 && !filler.contains($0) }.prefix(1))
+        if let at {
+            let phrase = tokens[(at + 1)...].prefix { !connectors.contains($0) }.filter { $0.allSatisfy(\.isLetter) && $0.count >= 3 && !filler.contains($0) }
+            if let head = phrase.last { return [head] }
+        }
+        return Set(claimWords.filter { $0.count >= 3 && !filler.contains($0) }.prefix(1))
     }
 
     /// The value of a Roman numeral (i to mmmcmxcix), or nil.

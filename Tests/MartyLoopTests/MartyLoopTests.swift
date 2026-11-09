@@ -1380,6 +1380,10 @@ final class MartyLoopTests: XCTestCase {
                           out: tempOut(), options: .init())
             .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &mixed)
         XCTAssertNil(mixed["answerPosedLint"]); XCTAssertNil(mixed["answerLint"])
+        var dashed: [String: Any] = [:]
+        _ = try MartyLoop(model: ScriptedAdapter(replies: ["The model shows steering\u{2014}it does not model airflow."]), out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 2, result: &dashed)
+        XCTAssertNil(dashed["answerPosedLint"])
 
         // Short quotes; counts written as ordinals, articles and pairs.
         var rows = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [
@@ -1403,6 +1407,10 @@ final class MartyLoopTests: XCTestCase {
                                                   entities: QuoteCheck.countedWords(value: "Version 1", claim: "Current model")))
         XCTAssertFalse(QuoteCheck.statesCountWord("1", "The company unveiled a new version of its jet suit with five engines",
                                                   entities: QuoteCheck.countedWords(value: "Jet Suit Mk 1", claim: "Current model")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("2", "Both arms carry three engines each", entities: QuoteCheck.countedWords(value: "2 engines per arm", claim: "Arm engines")))
+        XCTAssertEqual(QuoteCheck.countedWords(value: "2 engines per arm", claim: "Arm engines"), ["engines"])
+        XCTAssertEqual(QuoteCheck.countedWords(value: "1 rear engine", claim: "Rear engine"), ["engine"])
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "A new model of the device uses five engines", entities: QuoteCheck.countedWords(value: "Version 1", claim: "Current model")))
         XCTAssertEqual(rows.rows[3].sources[0].check, "quote too short to check")
     }
 

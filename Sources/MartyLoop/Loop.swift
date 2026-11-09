@@ -979,7 +979,7 @@ extension MartyLoop {
         func denials(_ text: String) -> [String] {
             guard !posed.isEmpty, let dre = try? NSRegularExpression(pattern: Self.denials) else { return [] }
             return Self.sentences(text).filter { sentence in
-                let clauses = sentence.replacingOccurrences(of: #"(?i)\s+(?:but|and|while|whereas|although|though|yet)\s+"#, with: ";", options: .regularExpression)
+                let clauses = sentence.replacingOccurrences(of: #"(?i)\s+(?:but|and|while|whereas|although|though|yet)\s+|\s*[\x{2014}\x{2013}]\s*|\s+-\s+"#, with: ";", options: .regularExpression)
                     .components(separatedBy: CharacterSet(charactersIn: ",;:"))
                 for clause in clauses {
                     let cns = clause as NSString
@@ -1012,6 +1012,8 @@ extension MartyLoop {
             answer = s
             let again = problems(s)
             lint["fixed"] = again.comparative.isEmpty && again.unsourced.isEmpty
+            // The posed-view status is that of the final answer.
+            if var posedLint = result["answerPosedLint"] as? [String: Any] { posedLint["fixed"] = denials(s).isEmpty; result["answerPosedLint"] = posedLint }
         }
         result["answerLint"] = lint
         return answer
