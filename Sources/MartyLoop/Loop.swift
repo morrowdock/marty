@@ -172,6 +172,29 @@ public final class MartyLoop {
         return out
     }
 
+    /// The document with every non-integer number in a board table's cells written as text, so the engine shows it
+    /// with every published digit (85.06, not its rounded 85.1).
+    static func exactTableNumbers(_ document: Any) -> Any {
+        func walk(_ v: Any) -> Any {
+            if var o = v as? [String: Any] {
+                for (k, x) in o { o[k] = walk(x) }
+                if o["k"] as? String == "table", let rows = o["cells"] as? [[Any]] {
+                    o["cells"] = rows.map { row in
+                        row.map { cell -> Any in
+                            guard let n = cell as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() else { return cell }
+                            let d = n.doubleValue
+                            return d.rounded() == d ? cell : MartyLoop.trimmedDecimal("\(d)")
+                        }
+                    }
+                }
+                return o
+            }
+            if let a = v as? [Any] { return a.map(walk) }
+            return v
+        }
+        return walk(document)
+    }
+
     /// The anchor and arrow issues of a refusal: the anchor issue it names (`anchor`) first, then the others
     /// (`anchorIssues`), then the hidden arrow it names (`arrow`) and the others (`arrowIssues`), each marked
     /// `"check": "arrow"`.
@@ -400,7 +423,7 @@ public final class MartyLoop {
                 report = ["ok": false, "reason": "components.count", "part": NSNull()]
             } else if let doc0 = document {
                 // Over-long texts are cut at a word before the check (recorded); then strict, as the engine recommends.
-                let (doc1, cut) = TextBudget.trimmed(doc0)
+                let (doc1, cut) = TextBudget.trimmed(Self.exactTableNumbers(doc0))
                 document = doc1; trimmedNow = cut
                 do { report = try engine.check(document: doc1, ref: nil, components: components, strict: true) }
                 catch let e as ToolError { report = ["ok": false, "reason": e.reason] }
@@ -778,7 +801,7 @@ extension MartyLoop {
                 user += "\n\n\"document\" must be the whole changed explainer object, or null. Reply again."
                 continue
             }
-            let (trimmedDoc, explainerCut) = TextBudget.trimmed(changed0)
+            let (trimmedDoc, explainerCut) = TextBudget.trimmed(Self.exactTableNumbers(changed0))
             var changed = trimmedDoc as? [String: Any] ?? changed0
             var r: [String: Any]
             var autoFixed: [String] = []

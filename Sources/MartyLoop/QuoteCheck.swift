@@ -307,7 +307,8 @@ public enum QuoteCheck {
         "before", "during", "by", "than", "as", "but", "so", "if", "up", "down", "out", "off", "more", "less", "total", "overall", "tall",
         "long", "wide", "high", "deep", "thick", "away", "apart", "across", "ago", "old", "later", "earlier", "above", "below", "behind",
         "ahead", "faster", "slower", "heavier", "lighter", "it", "this", "these", "those", "they", "he", "she", "we", "you", "not", "only",
-        "about", "around", "near", "through", "across", "without", "within", "between", "against", "toward", "towards", "while", "until"]
+        "about", "around", "near", "through", "across", "without", "within", "between", "against", "toward", "towards", "while", "until",
+        "dry", "wet", "empty", "net", "gross", "loaded", "unloaded", "fuelled", "fueled"]
 
     /// Words that scale the number before them.
     static let magnitudes: Set<String> = ["hundred", "thousand", "million", "billion", "trillion", "k", "m", "bn", "mn", "mln", "tn", "lakh", "crore"]
@@ -530,11 +531,14 @@ public enum QuoteCheck {
         }
         // A unit word: letters with unit symbols ("m", "n·m", "m/s", "m^2", "s^", "µm", "°c") or a compound
         // unit's hyphen.
+        // Only a real unit word or symbol counts ("kg", "litres", "n·m", "m/s", "°c"); an ordinary word does not
+        // ("175kg of thrust" ends in prose, not in a unit).
         func unitWord(_ t: Token) -> Bool {
             if t.text == "-" { return true }
-            guard t.hasLetter else { return false }
-            return t.text.allSatisfy { $0.isLetter || $0.isNumber || "/^\u{00B7}\u{22C5}_\u{00B0}%".contains($0) }
-                && !(t.text.first?.isNumber ?? false)
+            guard t.hasLetter, !(t.text.first?.isNumber ?? false) else { return false }
+            if Self.isUnitWord(t.text) { return true }
+            return t.text.contains { "/^\u{00B7}\u{22C5}_\u{00B0}".contains($0) }
+                && t.text.allSatisfy { $0.isLetter || $0.isNumber || "/^\u{00B7}\u{22C5}_\u{00B0}%".contains($0) }
         }
         func bare(_ t: Token) -> Bool { !t.hasLetter }
         // A letters-only quote word glued to a gap may be completed by it, unless it is a unit after a number.
@@ -675,21 +679,71 @@ public enum QuoteCheck {
         // Meta tags only outside script, style, template and noscript content (a widget's template text is not
         // the page's metadata); JSON-LD is read from its own scripts.
         let tags = h.replacingOccurrences(of: #"(?is)<(script|style|template|noscript)\b.*?(</\1\s*>|$)"#, with: " ", options: .regularExpression)
+        // 1. The date the page shows under its title (a byline right after the first <h1>), as the reader sees it.
+        if let d = shownDate(tags) { return d }
         let ns = tags as NSString
         func first(_ p: String) -> String? {
             guard let re = try? NSRegularExpression(pattern: p),
                   let m = re.firstMatch(in: tags, range: NSRange(location: 0, length: ns.length)), m.numberOfRanges > 1 else { return nil }
-            return ns.substring(with: m.range(at: 1)).replacingOccurrences(of: "/", with: "-")
+            return isoDate(ns.substring(with: m.range(at: 1)))
         }
-        let names = #"(?:article:published_time|og:published_time|date|dc\.date|dc\.date\.issued|citation_publication_date|pubdate)"#
+        // 2. Page-level meta tags (also Dublin Core terms and common publishing names).
+        let names = #"(?:article:published_time|og:published_time|date|dc\.date|dc\.date\.issued|dcterms\.date|dcterms\.created|dcterms\.issued|citation_publication_date|pubdate|publish[-_]?date|publication[-_]date|sailthru\.date|parsely-pub-date)"#
         let attr = #"(?:property|name)\s*=\s*["']"# + names + #"["']"#
-        let date = #"(\d{4}[-/]\d{2}[-/]\d{2})"#
+        let date = #"(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{4})"#
         if let d = first(#"(?i)<meta[^>]+"# + attr + #"[^>]+content\s*=\s*["']"# + date) ?? first(#"(?i)<meta[^>]+content\s*=\s*["']"# + date + #"[^"']*["'][^>]+"# + attr) {
             return d
         }
         // JSON-LD outside inert templates.
         let live = h.replacingOccurrences(of: #"(?is)<template\b.*?(</template\s*>|$)"#, with: " ", options: .regularExpression)
         return jsonLDDate(live, NSRange(location: 0, length: (live as NSString).length))
+    }
+
+    /// A numeric date as YYYY-MM-DD, or nil when it is not a real date or its order is ambiguous ("08-10-2020" could
+    /// be 8 October or 10 August; "13-10-2020" is day first).
+    static func isoDate(_ s: String) -> String? {
+        let parts = s.split(whereSeparator: { $0 == "-" || $0 == "/" }).compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        var y = parts[0], m = parts[1], d = parts[2]
+        if parts[2] > 999 {
+            y = parts[2]
+            if parts[0] > 12, parts[1] <= 12 { d = parts[0]; m = parts[1] }
+            else if parts[1] > 12, parts[0] <= 12 { m = parts[0]; d = parts[1] }
+            else if parts[0] == parts[1] { m = parts[0]; d = parts[1] }
+            else { return nil }
+        }
+        guard (1900...2100).contains(y), (1...12).contains(m), (1...31).contains(d) else { return nil }
+        return String(format: "%04d-%02d-%02d", y, m, d)
+    }
+
+    static let months = ["jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12]
+
+    /// The date shown right under the page's title: the first written date ("October 8, 2020", "09 Apr 2020",
+    /// "2020-04-09") within 400 characters of text after the first <h1>; nil without one.
+    static func shownDate(_ html: String) -> String? {
+        guard let h1 = html.range(of: #"(?is)<h1\b[^>]*>.*?</h1\s*>"#, options: .regularExpression) else { return nil }
+        let after = String(html[h1.upperBound...].prefix(20_000))
+        let text = decodeEntities(after.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression))
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        let window = String(text.prefix(400))
+        let mon = #"(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"#
+        let patterns: [(String, (NSTextCheckingResult, NSString) -> String?)] = [
+            (#"(?i)\b"# + mon + #"\s+(\d{1,2}),?\s+(\d{4})\b"#, { m, ns in
+                guard let mo = months[String(ns.substring(with: m.range(at: 1)).lowercased().prefix(3))] else { return nil }
+                return isoDate("\(ns.substring(with: m.range(at: 3)))-\(mo)-\(ns.substring(with: m.range(at: 2)))") }),
+            (#"(?i)\b(\d{1,2})(?:st|nd|rd|th)?\s+"# + mon + #",?\s+(\d{4})\b"#, { m, ns in
+                guard let mo = months[String(ns.substring(with: m.range(at: 2)).lowercased().prefix(3))] else { return nil }
+                return isoDate("\(ns.substring(with: m.range(at: 3)))-\(mo)-\(ns.substring(with: m.range(at: 1)))") }),
+            (#"\b(\d{4}-\d{2}-\d{2})\b"#, { m, ns in isoDate(ns.substring(with: m.range(at: 1))) }),
+        ]
+        let ns = window as NSString
+        var best: (Int, String)? = nil
+        for (p, read) in patterns {
+            guard let re = try? NSRegularExpression(pattern: p),
+                  let m = re.firstMatch(in: window, range: NSRange(location: 0, length: ns.length)), let d = read(m, ns) else { continue }
+            if best == nil || m.range.location < best!.0 { best = (m.range.location, d) }
+        }
+        return best?.1
     }
 
     static let articleTypes: Set<String> = ["Article", "NewsArticle", "BlogPosting", "TechArticle", "ScholarlyArticle", "Report",
@@ -761,12 +815,13 @@ extension FactTable {
     /// the sources whose quote was found: none found, UNKNOWN (no value; the sources stay as notes with their check);
     /// found on two or more sites, VERIFIED only if the model said VERIFIED and no found quote attributes the figure
     /// to its maker or one person; otherwise CLAIM (or PLAUSIBLE when the model said so). Every change is listed.
-    public mutating func checkQuotes(fetcher: PageFetcher, budget: Int = QuoteCheck.budget, blocked: [String] = ResearchLimits.defaultBlocked) {
+    @MainActor public mutating func checkQuotes(fetcher: PageFetcher, budget: Int = QuoteCheck.budget, blocked: [String] = ResearchLimits.defaultBlocked) {
         var fetched = 0
         var pages: [String: (status: Int, body: String?, final: URL?)] = [:]
         for n in rows.indices {
             var foundSites = Set<String>()
             var attributed = false
+            var foundQuotes: [String] = []
             for k in rows[n].sources.indices {
                 let src = rows[n].sources[k]
                 // A source's date comes only from its page: the page's publication date when the page states one,
@@ -794,6 +849,7 @@ extension FactTable {
                 dateOnPage = QuoteCheck.pageDate(body)
                 if QuoteCheck.found(src.quote, in: body) {
                     rows[n].sources[k].check = "quote found"
+                    foundQuotes.append(src.quote)
                     foundSites.insert(FactTable.site(finalHost))
                     if QuoteCheck.attributed(src.quote, in: body) { attributed = true }
                 } else {
@@ -813,6 +869,14 @@ extension FactTable {
                 rows[n].unconfirmed = true
             } else if before == .verified, foundSites.count < 2 || attributed {
                 after = .claim
+            }
+            // The row's value must be what a found quote states: its headline number in one of them. A value computed
+            // from other figures (a ratio of two rows' numbers) is no published fact: the row is left out.
+            if !rows[n].unconfirmed, after != .unknown, let headline = MartyLoop.numbers(rows[n].value).first,
+               !foundQuotes.flatMap(MartyLoop.numbers).contains(headline) {
+                downgrades.append("\(rows[n].id): value \(rows[n].value) is in none of its found quotes (computed, not published); left out")
+                after = .unknown
+                rows[n].unconfirmed = true
             }
             if after != before {
                 downgrades.append("\(rows[n].id): \(before.rawValue) to \(after.rawValue) (quote check: \(foundSites.count) site\(foundSites.count == 1 ? "" : "s") with the quote\(attributed ? ", attributed to its maker or one person" : ""))")

@@ -6,7 +6,7 @@ import MartyEngine
 /// author step sees a short format guide plus `explain` entries for the parts the plan chose. The receipt records the
 /// size and SHA-256 of every prompt, so a change in context is always measured.
 public enum MartyPrompts {
-    public static let version = "marty-prompts/20"
+    public static let version = "marty-prompts/21"
 
     static let role = """
         You are Marty, a teacher who explains how things work with checked 3D models. A deterministic engine \
@@ -33,7 +33,8 @@ public enum MartyPrompts {
         what the model does not show. "given" holds the headline figures of the subject (thrust against weight, power, \
         top speed, range, capacity; for something that flies, lifts or hovers, its thrust and the weight it lifts), \
         taken ONLY from the fact table in the message, each as "<row id>: <fact>" in the row's wording: VERIFIED \
-        plainly, CLAIM as "claimed by <publisher>", PLAUSIBLE as "likely" or "example", UNKNOWN as "not published". \
+        plainly, CLAIM as "claimed by <publisher>", PLAUSIBLE as "likely" or "example", UNKNOWN as "not found in this search" \
+        or left out (never "not published": the search may have missed it). \
         Never merge rows into one range. With no fact table, "given" is empty. Name the product version and years the \
         model shows, from the table.
 
@@ -139,11 +140,12 @@ public enum MartyPrompts {
         - Facts beyond the engine: a figure, date, product name or version, or load share only from the fact table, in
           an unchecked label or a noted table row whose "unchecked" text or note starts with its row id ("F3 <publisher>
           <year>"), in the row's wording (VERIFIED plainly, CLAIM "claimed", PLAUSIBLE "likely" or "example", UNKNOWN
-          only "not published"). No row, no such fact; never merge rows into a range. A share or comparison (most, all
+          only "not found in this search", never "not published"). No row, no such fact; never merge rows into a range. A share or comparison (most, all
           of, more than) needs a row or a {fact}, or a hedge. Never derive a performance figure from the simple model.
         - Name the product version and years the model shows (title or first step), from the table. Anchor each inside
           label on the named inner part, not on the casing or body. An inside whose real parts are not public is
           labelled "<class>-style <kind> (example)" with "Not confirmed <brand> hardware".
+        - Show each named unit in a view facing it (back unit: three-quarter-back or back view); force in pounds: "lbf".
         - Physics words: a hover is a balance (the upward parts of the thrusts balance the weight of person, device and
           fuel, and the side forces and turning moments balance), never "thrust equals weight"; fuel burns with the
           oxygen in the compressed air; thrust is the reaction to the gas accelerated out of the nozzle. Steering: name
@@ -212,12 +214,17 @@ public enum MartyPrompts {
         versions, with model years; its published headline performance figures and who published each (search for \
         them by name); its main units, how many and how arranged; what moves for control; published load or effort \
         sharing if parts share a job; its inside parts if public. One figure per row, never a merged range.
+        For a named product, fetch the MAKER'S own website (its product, specification or news page) for the current \
+        version and model name, and search for interviews with the maker, founder or inventor for how it works and \
+        how its parts share the load. A ratio (such as thrust to weight) only as a source states it, never computed \
+        from two rows.
         As soon as you confirm a fact, write it on its own line as: ROW {the row object}. When you are done, reply \
         with the whole JSON object below.
         Labels: VERIFIED when at least 2 independent sources (different publishers, not copies of one article) state it; \
         CLAIM when the maker, the owner or one person states it, also when news sites repeat that statement; PLAUSIBLE \
-        when you infer it from the class of device; UNKNOWN when you searched and it is not published (no value). Each \
-        source: its URL, publisher, date (year at least) and a short quote copied word for word from that page (Marty \
+        when you infer it from the class of device; UNKNOWN when you searched and did not find it (no value; this \
+        does not mean it is unpublished). Each source: its URL, publisher, date exactly as the page shows it (year at \
+        least) and a short quote copied word for word from that page (Marty \
         fetches the page and drops the row when the quote is not on it). "appliesTo" names the version and years.
         For an abstract subject (mathematics, a law of physics) reply {"needed": false, "rows": []} without searching.
 
@@ -391,10 +398,10 @@ public enum MartyPrompts {
             ("check.failed", "A claim in the step is false: the engine solved a different value. Change or remove the claim, or change the model."),
             ("check.fact", "A claim names no fact. Use a fact name the engine solved."),
             ("annotation.anchor.off", "A label dot or pointer tip is not on the part it names, or another part is nearer to it: put it on that part's surface (an offset in the part's own frame), using the engine's fix below."),
-            ("annotation.anchor.hidden", "A label dot or pointer tip is hidden, ghosted, off screen or covered by another part in a view that shows it: move it to a face of its part that faces the camera, ghost the part in the way, or change the camera, as the engine's fix below says."),
-            ("annotation.arrow.hidden", "An arrow (force, flow, motion or pointer) is mostly hidden or off screen in a view that shows it: apply the engine's checked move below (it keeps the arrow's direction and length in every view), or ghost the part in the way, or leave the arrow out of that view."),
-            ("annotation.arrow.untested", "The engine's arrow test ran out of budget: show fewer arrows in that view, or hide or ghost parts that are not needed there."),
-            ("annotation.anchor.untested", "The engine's anchor test ran out of budget: show fewer labels in that view, or hide or ghost parts that are not needed there."),
+            ("annotation.anchor.hidden", "A label dot or pointer tip is hidden, ghosted, off screen or covered by another part in a view that shows it: apply the engine's checked suggestion below, or one of the alternatives it lists for that dot (only those: a part a label or pointer sits on must not be ghosted)."),
+            ("annotation.arrow.hidden", "An arrow (force, flow, motion or pointer) is mostly hidden or off screen in a view that shows it: apply the engine's checked move below (it keeps the arrow's direction and length in every view), or one of the alternatives it lists for that arrow (only those: a part a label or pointer sits on must not be ghosted)."),
+            ("annotation.arrow.untested", "The engine's arrow test ran out of budget: show fewer arrows in that view, or hide parts that view does not need and no label or arrow sits on."),
+            ("annotation.anchor.untested", "The engine's anchor test ran out of budget: show fewer labels in that view, or hide parts that view does not need and no label or arrow sits on."),
             ("parts.count", "\"parts\" holds 1 to 48 entries, and component expansion may make at most 96 parts (a microTurbojet is 11, a mannequin 12): use fewer component instances, or plain shapes for the units that are not cut open."),
             ("parts.resolved", "The model has too many parts after component and repeat expansion: use fewer component instances, or plain shapes for the units that are not cut open."),
             ("annotations.visible", "Too many annotations would show at once: give every step (in an explainer, every beat's view) an \"annotate\" list of the ids it shows, at most 5 labels and pointers plus its force arrows."),
@@ -426,7 +433,7 @@ public enum MartyPrompts {
         "<part>": {"rot": [ax, ay, az, degrees]}}, "show": [ids shown only in this step], "annotate": [ids]}} (add \
         "replace": <step number> to edit that step instead). A pose may not move a part of a gear solve. An arrow end on \
         a part moves and turns with that part (and the parts it hangs on); an end at a world point stays. The engine \
-        checks a gravity arrow again.
+        checks a gravity arrow again. Give text to at most two arrows in a new or changed step; the others need none.
 
         Reply with ONE JSON object only, no prose and no code fences:
         {"patch": { ... }}, {"step": { ... }} or, when no model change is needed, {"patch": null}.
@@ -443,7 +450,8 @@ public enum MartyPrompts {
         is and adds (or edits) ONE beat ("say" at most 200 characters) whose "view" has "pose": {"<instance>": {"with": {...}}, "<part>": {"rot": \
         [...]}} and "show": [ids shown only in that beat]. An arrow end on a part moves with that part; an end at a \
         world point stays. A force arrow \
-        (not gravity) whose direction you set gets "unchecked": "schematic direction". Every number in a say is still a {fact} placeholder, and every claim must \
+        (not gravity) whose direction you set gets "unchecked": "schematic direction". Give text to at most two arrows in \
+        a new or changed beat; the others need none. Every number in a say is still a {fact} placeholder, and every claim must \
         hold for the changed model. A change of words only is refused.
 
         Reply with ONE JSON object only, no prose and no code fences:
@@ -484,7 +492,8 @@ public enum MartyPrompts {
     /// The repair note for `fact.unsourced.<field>`.
     public static let factRepair = """
         Each number, year and product version in the text must come from the fact table (with its row id), the \
-        question or the model itself. Remove these or replace them with a table fact:
+        question or the model itself, and no text may say a fact is "not published" (a search that missed it does not \
+        show that; write "not found in this search" or leave it out). Fix these:
         """
 
     public static func answerSystem() -> String {

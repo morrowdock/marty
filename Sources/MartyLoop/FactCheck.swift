@@ -10,14 +10,28 @@ import MartyEngine
     public struct Finding: Equatable {
         public let field: String
         public let token: String
-        public var line: String { "\(field): \"\(token)\" is not in the fact table, the question or the model" }
+        /// "unsourced" (a number, year or version without evidence) or "notPublished" (an absence stated as fact).
+        public var kind = "unsourced"
+        public init(field: String, token: String, kind: String = "unsourced") { self.field = field; self.token = token; self.kind = kind }
+        public var line: String {
+            kind == "notPublished"
+                ? "\(field): says \"\(token)\", but a search that did not find a fact does not show it is unpublished; write \"not found in this search\" or leave it out"
+                : "\(field): \"\(token)\" is not in the fact table, the question or the model"
+        }
     }
+
+    /// "Not published" and its forms: an absence stated as a fact.
+    static let absence = #"(?i)\b(?:not|never)\s+(?:been\s+|yet\s+|publicly\s+)*(?:published|disclosed|released\s+publicly)\b|\bunpublished\b|\bundisclosed\b"#
 
     /// The evidence tokens: numbers (normalized as in `MartyLoop.numbers`) and lower-case version tokens.
     public struct Evidence {
         public var numbers: Set<String>
         public var versions: Set<String>
-        public init(numbers: Set<String> = [], versions: Set<String> = []) { self.numbers = numbers; self.versions = versions }
+        /// A confirmed table row's quote itself says the fact is not published: then the lesson may say so too.
+        public var absenceSourced = false
+        public init(numbers: Set<String> = [], versions: Set<String> = [], absenceSourced: Bool = false) {
+            self.numbers = numbers; self.versions = versions; self.absenceSourced = absenceSourced
+        }
 
         @MainActor public static func build(table: FactTable, question: String, report: [String: Any]?, model: Any?, extra: [String] = []) -> Evidence {
             var texts = [question] + extra
@@ -35,7 +49,10 @@ import MartyEngine
                 nums.formUnion(MartyLoop.numbers(MartyLoop.trimmedDecimal(String(format: "%.2f", 1 / abs(v)))))
             }
             nums.formUnion(sizes(model).flatMap(MartyLoop.numbers))
-            return Evidence(numbers: nums, versions: Set(texts.flatMap(FactCheck.versions)))
+            let absence = table.rows.contains { r in
+                !r.unconfirmed && r.sources.contains { $0.check == "quote found" && $0.quote.range(of: FactCheck.absence, options: .regularExpression) != nil }
+            }
+            return Evidence(numbers: nums, versions: Set(texts.flatMap(FactCheck.versions)), absenceSourced: absence)
         }
     }
 
@@ -109,6 +126,11 @@ import MartyEngine
         let versionNumbers = Set(versions(t).compactMap { $0.split(separator: " ").last.map(String.init) })
         for n in tokens where !e.numbers.contains(n) && !versionNumbers.contains(n) {
             out.append(Finding(field: field, token: n))
+        }
+        // "Not published" is a claim about the whole world; a search that missed a fact cannot support it. Only a
+        // confirmed source that itself says so does.
+        if !e.absenceSourced, let r = text.range(of: absence, options: .regularExpression) {
+            out.append(Finding(field: field, token: String(text[r]), kind: "notPublished"))
         }
         return out
     }
@@ -215,5 +237,7 @@ import MartyEngine
     }
 
     /// The reason for a refusal: `fact.unsourced.<field>` of the first finding.
-    public static func reason(_ f: [Finding]) -> String? { f.first.map { "fact.unsourced.\($0.field)" } }
+    public static func reason(_ f: [Finding]) -> String? {
+        f.first.map { $0.kind == "notPublished" ? "fact.notPublished.\($0.field)" : "fact.unsourced.\($0.field)" }
+    }
 }

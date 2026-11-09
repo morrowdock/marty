@@ -1153,6 +1153,69 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertNil(TextBudget.cutAtWord("The shaft turns in two bearings on a base. The same holds for e.g. a guarded shaft.", limit: 60), "an abbreviation")
     }
 
+    /// Round 2h: "not published" is refused unless a confirmed source says so; dates as the page shows them; a value
+    /// in none of its quotes is left out; hints follow the issue's own advice; exact table numbers.
+    func testRound2hHonesty() throws {
+        // The prompts no longer ask for "not published".
+        let author = MartyPrompts.authorSystem(parts: "x", example: "{}", explainer: nil)
+        XCTAssertFalse(author.contains("only \"not published\""), "author prompt")
+        XCTAssertTrue(author.contains("not found in this search"))
+        let research = MartyPrompts.researchSystem(maxSearches: 10)
+        XCTAssertTrue(research.contains("MAKER'S own website") && research.contains("interviews with the maker"), research)
+        XCTAssertTrue(research.contains("date exactly as the page shows it"))
+        XCTAssertFalse(research.contains("it is not published"))
+
+        // The lint: "not published" in lesson text is refused; a confirmed source that says so allows it.
+        let doc: [String: Any] = ["v": 2, "kind": "assembly", "title": "A suit", "parts": [] as [Any],
+                                  "annotations": ["labels": [["id": "lV", "at": ["world": [0, 0, 0]], "text": "Current version: not published"]]]]
+        let none = FactCheck.findings(doc, evidence: .build(table: FactTable.empty, question: "q", report: nil, model: doc))
+        XCTAssertEqual(none.first?.kind, "notPublished")
+        XCTAssertEqual(FactCheck.reason(none), "fact.notPublished.annotation.lV")
+        XCTAssertTrue(none.first?.line.contains("not found in this search") == true)
+        XCTAssertFalse(FactCheck.findings(["v": 2, "kind": "assembly", "title": "The total thrust is unpublished"], evidence: .init()).isEmpty)
+        var sourced = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [["id": "F1", "claim": "Thrust figures", "label": "CLAIM",
+            "sources": [["url": "https://a.org/1", "publisher": "A", "date": "2020", "quote": "the maker has not published its thrust figures"]]]]])))
+        sourced.checkQuotes(fetcher: TestPages(pages: ["https://a.org/1": "<p>So far the maker has not published its thrust figures.</p>"], fallback: nil))
+        XCTAssertTrue(FactCheck.findings(doc, evidence: .build(table: sourced, question: "q", report: nil, model: doc)).isEmpty)
+        // The answer lint flags it too.
+        XCTAssertFalse(MartyLoop.unsourcedSentences("The current version is not published.", sources: []).isEmpty)
+
+        // Dates as the page shows them: the date under the title; day-first meta only when unambiguous.
+        XCTAssertEqual(QuoteCheck.pageDate(#"<meta name="dcterms.date" content="08-10-2020"><h1>Jet suit rescue demonstrated</h1><p>By A. Writer</p><p>October 8, 2020</p>"#), "2020-10-08")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<h1>FEATURE: Meet the man</h1><time class="time" datetime="2020-51-09">09 Apr 2020</time>"#), "2020-04-09")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<meta name="dcterms.date" content="13-10-2020">"#), "2020-10-13")
+        XCTAssertNil(QuoteCheck.pageDate(#"<meta name="dcterms.date" content="08-10-2020">"#), "ambiguous day and month")
+        XCTAssertNil(QuoteCheck.pageDate(#"<meta name="date" content="2020-51-09">"#), "not a real date")
+        XCTAssertNil(QuoteCheck.pageDate("<h1>Title</h1><p>" + String(repeating: "words ", count: 100) + "On 14 November 2019 it flew.</p>"), "a date far below the title is not the byline")
+
+        // A glued "+1500bhp" in prose matches (a word after "175kg of thrust" is prose, not a unit).
+        XCTAssertTrue(QuoteCheck.found("Five gas turbine jet engines generate +1500bhp and 175kg of thrust",
+                                       in: "<p>Five gas turbine jet engines generate +1500bhp and 175kg of thrust to allow vertical lift.</p>"))
+
+        // A value in none of its quotes (computed from other figures) is left out.
+        var ratio = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [["id": "F1", "claim": "Thrust to weight", "value": "5.3", "label": "CLAIM",
+            "sources": [["url": "https://a.org/2", "publisher": "A", "date": "2020", "quote": "a thrust of 144 kgf for a suit of 27 kg"]]]]])))
+        ratio.checkQuotes(fetcher: TestPages(pages: ["https://a.org/2": "<p>It gives a thrust of 144 kgf for a suit of 27 kg.</p>"], fallback: nil))
+        XCTAssertTrue(ratio.rows[0].unconfirmed)
+        XCTAssertTrue(ratio.downgrades.contains { $0.contains("computed, not published") }, "\(ratio.downgrades)")
+        var stated = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [["id": "F1", "claim": "Thrust to weight", "value": "1.3", "label": "CLAIM",
+            "sources": [["url": "https://a.org/3", "publisher": "A", "date": "2022", "quote": "thrust to weight ratio stands at 1.3"]]]]])))
+        stated.checkQuotes(fetcher: TestPages(pages: ["https://a.org/3": "<p>Its thrust to weight ratio stands at 1.3 for now.</p>"], fallback: nil))
+        XCTAssertFalse(stated.rows[0].unconfirmed)
+
+        // Generic hints for anchor and arrow refusals do not advise ghosting the part in the way.
+        for r in ["annotation.arrow.hidden.aSteer", "annotation.anchor.hidden.lCore", "annotation.arrow.untested.a", "annotation.anchor.untested.l"] {
+            let h = try XCTUnwrap(MartyPrompts.hint(for: r))
+            XCTAssertFalse(h.contains("ghost the part in the way") || h.contains("or ghost parts"), "\(r): \(h)")
+        }
+        // Guide lines and exact table numbers.
+        XCTAssertTrue(author.contains("three-quarter-back or back view") && author.contains("\"lbf\""))
+        XCTAssertTrue(MartyPrompts.followUpSystem().contains("at most two arrows"))
+        let board: [String: Any] = ["board": ["items": [["id": "t", "k": "table", "cells": [["Record", 85.06], ["Engines", 5]]]]]]
+        let cells = (((MartyLoop.exactTableNumbers(board) as? [String: Any])?["board"] as? [String: Any])?["items"] as? [[String: Any]])?.first?["cells"] as? [[Any]]
+        XCTAssertEqual(cells?[0][1] as? String, "85.06"); XCTAssertEqual(cells?[1][1] as? Int, 5)
+    }
+
     func testAnchorIssuesInRepairs() throws {
         let hidden = MartyExamples.formatExample.replacingOccurrences(of: #""offset":[0,-6,40]"#, with: #""offset":[0,0,60]"#)
         XCTAssertNotEqual(hidden, MartyExamples.formatExample)
@@ -1294,7 +1357,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(t.rows[3].sources[0].check, "quote not found")
         XCTAssertEqual(t.quoteChecks, 5, "each page is fetched once")
         XCTAssertFalse(t.promptBlock.contains(#""id":"F4""#), "an unconfirmed row is left out: \(t.promptBlock)")
-        XCTAssertTrue(t.promptBlock.contains("not found on the cited pages"), t.promptBlock)
+        XCTAssertTrue(t.promptBlock.contains("not confirmed on the cited pages"), t.promptBlock)
         var small = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [rows[0]]])))
         small.checkQuotes(fetcher: stub, budget: 1)
         XCTAssertEqual(small.rows[0].label, .claim, "one page checked: one site"); XCTAssertEqual(small.rows[0].sources[1].check, "not checked (budget)")
@@ -1407,7 +1470,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(t.downgrades.contains { $0.contains("source date 2017 corrected from the page to 2020-01-02") }, "\(t.downgrades)")
         XCTAssertEqual(t.rows[1].label, .unknown); XCTAssertTrue(t.rows[1].unconfirmed)
         XCTAssertFalse(t.promptBlock.contains("Speed record"), "an unconfirmed row is not shown")
-        XCTAssertTrue(t.promptBlock.contains("never call such a fact \"not published\""), t.promptBlock)
+        XCTAssertTrue(t.promptBlock.contains("Never call such a fact \"not published\""), t.promptBlock)
         let e = FactCheck.Evidence.build(table: t, question: "q", report: nil, model: nil)
         XCTAssertFalse(e.numbers.contains("137"), "an unconfirmed row is no evidence"); XCTAssertTrue(e.numbers.contains("144"))
 
