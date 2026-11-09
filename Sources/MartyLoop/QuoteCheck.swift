@@ -241,7 +241,9 @@ public enum QuoteCheck {
         t = t.replacingOccurrences(of: "([\u{00B1}<>\u{2264}\u{2265}~\u{2248}$\u{20AC}\u{00A3}\u{00A5}]) (?=[0-9]|[.-][0-9])", with: "$1", options: .regularExpression)
         t = t.replacingOccurrences(of: "(?<=[a-z]) ?([\\^/]) ?(?=[a-z0-9])", with: "$1", options: .regularExpression)
         t = t.replacingOccurrences(of: "(?<=[0-9]) (?=[%\u{2030}\u{00B0}\u{2032}\u{2033}])", with: "", options: .regularExpression)
-        // A dash is its own token, however it is spaced ("suit—with", "suit - with", "at − 5", "10-20"): see `match`.
+        // A hyphen glued between letters ("n-m", "five-engine") is marked (U+2011) apart from a spaced one; any other
+        // dash is its own token, however it is spaced ("suit - with", "at − 5", "10-20"): see `tokens`, `match`.
+        t = t.replacingOccurrences(of: "(?<=\\p{L})-(?=\\p{L})", with: " \u{2011} ", options: .regularExpression)
         t = t.replacingOccurrences(of: #"\s*-\s*"#, with: " - ", options: .regularExpression)
         // A removed tag leaves a space before punctuation ("derail ."); drop it on both sides.
         t = t.replacingOccurrences(of: #" ([.,;:!?)\]])(?![0-9])"#, with: "$1", options: .regularExpression)
@@ -268,6 +270,13 @@ public enum QuoteCheck {
     /// A quote mark after a digit is a prime (a unit mark: "5'11\"", "5’11”" are 5′11″; ″ as NFKC writes it, ′′) unless
     /// it closes a quotation of its own kind that is open in the same block ("“The turbine produces 144”",
     /// "\"5'11\"\"" is a quoted 5′11″). Straight double quotes pair in order; a block mark ends every quotation.
+    /// Whether a number starts at `i` and the mark `close` follows it right away ("10'" in "'10'").
+    static func closesAfterNumber(_ chars: [Character], _ i: Int, _ close: Character) -> Bool {
+        var k = i
+        while k < chars.count, chars[k].isNumber || chars[k] == "." || chars[k] == "," { k += 1 }
+        return k > i && k < chars.count && chars[k] == close && !(k + 1 < chars.count && chars[k + 1].isNumber)
+    }
+
     static func unitPrimes(_ s: String) -> String {
         let chars = Array(s)
         var out = "", curlyDouble = 0, curlySingle = 0, straightDouble = false, straightSingle = false
@@ -278,7 +287,8 @@ public enum QuoteCheck {
             switch c {
             case "\u{2}": curlyDouble = 0; curlySingle = 0; straightDouble = false; straightSingle = false; out.append(c)
             case "\u{201C}", "\u{201E}": curlyDouble += 1; out.append(c)
-            case "\u{2018}", "\u{201A}": if !beforeDigit { curlySingle += 1 }; out.append(c)   // "‘90s" opens nothing
+            case "\u{2018}", "\u{201A}":   // "‘90s" opens nothing; "‘10’" does
+                if !beforeDigit || closesAfterNumber(chars, i + 1, "\u{2019}") { curlySingle += 1 }; out.append(c)
             case "\u{201D}":
                 if afterDigit, beforeDigit || curlyDouble == 0 { out += "\u{2032}\u{2032}" } else { curlyDouble = max(0, curlyDouble - 1); out.append(c) }
             case "\u{2019}":
@@ -291,6 +301,7 @@ public enum QuoteCheck {
                 if afterDigit, beforeDigit || !straightSingle { out += "\u{2032}" }   // "5'11", "5' tall"
                 else if afterWord, beforeLetter { out.append(c) }                     // an apostrophe: "it's"
                 else if afterWord { straightSingle = false; out.append(c) }           // closes "'compact'"
+                else if beforeDigit, closesAfterNumber(chars, i + 1, "'") { straightSingle = true; out.append(c) }   // "'10'"
                 else if beforeDigit { out.append(c) }                                 // an elision: "'90s"
                 else if beforeLetter { straightSingle = true; out.append(c) }         // opens "'compact'"
                 else { out.append(c) }
@@ -380,6 +391,13 @@ public enum QuoteCheck {
             if raw == "\u{2}" || raw == "\u{2014}" { close(); continue }
             // A hyphen between two words ("five-engine", "suit - with") is punctuation: next to a number it stays
             // a word of its own (a sign or a range).
+            // A glued hyphen is punctuation ("five-engine" is "five engine"), except in a compound unit right after a
+            // number ("10 n-m", "10 amp-hours"), where it stays a word of the quantity.
+            if raw == "\u{2011}" {
+                let unit = out.count >= 2 && out[out.count - 2].hasDigit && !out[out.count - 1].closedBefore
+                if unit { out.append(Token(text: "-", closedBefore: false, closedAfter: false)); closed = false } else { close() }
+                continue
+            }
             if raw == "-", let before = out.last, before.text.allSatisfy({ $0.isLetter }), n + 1 < raws.count,
                raws[n + 1].first?.isLetter == true, !raws[n + 1].contains(where: { $0.isNumber }) { close(); continue }
             var t = String(raw), after = false
@@ -428,9 +446,17 @@ public enum QuoteCheck {
         func isSign(_ t: Token) -> Bool { t.text == "-" || t.text == "+" }
         // At the start: a number or a sign. At the end: a number, or a unit right after a number.
         func numericStart(_ words: [Token]) -> Bool { words[0].hasDigit || isSign(words[0]) }
-        func numericEnd(_ words: [Token]) -> Bool {
-            let last = words.count - 1
-            return words[last].hasDigit || (words[last].hasLetter && last > 0 && words[last - 1].hasDigit)
+        func numericEnd(_ words: [Token]) -> Bool { quantityEnd(words, words.count - 1) != nil }
+        // The number a quantity ends with: `i` itself when it has a digit, else the number before up to 3 unit words
+        // ("10 degrees celsius"); nil when there is none.
+        func quantityEnd(_ ws: [Token], _ i: Int) -> Int? {
+            var k = i
+            while k >= 0, k > i - 4 {
+                if ws[k].hasDigit { return k }
+                guard ws[k].text.allSatisfy({ $0.isLetter }), k == i || !ws[k].closedAfter else { return nil }
+                k -= 1
+            }
+            return nil
         }
         func bare(_ t: Token) -> Bool { !t.hasLetter }
         // A letters-only quote word glued to a gap may be completed by it, unless it is a unit after a number.
@@ -457,10 +483,10 @@ public enum QuoteCheck {
                 if bare(prev) { return false }
                 // The end of a range in words ("10 to 20 bar", "10 bar to 20 bar").
                 // The end of a "between … and …" range.
-                if prev.text == "and", !prev.closedBefore, s >= 3, p[max(0, s - 5)..<(s - 1)].contains(where: { $0.text == "between" }),
-                   p[s - 2].hasDigit || (p[s - 2].hasLetter && p[s - 3].hasDigit) { return false }
-                if prev.text == "to", !prev.closedBefore, s >= 2,
-                   p[s - 2].hasDigit || (p[s - 2].hasLetter && s >= 3 && p[s - 3].hasDigit && !p[s - 2].closedBefore) { return false }
+                if (prev.text == "and" || prev.text == "to"), !prev.closedBefore, s >= 2, let k = quantityEnd(p, s - 2) {
+                    if prev.text == "to" { return false }
+                    if p[max(0, k - 3)..<k].contains(where: { $0.text == "between" }) { return false }
+                }
                 if isSign(w[0]) || w[0].text.first == "+" || w[0].text.first == "-", prev.hasDigit { return false }
                 if w[0].hasDigit, prev.text.last == "e", prev.text.dropLast().last?.isNumber == true { return false }
             }
@@ -471,12 +497,13 @@ public enum QuoteCheck {
                 // A dash goes on with a number only when a number follows it ("10 - 20"); before a word it is
                 // punctuation ("1,050 bhp - the company").
                 let after = e + 2 < p.count ? p[e + 2] : nil
-                let dashBeforeWord = next.text == "-" && !(after.map { $0.hasDigit || $0.text.first == "." || isSign($0) } ?? false)
+                let unitEnd = w[last].hasLetter && !w[last].hasDigit
+                let dashBeforeWord = next.text == "-" && !unitEnd && !(after.map { $0.hasDigit || $0.text.first == "." || isSign($0) } ?? false)
                 if bare(next), !dashBeforeWord { return false }
                 if next.text == "to", e + 2 < p.count, p[e + 2].hasDigit || isSign(p[e + 2]) { return false }
                 // The start of a "between … and …" range.
-                if next.text == "and", e + 2 < p.count, p[e + 2].hasDigit || isSign(p[e + 2]),
-                   p[max(0, e - 3)...e].contains(where: { $0.text == "between" }) { return false }
+                if next.text == "and", e + 2 < p.count, p[e + 2].hasDigit || isSign(p[e + 2]), let k = quantityEnd(p, e),
+                   p[max(0, k - 3)..<k].contains(where: { $0.text == "between" }) { return false }
             }
             return true
         }

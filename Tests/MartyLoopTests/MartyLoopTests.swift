@@ -1528,6 +1528,22 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(QuoteCheck.found("The pressure is between 10 and 20 bar", in: "<p>The pressure is between 10 and 20 bar.</p>"), "The pressure is between 10 and 20 bar | The pressure is between 10 and 20 bar.")
         XCTAssertTrue(QuoteCheck.found("it has 3 engines and 2 fans", in: "<p>it has 3 engines and 2 fans</p>"), "it has 3 engines and 2 fans | it has 3 engines and 2 fans")
         XCTAssertTrue(QuoteCheck.found("It's rated at 144 kgf", in: "<p>It's rated at 144 kgf.</p>"), "It's rated at 144 kgf | It's rated at 144 kgf.")
+        // Round 18: compound units after a number; multiword units at range ends; quoted numbers.
+        XCTAssertFalse(QuoteCheck.found("The rated torque is 10 N", in: "<p>The rated torque is 10 N-m at the shaft.</p>"), "The rated torque is 10 N | The rated torque is 10 N-m at the shaft.")
+        XCTAssertFalse(QuoteCheck.found("The rated torque is 10 ft", in: "<p>The rated torque is 10 ft-lb at the shaft.</p>"), "The rated torque is 10 ft | The rated torque is 10 ft-lb at the shaft.")
+        XCTAssertFalse(QuoteCheck.found("The pack holds 10 amp", in: "<p>The pack holds 10 amp-hours of charge.</p>"), "The pack holds 10 amp | The pack holds 10 amp-hours of charge.")
+        XCTAssertFalse(QuoteCheck.found("20 degrees Celsius during operation", in: "<p>The temperature stays between 10 degrees Celsius and 20 degrees Celsius during operation.</p>"), "20 degrees Celsius during operation | The temperature stays between 10 degrees Celsius and 20 degrees Celsius during operation.")
+        XCTAssertFalse(QuoteCheck.found("The temperature stays between 10 degrees Celsius", in: "<p>The temperature stays between 10 degrees Celsius and 20 degrees Celsius during operation.</p>"), "The temperature stays between 10 degrees Celsius | The temperature stays between 10 degrees Celsius and 20 degrees Celsius during operation.")
+        XCTAssertFalse(QuoteCheck.found("20 degrees is the upper limit", in: "<p>10 degrees to 20 degrees is the upper limit</p>"), "20 degrees is the upper limit | 10 degrees to 20 degrees is the upper limit")
+        XCTAssertFalse(QuoteCheck.found("The temperature stays at 10 degrees Celsius", in: "<p>The temperature stays at 10 degrees Celsius ± 2 degrees.</p>"), "The temperature stays at 10 degrees Celsius | The temperature stays at 10 degrees Celsius ± 2 degrees.")
+        XCTAssertTrue(QuoteCheck.found("The rated torque is 10 N-m at the shaft", in: "<p>The rated torque is 10 N-m at the shaft.</p>"), "The rated torque is 10 N-m at the shaft | The rated torque is 10 N-m at the shaft.")
+        XCTAssertTrue(QuoteCheck.found("The pack holds 10 amp-hours of charge", in: "<p>The pack holds 10 amp-hours of charge.</p>"), "The pack holds 10 amp-hours of charge | The pack holds 10 amp-hours of charge.")
+        XCTAssertTrue(QuoteCheck.found("a five engine suit", in: "<p>a five-engine suit</p>"), "a five engine suit | a five-engine suit")
+        XCTAssertTrue(QuoteCheck.found("a five-engine suit", in: "<p>a five engine suit</p>"), "a five-engine suit | a five engine suit")
+        XCTAssertTrue(QuoteCheck.found("The sensor displays 10 when ready", in: "<p>The sensor displays '10' when ready.</p>"), "The sensor displays 10 when ready | The sensor displays '10' when ready.")
+        XCTAssertTrue(QuoteCheck.found("The sensor displays 10 when ready", in: "<p>The sensor displays ‘10’ when ready.</p>"), "The sensor displays 10 when ready | The sensor displays ‘10’ when ready.")
+        XCTAssertTrue(QuoteCheck.found("The model from the 90s stands tall", in: "<p>The model from the '90s stands tall</p>"), "The model from the 90s stands tall | The model from the '90s stands tall")
+        XCTAssertTrue(QuoteCheck.found("It stays at 10 degrees Celsius during operation", in: "<p>It stays at 10 degrees Celsius during operation.</p>"), "It stays at 10 degrees Celsius during operation | It stays at 10 degrees Celsius during operation.")
         // Table cells are separate; inline markup joins.
         let specs = "<p>Maximum thrust of the rig</p><table><tr><th>Motors</th><td>1</td><td>144 kgf</td></tr></table>"
         XCTAssertFalse(QuoteCheck.found("Maximum thrust [\u{2026}] 1,144 kgf", in: specs))
