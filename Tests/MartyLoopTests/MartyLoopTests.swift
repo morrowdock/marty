@@ -1447,6 +1447,15 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(QuoteCheck.found("The rating was 10", in: "<p>The rating was \u{201C}10\u{201D} on this scale.</p>"))
         XCTAssertTrue(QuoteCheck.found("The rating was 10 on this scale", in: "<p>The rating was \"10\" on this scale.</p>"))
         XCTAssertTrue(QuoteCheck.found("x >= 10 bar is required", in: "<p>x &ge; 10 bar is required</p>"))
+        XCTAssertFalse(QuoteCheck.found("10^6 pascals of pressure", in: "<p>It holds 1.5\u{00B7}10^6 pascals of pressure.</p>"))
+        XCTAssertFalse(QuoteCheck.found("10^6 pascals of pressure", in: "<p>It holds 1.5 \u{22C5} 10^6 pascals of pressure.</p>"))
+        XCTAssertFalse(QuoteCheck.found("10^6 pascals of pressure", in: "<p>It holds 1.5&middot;10^6 pascals of pressure.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The measured height was 511", in: "<p>The measured height was 5\u{2019}11\u{201D} tall.</p>"))
+        XCTAssertTrue(QuoteCheck.found("The measured height was 5'11\"", in: "<p>The measured height was 5\u{2019}11\u{201D} tall.</p>"))
+        XCTAssertFalse(QuoteCheck.found(".5 bar is required for operation", in: "<p>&ge; .5 bar is required for operation.</p>"))
+        XCTAssertFalse(QuoteCheck.found(".5 mm is the allowed tolerance", in: "<p>\u{00B1} .5 mm is the allowed tolerance</p>"))
+        XCTAssertTrue(QuoteCheck.found("The rating was -5 on this scale", in: "<p>The rating was \"-5\" on this scale</p>"))
+        XCTAssertTrue(QuoteCheck.found("The rating was 1 144 on this scale", in: "<p>The rating was \u{201C}1 144\u{201D} on this scale</p>"))
         // Table cells are separate; inline markup joins.
         let specs = "<p>Maximum thrust of the rig</p><table><tr><th>Motors</th><td>1</td><td>144 kgf</td></tr></table>"
         XCTAssertFalse(QuoteCheck.found("Maximum thrust [\u{2026}] 1,144 kgf", in: specs))

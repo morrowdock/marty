@@ -217,11 +217,12 @@ public enum QuoteCheck {
         t = t.unicodeScalars.filter { !["\u{200B}", "\u{200C}", "\u{200D}", "\u{2060}", "\u{FEFF}", "\u{00AD}", "\u{180E}"].contains($0) }
             .reduce(into: "") { $0.unicodeScalars.append($1) }
         t = t.lowercased()
-        // An ASCII prime after a digit is a unit mark ("5'11\"" is 5′11″), kept, never a quote mark (dropping it would make
-        // "511"), unless a quote mark opened right before the number ("\"10\"" is a quoted 10). Curly quotes are quote
-        // marks (folded below).
-        t = t.replacingOccurrences(of: "(?<!['\"][0-9.,]{1,12})(?<=[0-9])'", with: "\u{2032}", options: .regularExpression)
-            .replacingOccurrences(of: "(?<!['\"][0-9.,]{1,12})(?<=[0-9])\"", with: "\u{2032}\u{2032}", options: .regularExpression)   // as NFKC writes ″
+        // A prime after a digit, ASCII or curly, is a unit mark ("5'11\"" and "5’11”" are 5′11″), kept, never a quote mark
+        // (dropping it would make "511"), unless a quote mark opened right before the number ("\"10\"", "“-5”" are
+        // quoted numbers).
+        let opened = "(?<!['\"\u{2018}\u{201C}][-+0-9., ]{1,16})"
+        t = t.replacingOccurrences(of: opened + "(?<=[0-9])['\u{2019}]", with: "\u{2032}", options: .regularExpression)
+            .replacingOccurrences(of: opened + "(?<=[0-9])[\"\u{201D}]", with: "\u{2032}\u{2032}", options: .regularExpression)   // as NFKC writes ″
         for (a, b) in [("\u{2018}", "'"), ("\u{2019}", "'"), ("\u{201A}", "'"), ("\u{201B}", "'"),
                        ("\u{201C}", "\""), ("\u{201D}", "\""), ("\u{201E}", "\""), ("\u{00AB}", "\""), ("\u{00BB}", "\""),
                        ("\u{2010}", "-"), ("\u{2011}", "-"), ("\u{2012}", "-"), ("\u{2013}", "-"), ("\u{2014}", "-"), ("\u{2015}", "-"),
@@ -235,9 +236,9 @@ public enum QuoteCheck {
         // number is one expression however the page spaces it.
         t = t.replacingOccurrences(of: "(?<![<>])>=|=>", with: "\u{2265}", options: .regularExpression)
             .replacingOccurrences(of: "<=(?!>)|=<", with: "\u{2264}", options: .regularExpression)
-        t = t.replacingOccurrences(of: "(?<=[0-9]) ?[x\u{00D7}] ?(?=[0-9]|[.-][0-9])", with: "\u{00D7}", options: .regularExpression)
+        t = t.replacingOccurrences(of: "(?<=[0-9]) ?[x\u{00D7}\u{00B7}\u{22C5}\u{2219}] ?(?=[0-9]|[.-][0-9])", with: "\u{00D7}", options: .regularExpression)
         t = t.replacingOccurrences(of: "(?<=[0-9]) ?([\\^/\u{2044}\u{00B1}:+]) ?(?=[0-9+.-])", with: "$1", options: .regularExpression)
-        t = t.replacingOccurrences(of: "([\u{00B1}<>\u{2264}\u{2265}~\u{2248}$\u{20AC}\u{00A3}\u{00A5}]) (?=[0-9])", with: "$1", options: .regularExpression)
+        t = t.replacingOccurrences(of: "([\u{00B1}<>\u{2264}\u{2265}~\u{2248}$\u{20AC}\u{00A3}\u{00A5}]) (?=[0-9]|[.-][0-9])", with: "$1", options: .regularExpression)
         t = t.replacingOccurrences(of: "(?<=[a-z]) ?([\\^/]) ?(?=[a-z0-9])", with: "$1", options: .regularExpression)
         t = t.replacingOccurrences(of: "(?<=[0-9]) (?=[%\u{2030}\u{00B0}\u{2032}\u{2033}])", with: "", options: .regularExpression)
         // Spaces around a dash vary ("suit—with", "suit - with", "at − 5"): none on either side. A quote part that
