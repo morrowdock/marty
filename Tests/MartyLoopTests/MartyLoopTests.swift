@@ -1174,7 +1174,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(FactCheck.reason(none), "fact.notPublished.annotation.lV")
         XCTAssertTrue(none.first?.line.contains("not found in this search") == true)
         XCTAssertFalse(FactCheck.findings(["v": 2, "kind": "assembly", "title": "The total thrust is unpublished"], evidence: .init()).isEmpty)
-        for phrase in ["The figure hasn't been published", "The figure hasn\u{2019}t been published", "The figure is not publicly released", "The data was never made public"] {
+        for phrase in ["The figure hasn't been published", "The figure hasn\u{2019}t been published", "The figure is not publicly released", "The data was never made public", "The data isn't publicly available", "The maker has not made the data public"] {
             XCTAssertEqual(FactCheck.findings(["v": 2, "kind": "assembly", "title": phrase], evidence: .init()).first?.kind, "notPublished", phrase)
         }
         var sourced = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [["id": "F1", "claim": "Thrust figures", "label": "CLAIM",
@@ -1223,6 +1223,7 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(QuoteCheck.pageDate(#"<h1>Title</h1><p>Updated at <time>June 1, 2023</time></p><time>May 2, 2021</time>"#), "2021-05-02")
         XCTAssertNil(QuoteCheck.pageDate(#"<h1>Title</h1><div class="date"><time>June 1, 2023</time> (updated)</div>"#))
         XCTAssertEqual(QuoteCheck.pageDate(#"<h1>Title</h1><p>Published <time>May 2, 2021</time> Updated <time>June 1, 2023</time></p>"#), "2021-05-02")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<h1>Title</h1><p><time>May 2, 2021</time> Updated: <span><time>June 1, 2023</time></span></p>"#), "2021-05-02")
         XCTAssertEqual(QuoteCheck.pageDate(#"<meta content="2019-03-03" name="date"><meta name="pubdate" content="2020-04-04">"#), "2019-03-03", "document order")
         XCTAssertEqual(QuoteCheck.pageDate(#"<script type="application/ld+json">{"@type": "Article", "datePublished": "2021-02-29"}</script><h1>T</h1><time>May 2, 2021</time>"#), "2021-05-02")
         XCTAssertEqual(QuoteCheck.pageDate(#"<h1>FEATURE: Meet the man</h1><time class="time" datetime="2020-51-09">09 Apr 2020</time>"#), "2020-04-09")
@@ -1261,6 +1262,9 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(Set(QuoteCheck.statedNumbers("five,six motors")), ["5", "6"])
         XCTAssertEqual(QuoteCheck.statedNumbers("85.06 mph", inOrder: true), ["85.06"])
         XCTAssertEqual(QuoteCheck.statedNumbers("1,200 kg", inOrder: true), ["1200"])
+        XCTAssertEqual(QuoteCheck.statedNumbers("The engine produces 1 144 horsepower", inOrder: true), ["1144"])
+        XCTAssertEqual(QuoteCheck.statedNumbers("The engine produces 1\u{202F}144 horsepower", inOrder: true), ["1144"])
+        XCTAssertFalse(QuoteCheck.statedNumbers("The engine produces 1 144 horsepower").contains("144"))
         XCTAssertEqual(QuoteCheck.statedNumbers("Mk4", inOrder: true), ["4"]); XCTAssertEqual(QuoteCheck.statedNumbers("v2", inOrder: true), ["2"])
         XCTAssertFalse(QuoteCheck.statedNumbers("One of the devices flew").contains("1"))
         XCTAssertTrue(QuoteCheck.statedNumbers("a single unit").contains("1"))

@@ -337,7 +337,10 @@ public enum QuoteCheck {
 
     /// The numbers a quote states: its digits, number words ("five"), and Roman version numerals after a version
     /// word ("Mk IV" is 4).
-    @MainActor static func statedNumbers(_ quote: String, inOrder: Bool = false) -> [String] {
+    @MainActor static func statedNumbers(_ rawQuote: String, inOrder: Bool = false) -> [String] {
+        // Digit groups are joined first, as the quote matcher joins them ("1 144" and "1\u{202F}144" are 1144).
+        let quote = groupedThousands(rawQuote.replacingOccurrences(of: "(?<=[0-9])[\u{00A0}\u{202F}\u{2009}](?=[0-9]{3}(?![0-9]))",
+                                                                   with: ",", options: .regularExpression))
         // Words in order: a token with a digit gives its whole numeric spans ("85.06", "1,200", the 4 of "Mk4"); the
         // letter parts of other tokens give words, and any punctuation after a word ends a number-word run.
         var words: [(w: String, stop: Bool)] = []
@@ -893,7 +896,9 @@ public enum QuoteCheck {
                 let tail = rest[rest.index(after: gt)...]
                 let segment = decodeEntities(String(tail.prefix { $0 != "<" })).lowercased()
                 let nextTag = tail.drop { $0 != "<" }.lowercased()
-                let introducesNext = nextTag.hasPrefix("<time") || nextTag.range(of: #"^<[a-z0-9]+[^>]*(date|byline|publish|posted)"#, options: .regularExpression) != nil
+                // (Through neutral inline wrappers: "Updated: <span><time>…".)
+                let unwrapped = nextTag.replacingOccurrences(of: #"^(?:<(?:span|b|strong|em|i|a|small|font)\b[^>]*>\s*){1,3}"#, with: "", options: .regularExpression)
+                let introducesNext = unwrapped.hasPrefix("<time") || unwrapped.range(of: #"^<[a-z0-9]+[^>]*(date|byline|publish|posted)"#, options: .regularExpression) != nil
                 if segment.range(of: #"^\s*[\(\[,\-\x{2013}\x{2014}]?\s*(updated|modified|revised)"#, options: .regularExpression) != nil, !introducesNext { continue }
             }
             let text = decodeEntities(inner.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression))

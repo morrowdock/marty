@@ -21,7 +21,7 @@ import MartyEngine
     }
 
     /// "Not published" and its forms: an absence stated as a fact.
-    static let absence = #"(?i)\b(?:not|never)\s+(?:been\s+|yet\s+|publicly\s+|officially\s+|made\s+)*(?:published|disclosed|released(?:\s+publicly)?|public)\b|\bunpublished\b|\bundisclosed\b"#
+    static let absence = #"(?i)\b(?:not|never)\s+(?:been\s+|yet\s+|publicly\s+|officially\s+|made\s+)*(?:published|disclosed|released(?:\s+publicly)?|public)\b|\bnot\s+(?:been\s+)?publicly\s+available\b|\bnot\s+made\s+(?:[a-z]+\s+){0,3}public\b|\bunpublished\b|\bundisclosed\b"#
 
     /// The first absence claim in `text` ("not published", "hasn't been published", "not publicly released", "not
     /// made public", "unpublished"), with negative contractions read as "not".
