@@ -218,7 +218,8 @@ the MCP server uses), so a run needs no MCP client.
    label is anchored on the named inner part, not on the casing or body, and an
    inside whose real parts are not public is labelled "<class>-style <kind>
    (example)" with "Not confirmed <brand> hardware". Each unit the lesson names
-   is shown in a view that faces it (a back unit: camera "back") and every named
+   is shown in a view that faces it (a back unit: camera "back", "backLeft" or
+   "backRight") and every named
    unit in one whole-figure view; the guide lists the camera presets exactly
    (`MartyEngine.cameraPresets`), as do the `view.camera` and `step.camera`
    repair hints; force units are "lbf" and "kgf"; a board has no text caption
@@ -236,9 +237,8 @@ the MCP server uses), so a run needs no MCP client.
    innovation pages by name with its current model name as a row, the
    inventor's own account of how thrust or load is shared, and quotes of at
    least 16 characters (a shorter quote is reported "quote too short to
-   check"). Before every check Marty writes a bare part anchor (`{"part": id}`
-   with no point or offset, which the engine refuses) as the part's centre
-   (`"point": "centre"`); the attempt lists them in `formFixed`. Free text (a figure, a
+   check"). A bare part anchor (`{"part": id}`) is the part's centre (the
+   engine accepts it since PR #46). Free text (a figure, a
    note) is a label on a `{"world": [x, y, z]}` anchor beside the model, not on
    a part. The same general honesty rules apply to
    every subject: a load share is quoted with its source, never invented; no

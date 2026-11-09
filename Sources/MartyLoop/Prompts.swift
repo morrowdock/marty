@@ -147,8 +147,8 @@ public enum MartyPrompts {
         - Name the product version and years the model shows (title or first step), from the table. Anchor each inside
           label on the named inner part, not on the casing or body. An inside whose real parts are not public is
           labelled "<class>-style <kind> (example)" with "Not confirmed <brand> hardware".
-        - Show each named unit in a view facing it (back unit: camera "back") and all in one whole-figure view. Force:
-          "lbf", "kgf".
+        - Show each named unit in a view facing it (back unit: a back camera) and all in one whole-figure view.
+          Force: "lbf", "kgf".
         - Physics words: a hover is a balance (the upward parts of the thrusts balance the weight of person, device and
           fuel, and the side forces and turning moments balance), never "thrust equals weight"; fuel burns with the
           oxygen in the compressed air; thrust is the reaction to the gas accelerated out of the nozzle. Steering: name
@@ -168,7 +168,7 @@ public enum MartyPrompts {
          "title" and "steps"... }, "beats": [...]}. No board text item (it shows on every beat).
         - Keep the table small (at most 4 rows; 12 characters a cell; numbers with absolute value below 1000000) and
           fill it in the first beat that needs it: {"op": "set", "id": "t", "key": "cells", "value": [["Item", "Value",
-          "Source"], ["<name>", <number>, "<publisher>"]]} in that beat's "ops" (the board keeps at least one item).
+          "Source"], ["<name>", <number>, "<publisher>"]]} in that beat's "ops" (a board keeps one item).
         - beats (1 to 16) replace steps: {"say": "<= 200 chars", "highlight": [ids, also "t.r1" for row 1; the header
           is row 0], "view":
           {"camera", "spin", "explode", "orbit", "section", "ghost", "focus", "annotate", "pose", "hide", "show"},
@@ -406,9 +406,9 @@ public enum MartyPrompts {
             ("annotation.anchor.hidden", "A label dot or pointer tip is hidden, ghosted, off screen or covered by another part in a view that shows it: apply the engine's checked suggestion below, or one of the alternatives it lists for that dot (only those: a part a label or pointer sits on must not be ghosted)."),
             ("annotation.arrow.hidden", "An arrow (force, flow, motion or pointer) is mostly hidden or off screen in a view that shows it: apply the engine's checked move below (it keeps the arrow's direction and length in every view), or one of the alternatives it lists for that arrow (only those: a part a label or pointer sits on must not be ghosted)."),
             ("annotation.arrow.untested", "The engine's arrow test ran out of budget: show fewer arrows in that view, or hide parts that view does not need and no label or arrow sits on."),
-            ("view.camera", "A beat view's \"camera\" must be one of the presets, exactly: \(MartyEngine.cameraPresets.joined(separator: ", ")) (for a back view: \"back\")."),
-            ("step.camera", "A step's \"camera\" must be one of the presets, exactly: \(MartyEngine.cameraPresets.joined(separator: ", ")) (for a back view: \"back\")."),
-            ("anchor.form", "An anchor is a part id, {\"part\", \"offset\": [x, y, z]}, {\"part\", \"point\": \"centre\"} or {\"world\": [x, y, z]}."),
+            ("view.camera", "A beat view's \"camera\" must be one of the presets, exactly: \(MartyEngine.cameraPresets.joined(separator: ", ")) (for a back view: \"back\", \"backLeft\" or \"backRight\")."),
+            ("step.camera", "A step's \"camera\" must be one of the presets, exactly: \(MartyEngine.cameraPresets.joined(separator: ", ")) (for a back view: \"back\", \"backLeft\" or \"backRight\")."),
+            ("anchor.form", "An anchor is a part id, {\"part\"} (its centre), {\"part\", \"offset\": [x, y, z]}, {\"part\", \"point\": \"centre\"} or {\"world\": [x, y, z]}."),
             ("annotation.anchor.untested", "The engine's anchor test ran out of budget: show fewer labels in that view, or hide parts that view does not need and no label or arrow sits on."),
             ("parts.count", "\"parts\" holds 1 to 48 entries, and component expansion may make at most 96 parts (a microTurbojet is 11, a mannequin 12): use fewer component instances, or plain shapes for the units that are not cut open."),
             ("parts.resolved", "The model has too many parts after component and repeat expansion: use fewer component instances, or plain shapes for the units that are not cut open."),

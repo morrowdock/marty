@@ -172,33 +172,6 @@ public final class MartyLoop {
         return out
     }
 
-    /// The document with each bare part anchor of an annotation (`{"part": id}` with no point or offset, which the
-    /// engine refuses) written as the part's centre (`{"part": id, "point": "centre"}`); the annotation ids changed.
-    static func bareAnchorsFixed(_ document: Any) -> (document: Any, fixed: [String]) {
-        var fixed: [String] = []
-        func anchors(_ ann: [String: Any]) -> [String: Any] {
-            var ann = ann
-            for kind in ["labels", "arrows", "dimensions"] {
-                guard var list = ann[kind] as? [[String: Any]] else { continue }
-                for n in list.indices {
-                    for (k, v) in list[n] {
-                        guard let o = v as? [String: Any], o.count == 1, let part = o["part"] as? String else { continue }
-                        list[n][k] = ["part": part, "point": "centre"]
-                        if let id = list[n]["id"] as? String, !fixed.contains(id) { fixed.append(id) }
-                    }
-                }
-                ann[kind] = list
-            }
-            return ann
-        }
-        guard var d = document as? [String: Any] else { return (document, []) }
-        if let ann = d["annotations"] as? [String: Any] { d["annotations"] = anchors(ann) }
-        if var solid = d["solid"] as? [String: Any], let ann = solid["annotations"] as? [String: Any] {
-            solid["annotations"] = anchors(ann); d["solid"] = solid
-        }
-        return (d, fixed)
-    }
-
     /// The beats (explainer) or steps (assembly) that pose parts, in words for the answer: "beat 4 poses pilot
     /// {...}". An answer may not say the model does not show what one of them shows.
     static func posedViews(_ document: Any?) -> [String] {
@@ -467,7 +440,6 @@ public final class MartyLoop {
             let reply = ReplyJSON.object(text)
             var document: Any? = nil
             var trimmedNow: [String] = []
-            var formFixedNow: [String] = []
             var autoFixed: [String] = []
             if let reply { document = reply["document"] ?? (reply["kind"] != nil ? reply as Any : nil) }
             let components = reply?["components"] as? [Any] ?? []
@@ -476,9 +448,7 @@ public final class MartyLoop {
                 report = ["ok": false, "reason": "components.count", "part": NSNull()]
             } else if let doc0 = document {
                 // Over-long texts are cut at a word before the check (recorded); then strict, as the engine recommends.
-                let (formed, formFixed) = Self.bareAnchorsFixed(Self.exactTableNumbers(doc0))
-                formFixedNow = formFixed
-                let (doc1, cut) = TextBudget.trimmed(formed)
+                let (doc1, cut) = TextBudget.trimmed(Self.exactTableNumbers(doc0))
                 document = doc1; trimmedNow = cut
                 do { report = try engine.check(document: doc1, ref: nil, components: components, strict: true) }
                 catch let e as ToolError { report = ["ok": false, "reason": e.reason] }
@@ -502,7 +472,6 @@ public final class MartyLoop {
                     + "; this is the document after them.)\n" + MartyJSON.string(["document": document ?? NSNull(), "components": components])
             var outcome = Self.outcome(report)
             if !trimmedNow.isEmpty { outcome["trimmed"] = trimmedNow }
-            if !formFixedNow.isEmpty { outcome["formFixed"] = formFixedNow }
             if !autoFixed.isEmpty { outcome["autoFixed"] = autoFixed }
             note(i, outcome)
             attempts.append(outcome)
@@ -863,8 +832,7 @@ extension MartyLoop {
                 user += "\n\n\"document\" must be the whole changed explainer object, or null. Reply again."
                 continue
             }
-            let (formedDoc, explainerFormFixed) = Self.bareAnchorsFixed(Self.exactTableNumbers(changed0))
-            let (trimmedDoc, explainerCut) = TextBudget.trimmed(formedDoc)
+            let (trimmedDoc, explainerCut) = TextBudget.trimmed(Self.exactTableNumbers(changed0))
             var changed = trimmedDoc as? [String: Any] ?? changed0
             var r: [String: Any]
             var autoFixed: [String] = []
@@ -905,7 +873,6 @@ extension MartyLoop {
             }
             var o = Self.outcome(r)
             if !explainerCut.isEmpty { o["trimmed"] = explainerCut }
-            if !explainerFormFixed.isEmpty { o["formFixed"] = explainerFormFixed }
             if !autoFixed.isEmpty { o["autoFixed"] = autoFixed }
             note(i, o); attempts.append(o)
             if (r["ok"] as? Bool) == true {

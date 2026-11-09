@@ -1,7 +1,7 @@
 # Design note: the Marty MCP tool set
 
 Status: implemented in `marty-mcp` 0.2.0. Engine pin: MartyGraphics `main` at
-`283d754fe276fc375e2124d16a5f30c422deb8a2` (PR #20 lessons, PR #21 open vocabulary 1: facts,
+`dfc521a83c8fdefc1f918a6d1bd1065e7e3a89b2` (PR #20 lessons, PR #21 open vocabulary 1: facts,
 placeholders, truth tiers, frame lints, strict profile, PR #30: the report and render plan as
 library API, PR #31: annotations: labels, arrows, measured dimensions, and PR #32: explainer
 documents, and PR #34: per-step framing with `focus`, and the `mannequin` and
@@ -9,7 +9,7 @@ documents, and PR #34: per-step framing with `focus`, and the `mannequin` and
 the adaptive board pane, mannequin anchor descriptions and the annotation visibility
 detail, PR #37: unblocked focus, story move cuts, `microTurbojet` and the `parts.resolved`
 detail, PR #39: step `pose`, `hide`/`show`, instance ids in step lists, PR #40: strict label and pointer
-anchors with `anchorIssues`, PR #43: anchor `suggest`/`noSuggest`, limit details and `repair` lines, PR #44: routed story camera moves and strict arrow visibility with `arrowIssues`, PR #45: the story slides the explainer board pane in and out). Marty's `render` does not write the CLI's `loop.mp4` or `story.mp4`; use
+anchors with `anchorIssues`, PR #43: anchor `suggest`/`noSuggest`, limit details and `repair` lines, PR #44: routed story camera moves and strict arrow visibility with `arrowIssues`, PR #45: the story slides the explainer board pane in and out, PR #46: `backLeft`/`backRight` camera presets and bare `{"part"}` anchors at the part centre). Marty's `render` does not write the CLI's `loop.mp4` or `story.mp4`; use
 `marty-solid render` for them. `render` draws the
 annotation overlay on the hero and step stills, as `marty-solid render` does.
 

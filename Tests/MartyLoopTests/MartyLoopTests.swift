@@ -1308,7 +1308,7 @@ final class MartyLoopTests: XCTestCase {
             XCTAssertFalse(h.contains("ghost the part in the way") || h.contains("or ghost parts"), "\(r): \(h)")
         }
         // Guide lines and exact table numbers.
-        XCTAssertTrue(author.contains("camera \"back\"") && author.contains("\"lbf\"") && author.contains("\"kgf\""))
+        XCTAssertTrue(author.contains("back unit: a back camera") && author.contains("\"lbf\"") && author.contains("\"kgf\""))
         XCTAssertFalse(author.contains("three-quarter-back"), "not a preset name")
         XCTAssertTrue(MartyPrompts.followUpSystem().contains("at most two arrows"))
         let board: [String: Any] = ["board": ["items": [["id": "t", "k": "table", "cells": [["Record", 85.06], ["Engines", 5]]]]]]
@@ -1328,23 +1328,21 @@ final class MartyLoopTests: XCTestCase {
     /// deny a posed view, short quotes reported as such, counts written as words or articles.
     func testRound2iFormatAndFollowUp() throws {
         let author = MartyPrompts.authorSystem(parts: "x", example: "{}", explainer: nil)
-        for p in ["hero", "front", "side", "top", "low", "back", "iso"] { XCTAssertTrue(author.contains(p), p) }
+        for p in ["hero", "front", "side", "top", "low", "back", "iso", "backLeft", "backRight"] { XCTAssertTrue(author.contains(p), p) }
         XCTAssertTrue(author.contains("Cameras: " + MartyEngine.cameraPresets.joined(separator: ", ") + " only"))
         XCTAssertTrue(MartyPrompts.hint(for: "view.camera")?.contains(MartyEngine.cameraPresets.joined(separator: ", ")) == true)
         XCTAssertFalse(MartyPrompts.authorSystem(parts: "x", example: "{}", explainer: MartyExamples.explainerExample).contains("Key figures"))
         XCTAssertFalse(MartyExamples.explainerExample.contains("Key figures"))
         XCTAssertTrue(MartyPrompts.researchSystem(maxSearches: 10).contains("product, technology or innovation"))
 
-        // {"part": id} alone becomes the part's centre, and the engine accepts it.
+        // The engine accepts a bare {"part": id} as the part's centre (no rewrite by Marty).
         var doc = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(MartyExamples.formatExample.utf8)) as? [String: Any])
         var ann = try XCTUnwrap(doc["annotations"] as? [String: Any]), labels = try XCTUnwrap(ann["labels"] as? [[String: Any]])
         labels[0]["at"] = ["part": "shaft.input"]; ann["labels"] = labels; doc["annotations"] = ann
-        let (fixed, ids) = MartyLoop.bareAnchorsFixed(doc)
-        XCTAssertEqual(ids, ["lShaft"])
-        let at = ((((fixed as? [String: Any])?["annotations"] as? [String: Any])?["labels"] as? [[String: Any]])?.first)?["at"] as? [String: Any]
-        XCTAssertEqual(at?["point"] as? String, "centre")
-        let report = try MartyEngine(outputRoot: nil).check(document: fixed, ref: nil, components: [], strict: false)
+        let report = try MartyEngine(outputRoot: nil).check(document: doc, ref: nil, components: [], strict: false)
         XCTAssertNotEqual(report["reason"] as? String, "anchor.form", "\(report["reason"] ?? "")")
+        XCTAssertEqual(MartyEngine.cameraPresets.count, 9)
+        XCTAssertTrue(MartyEngine.cameraPresets.contains("backLeft") && MartyEngine.cameraPresets.contains("backRight"))
 
         // The no-change answer: posed views go to the prompt, and a denial gets one repair.
         let explainer: [String: Any] = ["kind": "explainer", "beats": [["say": "Hover."], ["say": "One arm raised steers.", "view": ["pose": ["pilot": ["with": ["shoulderL": 45]]]]]]]
