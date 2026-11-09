@@ -1062,6 +1062,13 @@ final class MartyLoopTests: XCTestCase {
         // The 60 % rule and its boundary.
         XCTAssertNil(TextBudget.cutAtWord(String(repeating: "x", count: 50) + " " + String(repeating: "y", count: 60), limit: 80))
         XCTAssertEqual(TextBudget.cutAtWord(String(repeating: "x", count: 70) + " " + String(repeating: "y", count: 20), limit: 80), String(repeating: "x", count: 70))
+        // The boundary: exactly 60 % stays (60 of 100) is cut; 59 of 100 is left.
+        XCTAssertEqual(TextBudget.cutAtWord(String(repeating: "x", count: 60) + " " + String(repeating: "y", count: 39), limit: 80), String(repeating: "x", count: 60))
+        XCTAssertNil(TextBudget.cutAtWord(String(repeating: "x", count: 59) + " " + String(repeating: "y", count: 40), limit: 80))
+        // Surrounding white space is not counted after filling (the engine strips it).
+        let padded: [String: Any] = ["v": 2, "kind": "assembly", "title": "t", "annotations": ["labels": [["id": "l", "at": ["world": [0, 0, 0]],
+                                     "text": " " + String(repeating: "A", count: 58) + " {shaft.input.speed}"]]], "steps": [["say": "x"]]]
+        XCTAssertEqual(TextBudget.issues(padded), [])
         // A caption with a placeholder is never cut; its authored length is reported exactly.
         let say = "The wheel turns {pair.wheel.speed|abs|frac} " + String(repeating: "and keeps turning ", count: 14)
         let d: [String: Any] = ["v": 2, "kind": "assembly", "title": "t", "steps": [["say": say]]]

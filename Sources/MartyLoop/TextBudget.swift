@@ -90,9 +90,11 @@ import MartyEngine
     static let placeholder = #"\{[A-Za-z_][A-Za-z0-9_.]*(?:\|[a-z]+)*\}"#
     static func hasPlaceholder(_ t: String) -> Bool { t.range(of: placeholder, options: .regularExpression) != nil }
 
-    /// The smallest filled length: each placeholder at least 1 character.
+    /// The smallest filled length: the text as the engine keeps it (surrounding white space removed), each
+    /// placeholder at least 1 character.
     static func filledAtLeast(_ t: String) -> Int {
-        t.replacingOccurrences(of: placeholder, with: "x", options: .regularExpression).unicodeScalars.count
+        t.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: placeholder, with: "x", options: .regularExpression).unicodeScalars.count
     }
 
     /// The fields certainly over a limit: the authored length over the authored cap, or (filled fields with
@@ -104,7 +106,10 @@ import MartyEngine
             let n = t.unicodeScalars.count
             if n > f.authored { return Issue(path: f.path, limit: f.authored, actual: n, atLeast: false) }
             if let cap = f.filled {
-                if !hasPlaceholder(t) { return n > cap ? Issue(path: f.path, limit: cap, actual: n, atLeast: false) : nil }
+                if !hasPlaceholder(t) {
+                    let kept = t.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars.count
+                    return kept > cap ? Issue(path: f.path, limit: cap, actual: kept, atLeast: false) : nil
+                }
                 let low = filledAtLeast(t)
                 return low > cap ? Issue(path: f.path, limit: cap, actual: low, atLeast: true) : nil
             }
