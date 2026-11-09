@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-08. Prompts `marty-prompts/18`. Engine pin as in
+Status: early preview, 2026-11-08. Prompts `marty-prompts/19`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -42,15 +42,22 @@ the MCP server uses), so a run needs no MCP client.
    redirects of its own. Marty reads the final response of curl's header dump
    (informational 1xx blocks skipped; `Location` only from the final block) and
    stops curl itself past its deadline (SIGTERM, then SIGKILL). Marty looks for the source's quote in the page text
-   (scripts, styles and tags removed, entities decoded, case, quote marks,
-   dashes and white space unified; an ellipsis splits the quote into parts
-   that must all be found in order; each part at least 16 characters and
-   matched on word boundaries, so a bare "85 mph" is no evidence and does not
-   match "185 mph"). The site that counts is the one the page finally came
+   (scripts, styles, tags and the page's reference marks such as "[3]" or
+   "[edit]" removed, entities decoded, Unicode NFKC, zero-width characters and
+   joiners such as U+2060 removed, case, quote marks, dashes and the spaces
+   around them, and white space unified; trailing punctuation ignored; an
+   ellipsis or a bracketed insertion such as "[…]" or "[s]" in the quote is a
+   gap, so the quote's parts must all be found in order; each part at least 8
+   characters and all parts together at least 16, matched on word boundaries,
+   so a bare "85 mph" is no evidence and does not match "185 mph"). A found
+   page's publication date (its JSON-LD or meta date, or its first `<time>`)
+   replaces the model's source date (the change is listed in `downgrades`). The site that counts is the one the page finally came
    from (a redirect to a blocked or free hosting site fails). Each source records its `check` ("quote found", "quote not found",
    "page failed (404)", "not checked (budget)"). A row with no found quote is
-   UNKNOWN (no value; its sources stay as notes), also when every source it gave
-   was dropped; a VERIFIED row needs found quotes on two sites and no found
+   UNKNOWN (no value; its sources stay as notes) and `unconfirmed`: it is left
+   out of the author's table, which says that such rows exist and must never be
+   called "not published", and it is no evidence for `fact.unsourced`; a row is
+   also UNKNOWN when every source it gave was dropped; a VERIFIED row needs found quotes on two sites and no found
    quote whose text or page text within 160 characters attributes the figure
    to its maker or one person ("claims", "according to", "the company", ...),
    else it is a CLAIM. The prompt also says that a maker's figure stays a CLAIM when
@@ -65,7 +72,11 @@ the MCP server uses), so a run needs no MCP client.
    (also past the 8 MB kept output; the last line without a newline too) as
    JSON, counts each WebSearch and WebFetch use, keeps the last top-level
    result event, and stops the call when it goes over
-   `--research-turns`
+   `--research-turns`. The research prompt asks the model to write each fact
+   as soon as it confirms it, as a line `ROW {...}`; when the call is stopped at
+   the limit, those rows make a partial table (`partial`, a `warning` in the
+   receipt, and a line in the plan and author prompts that the table is
+   partial); with no row written there is no table and the same warning
    (`adapter.research.turns`; then there is no table). The receipt's `research`
    block records the table with each source's check, `quoteChecks`, the
    downgrades, the counted `webTools`, the CLI's `turns` and the limits.
