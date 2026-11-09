@@ -1459,6 +1459,13 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertFalse(QuoteCheck.statesCountWord("1", "The device is powered by a few engines", entities: QuoteCheck.countedWords(value: "1 engine", claim: "Engines")))
         XCTAssertFalse(QuoteCheck.statesCountWord("2", "Both engine and battery are mounted at the rear", entities: QuoteCheck.countedWords(value: "2 engines", claim: "Engines")))
         XCTAssertFalse(QuoteCheck.statesCountWord("2", "The aircraft uses a second-generation engine", entities: QuoteCheck.countedWords(value: "2 engines", claim: "Engines")))
+        for hyphen in ["\u{2010}", "\u{2011}"] {
+            XCTAssertFalse(QuoteCheck.statesCountWord("2", "The aircraft uses a second\(hyphen)generation engine", entities: QuoteCheck.countedWords(value: "2 engines", claim: "Engines")))
+            var row = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [["id": "F1", "claim": "Engines", "value": "2 engines", "label": "CLAIM",
+                "sources": [["url": "https://a.org/9", "publisher": "A", "date": "2021", "quote": "The aircraft uses a second\(hyphen)generation engine"]]]]])))
+            row.checkQuotes(fetcher: TestPages(pages: ["https://a.org/9": "<p>The aircraft uses a second\(hyphen)generation engine.</p>"], fallback: nil))
+            XCTAssertTrue(row.rows[0].unconfirmed, "\(row.downgrades)")
+        }
         XCTAssertTrue(QuoteCheck.statesCountWord("2", "both engines are mounted low", entities: QuoteCheck.countedWords(value: "2 engines in the rear", claim: "Engines")))
         XCTAssertEqual(rows.rows[3].sources[0].check, "quote too short to check")
     }

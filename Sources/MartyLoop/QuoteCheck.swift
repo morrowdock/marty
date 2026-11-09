@@ -425,7 +425,9 @@ public enum QuoteCheck {
         let wanted = Set(entities.map(singular))
         guard !wanted.isEmpty else { return false }
         // One clause at a time: a cue never reaches into the next sentence, clause or parenthesis.
-        for clause in quote.lowercased().components(separatedBy: CharacterSet(charactersIn: ".,;:!?()[]\u{2014}\u{2013}")) {
+        // (Unicode hyphens are hyphens: "second\u{2011}generation" stays one compound.)
+        let folded = quote.lowercased().replacingOccurrences(of: "[\u{2010}\u{2011}\u{2012}\u{00AD}]", with: "-", options: .regularExpression)
+        for clause in folded.components(separatedBy: CharacterSet(charactersIn: ".,;:!?()[]\u{2014}\u{2013}")) {
             // (A hyphenated compound stays one word: "second-generation" is no ordinal, "five-engine" a count.)
             if statesCountWord(headline, clause: clause.split { !$0.isLetter && !$0.isNumber && $0 != "-" }.map(String.init), cue: cue, wanted: wanted) { return true }
         }
