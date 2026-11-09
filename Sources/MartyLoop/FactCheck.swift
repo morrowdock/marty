@@ -233,13 +233,47 @@ import MartyEngine
         let all = fields(d)
         for f in all {
             for x in check(f.field, f.text, evidence, namesOnly: f.namesOnly, placeholders: filled && !f.literal) where !out.contains(x) {
-                // An absence may cite its row in the field's own "unchecked" note.
-                if x.kind == "notPublished", all.contains(where: { $0.field == f.field + ".unchecked" && citesAbsenceRow($0.text, evidence) }) { continue }
+                // An absence may cite its row in the field's own note (see `noteFields`).
+                if x.kind == "notPublished", all.contains(where: { noteFields(f.field).contains($0.field) && citesAbsenceRow($0.text, evidence) }) { continue }
                 out.append(x)
             }
             if out.count >= limit { break }
         }
+        // An "assumed example" label is exempt from the number check, not from the absence rule.
+        for (field, text, note) in exampleTexts(d) where !citesAbsenceRow(text, evidence) && !citesAbsenceRow(note, evidence) {
+            if let r = text.range(of: absence, options: .regularExpression) {
+                let x = Finding(field: field, token: String(text[r]), kind: "notPublished")
+                if !out.contains(x) { out.append(x) }
+            }
+        }
         return Array(out.prefix(limit))
+    }
+
+    /// The fields that hold the note of field `f`: an annotation's "unchecked", a step's or beat's "unchecked" for its
+    /// say, and a board item's note ("note.<item id>.basis" or ".unchecked") for its cells and texts.
+    static func noteFields(_ f: String) -> Set<String> {
+        var out: Set<String> = [f + ".unchecked"]
+        if f.hasSuffix(".say") { out.insert(String(f.dropLast(4)) + ".unchecked") }
+        if let r = f.range(of: #"([A-Za-z0-9_\-]+)\.(?:r[0-9]+c[0-9]+|text|label|xl|yl|bars|unit|vals|ptrs|xr|yr)(?:[\[.].*)?$"#, options: .regularExpression) {
+            let id = String(f[r].split(separator: ".").first ?? "")
+            out.formUnion(["note.\(id).basis", "note.\(id).unchecked"])
+        }
+        return out
+    }
+
+    /// The texts and notes of "assumed example" annotations (exempt from the number check).
+    static func exampleTexts(_ d: [String: Any]) -> [(String, String, String)] {
+        var out: [(String, String, String)] = []
+        let solid = d["kind"] as? String == "explainer" ? d["solid"] as? [String: Any] ?? [:] : d
+        let ann = solid["annotations"] as? [String: Any] ?? [:]
+        for key in ["labels", "arrows", "dimensions"] {
+            for x in ann[key] as? [[String: Any]] ?? [] {
+                let note = x["unchecked"] as? String ?? ""
+                guard note.lowercased().hasPrefix("assumed example"), let text = x["text"] as? String else { continue }
+                out.append(("annotation.\(x["id"] as? String ?? "?")", text, note))
+            }
+        }
+        return out
     }
 
     /// Whether `text` cites a row whose confirmed quote says the fact is unpublished ("F3 ...").

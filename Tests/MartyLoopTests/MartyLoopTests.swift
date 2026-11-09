@@ -1182,6 +1182,13 @@ final class MartyLoopTests: XCTestCase {
         let cited: [String: Any] = ["v": 2, "kind": "assembly", "title": "A suit", "parts": [] as [Any],
                                     "annotations": ["labels": [["id": "lT", "at": ["world": [0, 0, 0]], "text": "Thrust figures: not published", "unchecked": "F1 A, claimed"]]]]
         XCTAssertTrue(FactCheck.findings(cited, evidence: sourcedEvidence).isEmpty)
+        // The note may be the step's or beat's own, or the table's; an "assumed example" label is not exempt.
+        let stepDoc: [String: Any] = ["v": 2, "kind": "assembly", "title": "A suit", "parts": [] as [Any],
+                                      "steps": [["say": "Its thrust figures are not published.", "unchecked": "F1 A, claimed"]]]
+        XCTAssertTrue(FactCheck.findings(stepDoc, evidence: sourcedEvidence).isEmpty, "\(FactCheck.findings(stepDoc, evidence: sourcedEvidence))")
+        let example: [String: Any] = ["v": 2, "kind": "assembly", "title": "A suit", "parts": [] as [Any],
+                                      "annotations": ["labels": [["id": "lE", "at": ["world": [0, 0, 0]], "text": "Thrust: not published", "unchecked": "assumed example"]]]]
+        XCTAssertEqual(FactCheck.findings(example, evidence: .init()).first?.kind, "notPublished")
         // The answer lint flags it too.
         XCTAssertFalse(MartyLoop.unsourcedSentences("The current version is not published.", sources: []).isEmpty)
 
@@ -1193,6 +1200,11 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(QuoteCheck.pageDate(#"<h1>Title</h1><span class="updated-date">June 1, 2023</span><span class="publish-date">May 2, 2021</span>"#), "2021-05-02")
         XCTAssertNil(QuoteCheck.isoDate("2021-02-29")); XCTAssertEqual(QuoteCheck.isoDate("2020-02-29"), "2020-02-29"); XCTAssertNil(QuoteCheck.isoDate("2020-02-31"))
         XCTAssertEqual(QuoteCheck.pageDate(#"<meta name="date" content="2020-51-09"><meta name="pubdate" content="2020-04-09">"#), "2020-04-09", "a later valid tag")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<h1>T</h1><time class="updated">June 1, 2023</time> <time class="published">May 2, 2021</time>"#), "2021-05-02")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<h1>T</h1><p>Updated: <time>June 1, 2023</time></p><span class="date">May 2, 2021</span>"#), "2021-05-02")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<h1>T</h1><span class="byline">By A. Writer</span><time>May 2, 2021</time>"#), "2021-05-02", "a date-free byline is skipped")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<meta content="2019-03-03" name="date"><meta name="pubdate" content="2020-04-04">"#), "2019-03-03", "document order")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<script type="application/ld+json">{"@type": "Article", "datePublished": "2021-02-29"}</script><h1>T</h1><time>May 2, 2021</time>"#), "2021-05-02")
         XCTAssertEqual(QuoteCheck.pageDate(#"<h1>FEATURE: Meet the man</h1><time class="time" datetime="2020-51-09">09 Apr 2020</time>"#), "2020-04-09")
         XCTAssertEqual(QuoteCheck.pageDate(#"<meta name="dcterms.date" content="13-10-2020">"#), "2020-10-13")
         XCTAssertNil(QuoteCheck.pageDate(#"<meta name="dcterms.date" content="08-10-2020">"#), "ambiguous day and month")
@@ -1219,6 +1231,10 @@ final class MartyLoopTests: XCTestCase {
             ["id": "F2", "claim": "Version", "value": "Mk4", "label": "CLAIM", "sources": [["url": "https://a.org/4", "publisher": "A", "date": "2020", "quote": "the current Mk IV suit is lighter"]]]]])))
         worded.checkQuotes(fetcher: TestPages(pages: ["https://a.org/4": "<p>There are five motors in this mechanism, and the current Mk IV suit is lighter.</p>"], fallback: nil))
         XCTAssertFalse(worded.rows[0].unconfirmed); XCTAssertFalse(worded.rows[1].unconfirmed)
+        XCTAssertTrue(QuoteCheck.statedNumbers("there are twenty-four modules").contains("24"))
+        XCTAssertFalse(QuoteCheck.statedNumbers("there are twenty-four modules").contains("4"))
+        XCTAssertEqual(QuoteCheck.statedNumbers("two hundred and five units"), ["205"])
+        XCTAssertTrue(QuoteCheck.statedNumbers("the Mk XII suit").contains("12"))
 
         // Generic hints for anchor and arrow refusals do not advise ghosting the part in the way.
         for r in ["annotation.arrow.hidden.aSteer", "annotation.anchor.hidden.lCore", "annotation.arrow.untested.a", "annotation.anchor.untested.l"] {

@@ -111,8 +111,10 @@ the MCP server uses), so a run needs no MCP client.
    such as a related article's or a comment's; microdata is not read, since its
    owner is not known; with no usable metadata, the date the page shows in its
    dateline under the title: the first `<time>` element's text, or an element
-   marked as a date, dateline, byline or publication line, not an "updated" or
-   "related" one, within the markup after the first `<h1>` ("October 8, 2020",
+   marked as a date, dateline, byline or publication line, that holds a date
+   and is not an "updated", "modified" or "related" one (by its attributes, its
+   text, the words right before it or a container around it), within the
+   markup after the first `<h1>` ("October 8, 2020",
    "09 Apr 2020"; body prose is never read for a date), whether or not the quote was found; a page that
    states none, or a page that was not fetched, leaves the date empty (the
    model's date is removed; every change is listed in `downgrades`). The site that counts is the one the page finally came
@@ -124,8 +126,8 @@ the MCP server uses), so a run needs no MCP client.
    also UNKNOWN and `unconfirmed` when every source it gave was dropped (only a
    row the model itself gave as UNKNOWN without sources is a researched
    absence, "not found in this search"); a row whose value's first number is in
-   none of its found quotes (number words such as "five" and Roman version
-   numerals such as "Mk IV" count as stated) (a value computed from other figures, such as a
+   none of its found quotes (number words such as "five" or "twenty-four", as
+   one number, and Roman version numerals such as "Mk IV" count as stated) (a value computed from other figures, such as a
    ratio of two rows) is also `unconfirmed` and left out; a VERIFIED row needs
    found quotes on two sites and no found
    quote whose text or page text within 160 characters attributes the figure
@@ -286,8 +288,10 @@ the MCP server uses), so a run needs no MCP client.
    `unchecked` text starts with "assumed example" is exempt. A finding is a
    refusal like an engine refusal. A text that says a fact is "not published"
    (also "unpublished", "never published", "undisclosed") is refused the same way
-   (`fact.notPublished.<field>`) unless the text, or its own `unchecked` note,
-   cites a row whose confirmed found quote itself says so:
+   (`fact.notPublished.<field>`) unless the text, or its own note (an
+   annotation's or step's or beat's `unchecked`, a table's note), cites a row
+   whose confirmed found quote itself says so; "assumed example" labels are not
+   exempt from this:
    a search that did not find a fact does not show it is unpublished; the
    answer's check flags such a sentence too (attempt reason `fact.unsourced.<field>` of
    the first finding, `engineOk` true, `unsourced` lists up to 12 findings) and
