@@ -1525,6 +1525,12 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertNotNil(share["answerLint"], "a share claim near an arm is still checked")
         XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres daily.</p>"))
         XCTAssertFalse(QuoteCheck.found("1050 horsepower.", in: "<p>It makes 1050 horsepower.</p>"), "punctuation is no context")
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres (per minute).</p>"))
+        XCTAssertFalse(QuoteCheck.found("The engine makes 10 kW", in: "<p>The engine makes 10 kW (maximum) at full speed.</p>"))
+        XCTAssertTrue(QuoteCheck.found("does boast a gut-punching 1,050 horsepower", in: "<p>It does boast a gut-punching 1,050 horsepower (incidentally, more than a car).</p>"))
+        var inferred = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [["id": "F1", "claim": "Fuel type", "value": "kerosene", "label": "PLAUSIBLE", "sources": [] as [Any]]]])))
+        inferred.checkQuotes(fetcher: TestPages(pages: [:], fallback: nil))
+        XCTAssertFalse(inferred.rows[0].unconfirmed, "a class inference has no quote to state its words")
         var allRow = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [
             ["id": "F1", "claim": "Rear unit supplies all of the lift", "value": "lift and stabilization", "label": "CLAIM",
              "sources": [["url": "https://a.org/11", "publisher": "A", "date": "2021", "quote": "The rear unit supplies lift and stabilization"]]]]])))

@@ -667,8 +667,17 @@ public enum QuoteCheck {
         let raws = normalized.split(separator: " ")
         for (n, raw) in raws.enumerated() {
             if raw == "\u{2}" || raw == "\u{2014}" { close(); continue }
-            // An opening parenthesis starts an aside: a hard boundary before it ("1,050 horsepower (incidentally …").
-            if raw.first == "(" || raw.first == "[" { close() }
+            // An opening parenthesis starts an aside, a hard boundary before it ("1,050 horsepower (incidentally …"),
+            // unless the aside qualifies the quantity: a rate, unit, bound, magnitude or number ("10 litres (per minute)",
+            // "10 kW (maximum)") goes on with it.
+            if raw.first == "(" || raw.first == "[" {
+                let inner = String(raw.dropFirst()).trimmingCharacters(in: CharacterSet(charactersIn: "()[].,;:!?"))
+                let qualifies = inner.first?.isNumber == true || inner.first.map { "+-\u{2212}~\u{00B1}\u{2248}<>".contains($0) } == true
+                    || ["per", "every", "each", "plus", "daily", "hourly", "weekly", "monthly", "yearly", "annually"].contains(inner)
+                    || isUnitWord(inner) || postBounds.contains(inner) || boundTails.contains(inner) || magnitudes.contains(inner)
+                    || boundWords.contains(inner)
+                if !qualifies { close() }
+            }
             // A hyphen between two words ("five-engine", "suit - with") is punctuation: next to a number it stays
             // a word of its own (a sign or a range).
             // A glued hyphen is punctuation ("five-engine" is "five engine"), except in a compound unit right after a
@@ -1206,7 +1215,7 @@ extension FactTable {
             // A found quote must also state the claim: its share or comparison word ("most of the lifting" needs "most"),
             // and for a value in words one of its words. A quote that is on the page but says something else is no
             // evidence for the row.
-            if !rows[n].unconfirmed, after != .unknown,
+            if !rows[n].unconfirmed, after != .unknown, !foundQuotes.isEmpty,
                let missing = QuoteCheck.unstatedWord(value: rows[n].value, claim: rows[n].claim, quotes: foundQuotes) {
                 downgrades.append("\(rows[n].id): the found quotes do not state \"\(missing)\" (the claim's key word); left out")
                 after = .unknown
