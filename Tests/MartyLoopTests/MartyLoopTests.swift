@@ -1341,6 +1341,13 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(QuoteCheck.pageDate(related), "2026-11-01")
         XCTAssertNil(QuoteCheck.pageDate(#"<script type="application/json">{"datePublished":"2017-01-01"}</script>"#))
         XCTAssertEqual(QuoteCheck.pageDate(#"<script type="application/ld+json">{"@graph": [{"@type": "WebPage", "datePublished": "2019-01-01"}, {"@type": "NewsArticle", "datePublished": "2019-07-12T10:00", "mentions": {"@type": "Article", "datePublished": "2001-01-01"}}]}</script>"#), "2019-07-12")
+        // The page's own article: by mainEntity, never a related article; ambiguous gives none.
+        let graph = ##"<script type="application/ld+json">{"@graph": [{"@type": "NewsArticle", "@id": "#rel", "datePublished": "2017-01-01"}, {"@type": "NewsArticle", "@id": "#main", "datePublished": "2026-11-01"}, {"@type": "WebPage", "mainEntity": {"@id": "#main"}}]}</script>"##
+        XCTAssertEqual(QuoteCheck.pageDate(graph), "2026-11-01")
+        XCTAssertNil(QuoteCheck.pageDate(#"<script type="application/ld+json">[{"@type": "NewsArticle", "datePublished": "2017-01-01"}, {"@type": "NewsArticle"}]</script>"#), "two articles, no owner named")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<script type="application/ld+json">[{"@type": "NewsArticle", "datePublished": "2017-01-01"}, {"@type": "Article", "mainEntityOfPage": "https://a.org/x", "datePublished": "2021-03-03"}]</script>"#), "2021-03-03")
+        // A commented-out tag is not metadata.
+        XCTAssertEqual(QuoteCheck.pageDate(#"<!-- <meta name="date" content="2017-01-01"> --><script type="application/ld+json">{"@type": "Article", "datePublished": "2026-11-01"}</script>"#), "2026-11-01")
         XCTAssertNil(QuoteCheck.pageDate(#"<time datetime="2015-05-05">May</time>"#), "an unmarked time is not the publication date")
         XCTAssertNil(QuoteCheck.pageDate(#"<time itemprop="datePublished" datetime="2016-06-06">June</time>"#), "microdata has no known owner")
         let comment = #"<script type="application/ld+json">{"@type": "Article", "datePublished": "2020-01-02"}</script><div itemscope itemtype="https://schema.org/Comment"><meta itemprop="datePublished" content="2025-06-07"></div>"#
@@ -1359,6 +1366,10 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(QuoteCheck.found("Maximum thrust is 1 144 kgf", in: "<p>Maximum thrust is 1\u{202F}144 kgf</p>"))
         XCTAssertTrue(QuoteCheck.found("Maximum thrust is 1,144 kgf", in: "<p>Maximum thrust is 1\u{2009}144 kgf</p>"))
         XCTAssertTrue(QuoteCheck.found("it was built in 2019 by a team of 144", in: "<p>it was built in 2019 by a team of 144 people</p>"))
+        XCTAssertFalse(QuoteCheck.found("Maximum thrust [\u{2026}] 144 kgf", in: "<p>Maximum thrust is 1 144 kgf</p>"), "a plain grouping space on the page")
+        XCTAssertTrue(QuoteCheck.found("Maximum thrust is 1 144 kgf", in: "<p>Maximum thrust is 1 144 kgf</p>"))
+        XCTAssertFalse(QuoteCheck.found("Minimum temperature [\u{2026}] .5 degrees Celsius", in: "<p>Minimum temperature is \u{2212}.5 degrees Celsius</p>"))
+        XCTAssertTrue(QuoteCheck.found("Minimum temperature is \u{2212}.5 degrees Celsius", in: "<p>Minimum temperature is \u{2212}.5 degrees Celsius</p>"))
         XCTAssertEqual(QuoteCheck.groupedThousands("in 2019 144 people, 12 500 000 units"), "in 2019 144 people, 12,500,000 units")
         // Date metadata in either attribute order, with any of the names, in single or double quotes.
         XCTAssertEqual(QuoteCheck.pageDate(#"<meta content="2020-01-02" name="citation_publication_date">"#), "2020-01-02")

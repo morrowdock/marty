@@ -216,6 +216,8 @@ public enum QuoteCheck {
         // A removed tag leaves a space before punctuation ("derail ."); drop it on both sides.
         t = t.replacingOccurrences(of: #" ([.,;:!?)\]])(?![0-9])"#, with: "$1", options: .regularExpression)
             .replacingOccurrences(of: #"([(\[]) "#, with: "$1", options: .regularExpression)
+        // Plain-space thousands groups ("1 144") are one number on the page and in the quote alike.
+        t = groupedThousands(t)
         return t.trimmingCharacters(in: .whitespaces)
     }
 
@@ -252,7 +254,7 @@ public enum QuoteCheck {
         let gap = "\u{1}"
         var q = normalized(quote, html: false).replacingOccurrences(of: #"\[[^\]]{0,40}\]"#, with: gap, options: .regularExpression)
             .replacingOccurrences(of: "...", with: gap)
-        q = groupedThousands(trimEdges(q))   // a trailing period the page may not have
+        q = trimEdges(q)   // a trailing period the page may not have
         let p = normalized(page, html: html)
         let raw = q.components(separatedBy: gap)
         // A part needs a word boundary on each side, except where a gap is glued to it (no space or punctuation
@@ -272,11 +274,11 @@ public enum QuoteCheck {
               parts.reduce(0, { $0 + $1.text.count }) >= minimumPart else { return nil }
         // A number is a whole token: "5" is not inside "1.5", ".5" or "-5", and "144" is not inside "1,144", "1 144"
         // (a grouping space) or "144.5".
-        func boundary(_ i: String.Index, before: Bool, signed: Bool = false, numeric: Bool = false) -> Bool {
+        func boundary(_ i: String.Index, before: Bool, signed: Bool = false, decimalLead: Bool = false, numeric: Bool = false) -> Bool {
             if before {
                 guard i != p.startIndex else { return true }
                 let j = p.index(before: i), c = p[j]
-                if signed { return !c.isNumber }
+                if signed { return !c.isNumber && !(decimalLead && c == "-") }
                 if c.isLetter || c.isNumber { return false }
                 // A sign, a decimal point or a separator right before a number is part of it ("-5", ".5", "1,144"):
                 // a quote without it is a different value.
@@ -294,10 +296,12 @@ public enum QuoteCheck {
         for (part, needBefore, needAfter) in parts {
             var search = from
             var hit: Range<String.Index>? = nil
-            // A sign or a leading decimal point ("-5", ".5") may follow a letter or a space, never a digit.
-            let signed = (part.first == "-" || part.first == "." || part.first == ",") && part.dropFirst().first?.isNumber == true
+            // A sign ("-5") may follow a letter or a space, never a digit; a leading decimal point (".5") neither a
+            // digit nor a sign ("-.5" is another value).
+            let decimalLead = (part.first == "." || part.first == ",") && part.dropFirst().first?.isNumber == true
+            let signed = decimalLead || (part.first == "-" && part.dropFirst().first?.isNumber == true)
             while let r = p.range(of: part, range: search..<p.endIndex) {
-                if (!needBefore || boundary(r.lowerBound, before: true, signed: signed, numeric: part.first?.isNumber == true))
+                if (!needBefore || boundary(r.lowerBound, before: true, signed: signed, decimalLead: decimalLead, numeric: part.first?.isNumber == true))
                     && (!needAfter || boundary(r.upperBound, before: false, numeric: part.last?.isNumber == true)) { hit = r; break }
                 search = p.index(after: r.lowerBound)
             }
@@ -309,9 +313,9 @@ public enum QuoteCheck {
 
     public static func found(_ quote: String, in page: String, html: Bool = true) -> Bool { match(quote, in: page, html: html) != nil }
 
-    /// In a quote, a number written with plain spaces between groups of 3 digits ("1 144", "12 500 000"; the first
-    /// group 1 to 3 digits) is one number, as the page's grouping space makes it ("1,144"): a model often copies a
-    /// narrow no-break space as a plain one.
+    /// A number written with plain spaces between groups of 3 digits ("1 144", "12 500 000"; the first group 1 to 3
+    /// digits) is one number ("1,144"), on the page and in the quote: a page may group with plain spaces, and a model
+    /// often copies a narrow no-break space as a plain one. A year before a number ("2019 144") stays apart.
     static func groupedThousands(_ s: String) -> String {
         guard let re = try? NSRegularExpression(pattern: #"(?<![0-9.,])[0-9]{1,3}(?: [0-9]{3})+(?![0-9])"#) else { return s }
         let ns = s as NSString
@@ -356,10 +360,13 @@ public enum QuoteCheck {
     /// as a related article's or a comment's. Microdata (`itemprop`) and `<time>` are not read: their owner (the
     /// article, a comment, a review) is not known without the page's item scopes.
     static func pageDate(_ html: String) -> String? {
-        let ns = html as NSString
-        let scan = NSRange(location: 0, length: min(ns.length, 400_000))
+        // The first 400k characters, without HTML comments (a commented-out tag is not the page's metadata).
+        let raw = (html as NSString).substring(to: min((html as NSString).length, 400_000))
+        let h = raw.replacingOccurrences(of: #"(?s)<!--.*?(-->|$)"#, with: " ", options: .regularExpression)
+        let ns = h as NSString
+        let scan = NSRange(location: 0, length: ns.length)
         func first(_ p: String) -> String? {
-            guard let re = try? NSRegularExpression(pattern: p), let m = re.firstMatch(in: html, range: scan), m.numberOfRanges > 1 else { return nil }
+            guard let re = try? NSRegularExpression(pattern: p), let m = re.firstMatch(in: h, range: scan), m.numberOfRanges > 1 else { return nil }
             return ns.substring(with: m.range(at: 1)).replacingOccurrences(of: "/", with: "-")
         }
         let names = #"(?:article:published_time|og:published_time|date|dc\.date|dc\.date\.issued|citation_publication_date|pubdate)"#
@@ -368,14 +375,17 @@ public enum QuoteCheck {
         if let d = first(#"(?i)<meta[^>]+"# + attr + #"[^>]+content=["']"# + date) ?? first(#"(?i)<meta[^>]+content=["']"# + date + #"[^"']*["'][^>]+"# + attr) {
             return d
         }
-        return jsonLDDate(html, scan)
+        return jsonLDDate(h, scan)
     }
 
     static let articleTypes: Set<String> = ["Article", "NewsArticle", "BlogPosting", "TechArticle", "ScholarlyArticle", "Report",
                                             "ReportageNewsArticle", "AnalysisNewsArticle", "LiveBlogPosting", "PressRelease"]
+    static let pageTypes: Set<String> = ["WebPage", "ItemPage", "AboutPage", "CollectionPage", "FAQPage", "QAPage"]
 
-    /// The top-level `datePublished` of the page's JSON-LD article object (in a script of type application/ld+json,
-    /// itself, in a list or in its @graph), else of its WebPage object.
+    /// The `datePublished` of the page's own JSON-LD article (scripts of type application/ld+json; their top-level
+    /// objects, lists and @graph). The article is the one the page names: a page object's `mainEntity` (inline or by
+    /// @id); else the one article that says `mainEntityOfPage`; else the only article. With no article, the only
+    /// page object's own date. Anything else (several candidates, a related article) is ambiguous: nil.
     static func jsonLDDate(_ html: String, _ scan: NSRange) -> String? {
         guard let re = try? NSRegularExpression(pattern: #"(?is)<script[^>]+type=["']application/ld\+json["'][^>]*>(.*?)</script>"#) else { return nil }
         let ns = html as NSString
@@ -389,12 +399,29 @@ public enum QuoteCheck {
             }
         }
         func types(_ d: [String: Any]) -> [String] { (d["@type"] as? [String]) ?? [(d["@type"] as? String) ?? ""] }
+        func isArticle(_ d: [String: Any]) -> Bool { types(d).contains(where: articleTypes.contains) }
+        func isPage(_ d: [String: Any]) -> Bool { types(d).contains(where: pageTypes.contains) }
         func date(_ d: [String: Any]) -> String? {
             guard let s = d["datePublished"] as? String, s.range(of: #"^\d{4}-\d{2}-\d{2}"#, options: .regularExpression) != nil else { return nil }
             return String(s.prefix(10))
         }
-        return objects.first { types($0).contains(where: articleTypes.contains) && date($0) != nil }.flatMap(date)
-            ?? objects.first { types($0).contains("WebPage") && date($0) != nil }.flatMap(date)
+        let articles = objects.filter(isArticle)
+        let pages = objects.filter(isPage)
+        // 1. The page names its main entity: that article's date (nil when it has none; the owner is known).
+        for page in pages {
+            guard let me = (page["mainEntity"] as? [Any])?.first ?? page["mainEntity"] else { continue }
+            if let inline = me as? [String: Any], isArticle(inline) { return date(inline) }
+            let ref = (me as? String) ?? ((me as? [String: Any])?["@id"] as? String)
+            if let ref, let a = articles.first(where: { $0["@id"] as? String == ref }) { return date(a) }
+        }
+        // 2. The one article that says it is the page's main entity.
+        let main = articles.filter { $0["mainEntityOfPage"] != nil }
+        if main.count == 1 { return date(main[0]) }
+        if main.count > 1 { return nil }
+        // 3. The only article; 4. with no article, the only page object.
+        if articles.count == 1 { return date(articles[0]) }
+        if articles.isEmpty, pages.count == 1 { return date(pages[0]) }
+        return nil
     }
 
     /// Words in a quote that mark a statement by the maker or one person: such a row is at most a CLAIM.

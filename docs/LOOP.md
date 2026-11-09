@@ -53,16 +53,20 @@ the MCP server uses), so a run needs no MCP client.
    brackets, "engine[s]", "[T]he"), so a bare "85 mph" is no evidence and
    neither "85 mph" nor "[…]85 mph" matches "185 mph"; a number is a whole
    token, so "5" does not match inside "1.5", ".5" or "-5", nor "144" inside
-   "1,144" or "1 144" (a no-break, narrow or thin space before 3 digits on the
-   page, and a plain one in the quote, groups thousands); a leading decimal point
+   "1,144" or "1 144" (a no-break, narrow, thin or plain space before 3 digits
+   groups thousands, on the page and in the quote alike, when the first group
+   is 1 to 3 digits); a leading decimal point
    is kept (".5 litres" is not "5 litres"), and a part that starts with a sign
    or a decimal point, "-5 degrees", may follow a letter but not a digit). A found
    Each source's date comes only from its fetched page: its publication date
-   (its page-level publication meta tag, by property or name, in either
-   attribute order and either quote style; else the top-level `datePublished`
-   of its JSON-LD article object, never a nested one such as a related
-   article's or a comment's; microdata and `<time>` are not read, since their
-   owner is not known), whether or not the quote was found; a page that
+   (HTML comments ignored: its page-level publication meta tag, by property or
+   name, in either attribute order and either quote style; else the
+   `datePublished` of the page's own JSON-LD article: the one a page object
+   names as `mainEntity`, else the one article with `mainEntityOfPage`, else
+   the only article, else with no article the only page object; with several
+   candidates the owner is unknown and the date stays empty; never a nested one
+   such as a related article's or a comment's; microdata and `<time>` are not
+   read, since their owner is not known), whether or not the quote was found; a page that
    states none, or a page that was not fetched, leaves the date empty (the
    model's date is removed; every change is listed in `downgrades`). The site that counts is the one the page finally came
    from (a redirect to a blocked or free hosting site fails). Each source records its `check` ("quote found", "quote not found",
@@ -93,7 +97,7 @@ the MCP server uses), so a run needs no MCP client.
    ROW lines in the final reply are not part of its table. When the call is
    stopped at Marty's limit or the CLI's own turn limit (`error_max_turns`),
    ends in an error, or its final table is unreadable, those rows make a
-   partial table (`partial`, a `warning` in the
+   partial table (`partial`, its `partialCause`, a `warning` with the cause in the
    receipt, and a line in the plan and author prompts that the table is
    partial); with no row written there is no table and the same warning
    (`adapter.research.turns`; then there is no table). The receipt's `research`

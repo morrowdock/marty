@@ -230,10 +230,13 @@ public final class MartyLoop {
             if let m = calls[i]["model"] as? [String: Any] { block["turns"] = m["num_turns"] ?? NSNull(); block["webTools"] = m["webTools"] ?? NSNull() }
             if let text, var table = FactTable.parse(text, blocked: limits.blockedDomains) {
                 if options.quoteCheck { table.checkQuotes(fetcher: Self.fetcher) }
-                // Stopped at the tool limit: the rows confirmed so far, marked partial and warned about.
-                if (calls[i]["model"] as? [String: Any])?["partial"] as? Bool == true {
+                // Stopped early (a tool or turn limit, an error, an unreadable final table): the rows confirmed so far,
+                // marked partial and warned about with the cause.
+                if let m = calls[i]["model"] as? [String: Any], m["partial"] as? Bool == true {
                     table.partial = true
-                    block["warning"] = "research stopped at its tool limit; the table holds only the rows confirmed before that"
+                    let cause = m["partialCause"] as? String ?? "web tool limit"
+                    block["partialCause"] = cause
+                    block["warning"] = "research stopped early (\(cause)); the table holds only the rows confirmed before that"
                 }
                 facts = table
                 block.merge(table.json) { a, _ in a }
