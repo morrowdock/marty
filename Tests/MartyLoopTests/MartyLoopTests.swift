@@ -1342,7 +1342,15 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertNil(QuoteCheck.pageDate(#"<script type="application/json">{"datePublished":"2017-01-01"}</script>"#))
         XCTAssertEqual(QuoteCheck.pageDate(#"<script type="application/ld+json">{"@graph": [{"@type": "WebPage", "datePublished": "2019-01-01"}, {"@type": "NewsArticle", "datePublished": "2019-07-12T10:00", "mentions": {"@type": "Article", "datePublished": "2001-01-01"}}]}</script>"#), "2019-07-12")
         XCTAssertNil(QuoteCheck.pageDate(#"<time datetime="2015-05-05">May</time>"#), "an unmarked time is not the publication date")
-        XCTAssertEqual(QuoteCheck.pageDate(#"<time itemprop="datePublished" datetime="2016-06-06">June</time>"#), "2016-06-06")
+        XCTAssertNil(QuoteCheck.pageDate(#"<time itemprop="datePublished" datetime="2016-06-06">June</time>"#), "microdata has no known owner")
+        let comment = #"<script type="application/ld+json">{"@type": "Article", "datePublished": "2020-01-02"}</script><div itemscope itemtype="https://schema.org/Comment"><meta itemprop="datePublished" content="2025-06-07"></div>"#
+        XCTAssertEqual(QuoteCheck.pageDate(comment), "2020-01-02", "a comment's date is not the page's")
+        // Numbers are whole tokens: not inside a decimal or a thousands group.
+        XCTAssertFalse(QuoteCheck.found("fuel consumption [\u{2026}] 5 litres per hour", in: "<p>fuel consumption is 1.5 litres per hour</p>"))
+        XCTAssertFalse(QuoteCheck.found("maximum thrust [\u{2026}] 144 kgf", in: "<p>maximum thrust of 1,144 kgf</p>"))
+        XCTAssertFalse(QuoteCheck.found("a maximum thrust of 144", in: "<p>a maximum thrust of 144.5 kgf</p>"))
+        XCTAssertTrue(QuoteCheck.found("a maximum thrust of 144", in: "<p>a maximum thrust of 144. Then it stops.</p>"))
+        XCTAssertTrue(QuoteCheck.found("maximum thrust [\u{2026}] 144 kgf", in: "<p>maximum thrust, 144 kgf, at sea level</p>"))
         // Date metadata in either attribute order, with any of the names, in single or double quotes.
         XCTAssertEqual(QuoteCheck.pageDate(#"<meta content="2020-01-02" name="citation_publication_date">"#), "2020-01-02")
         XCTAssertEqual(QuoteCheck.pageDate(#"<meta content='2021-02-03T00:00' property='og:published_time'>"#), "2021-02-03")

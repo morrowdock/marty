@@ -266,13 +266,22 @@ public enum QuoteCheck {
         // All parts together at least 16 characters, the longest at least 8 (a bare value is no evidence).
         guard let longest = parts.map(\.text.count).max(), longest >= minimumPart / 2,
               parts.reduce(0, { $0 + $1.text.count }) >= minimumPart else { return nil }
-        func boundary(_ i: String.Index, before: Bool, signed: Bool = false) -> Bool {
+        // A number is a whole token: "5" is not inside "1.5" and "144" is not inside "1,144" or "144.5" (a decimal
+        // point or a thousands separator between digits joins them).
+        func boundary(_ i: String.Index, before: Bool, signed: Bool = false, numeric: Bool = false) -> Bool {
             if before {
                 guard i != p.startIndex else { return true }
-                let c = p[p.index(before: i)]
-                return signed ? !c.isNumber : !(c.isLetter || c.isNumber)
+                let j = p.index(before: i), c = p[j]
+                if signed { return !c.isNumber }
+                if c.isLetter || c.isNumber { return false }
+                if numeric, c == "." || c == ",", j != p.startIndex, p[p.index(before: j)].isNumber { return false }
+                return true
             }
-            return i == p.endIndex || !(p[i].isLetter || p[i].isNumber)
+            guard i != p.endIndex else { return true }
+            let c = p[i]
+            if c.isLetter || c.isNumber { return false }
+            if numeric, c == "." || c == ",", let k = p.index(i, offsetBy: 1, limitedBy: p.endIndex), k != p.endIndex, p[k].isNumber { return false }
+            return true
         }
         var from = p.startIndex
         var ranges: [Range<String.Index>] = []
@@ -282,7 +291,8 @@ public enum QuoteCheck {
             // A sign or a leading decimal point ("-5", ".5") may follow a letter or a space, never a digit.
             let signed = (part.first == "-" || part.first == "." || part.first == ",") && part.dropFirst().first?.isNumber == true
             while let r = p.range(of: part, range: search..<p.endIndex) {
-                if (!needBefore || boundary(r.lowerBound, before: true, signed: signed)) && (!needAfter || boundary(r.upperBound, before: false)) { hit = r; break }
+                if (!needBefore || boundary(r.lowerBound, before: true, signed: signed, numeric: part.first?.isNumber == true))
+                    && (!needAfter || boundary(r.upperBound, before: false, numeric: part.last?.isNumber == true)) { hit = r; break }
                 search = p.index(after: r.lowerBound)
             }
             guard let r = hit else { return nil }
@@ -318,11 +328,12 @@ public enum QuoteCheck {
         }
     }
 
-    /// The page's own publication date (YYYY-MM-DD), nil when the page states none. In order: its publication meta
-    /// tags (article:published_time, og:published_time, date, dc.date, citation_publication_date, pubdate,
-    /// itemprop datePublished; either attribute order and quote style); the top-level `datePublished` of its JSON-LD
-    /// article object (Article, NewsArticle, BlogPosting, ...; then WebPage), never a nested one such as a related
-    /// article's; a `<time>` marked as the publication date (itemprop datePublished or pubdate).
+    /// The page's own publication date (YYYY-MM-DD), nil when the page states none. In order: its page-level
+    /// publication meta tags (property or name article:published_time, og:published_time, date, dc.date,
+    /// citation_publication_date, pubdate; either attribute order and quote style); the top-level `datePublished`
+    /// of its JSON-LD article object (Article, NewsArticle, BlogPosting, ...; then WebPage), never a nested one such
+    /// as a related article's or a comment's. Microdata (`itemprop`) and `<time>` are not read: their owner (the
+    /// article, a comment, a review) is not known without the page's item scopes.
     static func pageDate(_ html: String) -> String? {
         let ns = html as NSString
         let scan = NSRange(location: 0, length: min(ns.length, 400_000))
@@ -330,16 +341,13 @@ public enum QuoteCheck {
             guard let re = try? NSRegularExpression(pattern: p), let m = re.firstMatch(in: html, range: scan), m.numberOfRanges > 1 else { return nil }
             return ns.substring(with: m.range(at: 1)).replacingOccurrences(of: "/", with: "-")
         }
-        let names = #"(?:article:published_time|og:published_time|date|dc\.date|dc\.date\.issued|citation_publication_date|pubdate|datePublished)"#
-        let attr = #"(?:property|name|itemprop)=["']"# + names + #"["']"#
+        let names = #"(?:article:published_time|og:published_time|date|dc\.date|dc\.date\.issued|citation_publication_date|pubdate)"#
+        let attr = #"(?:property|name)=["']"# + names + #"["']"#
         let date = #"(\d{4}[-/]\d{2}[-/]\d{2})"#
         if let d = first(#"(?i)<meta[^>]+"# + attr + #"[^>]+content=["']"# + date) ?? first(#"(?i)<meta[^>]+content=["']"# + date + #"[^"']*["'][^>]+"# + attr) {
             return d
         }
-        if let d = jsonLDDate(html, scan) { return d }
-        let marked = #"(?:itemprop=["']datePublished["']|pubdate)"#
-        return first(#"(?i)<time[^>]+"# + marked + #"[^>]*datetime=["'](\d{4}-\d{2}-\d{2})"#)
-            ?? first(#"(?i)<time[^>]+datetime=["'](\d{4}-\d{2}-\d{2})[^>]*"# + marked)
+        return jsonLDDate(html, scan)
     }
 
     static let articleTypes: Set<String> = ["Article", "NewsArticle", "BlogPosting", "TechArticle", "ScholarlyArticle", "Report",

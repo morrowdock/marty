@@ -51,14 +51,16 @@ the MCP server uses), so a run needs no MCP client.
    least 16 characters and the longest at least 8, each part matched on word
    boundaries except where a gap is glued to a letter (a word completed in
    brackets, "engine[s]", "[T]he"), so a bare "85 mph" is no evidence and
-   neither "85 mph" nor "[…]85 mph" matches "185 mph"; a leading decimal point
+   neither "85 mph" nor "[…]85 mph" matches "185 mph"; a number is a whole
+   token, so "5" does not match inside "1.5" nor "144" inside "1,144"; a leading decimal point
    is kept (".5 litres" is not "5 litres"), and a part that starts with a sign
    or a decimal point, "-5 degrees", may follow a letter but not a digit). A found
    Each source's date comes only from its fetched page: its publication date
-   (its publication meta tag in either attribute order and either quote
-   style; else the top-level `datePublished` of its JSON-LD article object,
-   never a nested one such as a related article's; else a `<time>` marked as
-   the publication date), whether or not the quote was found; a page that
+   (its page-level publication meta tag, by property or name, in either
+   attribute order and either quote style; else the top-level `datePublished`
+   of its JSON-LD article object, never a nested one such as a related
+   article's or a comment's; microdata and `<time>` are not read, since their
+   owner is not known), whether or not the quote was found; a page that
    states none, or a page that was not fetched, leaves the date empty (the
    model's date is removed; every change is listed in `downgrades`). The site that counts is the one the page finally came
    from (a redirect to a blocked or free hosting site fails). Each source records its `check` ("quote found", "quote not found",
