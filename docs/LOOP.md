@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-08. Prompts `marty-prompts/17`. Engine pin as in
+Status: early preview, 2026-11-08. Prompts `marty-prompts/18`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -213,8 +213,14 @@ the MCP server uses), so a run needs no MCP client.
    (also in follow-up repairs). A label or pointer dot refusal
    (`annotation.anchor.hidden`, `.off`, `.untested`) gets the engine's anchor
    issues (`anchor` first, then `anchorIssues`, at most 6): the dot, the cause,
-   the step or beat, the part, what hides it or is nearer, and the engine's
-   own fix; the attempt keeps `anchor`. Every repair (author and follow-up)
+   the step or beat, the part, what hides it or is nearer, the engine's
+   checked suggestion (`suggest`, shown with at most 3 decimals as the engine's
+   repair line writes it, with the instruction to apply it exactly) or why there
+   is none (`noSuggest`: its readable cause and the engine's own alternatives
+   for that cause, such as leaving the label out of the view's annotate list,
+   ghosting the part in the way or changing the camera), and the engine's
+   one-line `repair`; the view named is the explainer beat when there is one
+   (else the step); the attempt keeps `anchor`. Every repair (author and follow-up)
    also gets the refusal's full structured detail (the engine's `repair`
    line, and `location`, `limit`, `actual`, `path`, `cause`, `by`, `closer`,
    `fix`, `suggest`, `detail` when present, nulls left out) and the texts of the

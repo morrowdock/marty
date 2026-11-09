@@ -1056,7 +1056,20 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(first["reason"] as? String, "annotation.anchor.hidden.lShaft")
         XCTAssertNotNil(first["anchor"])
         let repair = model.prompts[2].user
-        XCTAssertTrue(repair.contains("Label and pointer dots the engine refused") && repair.contains("`shaft.upperBearing` hides the anchor"), repair)
+        XCTAssertTrue(repair.contains("Label and pointer dots the engine refused") && repair.contains("apply a suggestion exactly"), repair)
+        XCTAssertTrue(repair.contains(#"set its "at" to exactly {"offset":[5.412,-2.381,53.055],"part":"shaft.shaft"}"#), repair)
+        XCTAssertTrue(repair.contains("Engine: Label lShaft (step 1) is hidden behind shaft.upperBearing"), repair)
+        XCTAssertEqual(MartyPrompts.shortJSON(["b": [1.0, -0.0004, 2.5], "a": "x\"y", "c": true]), #"{"a":"x\"y","b":[1,0,2.5],"c":true}"#)
+        // No suggestion: for a hidden or framing cause, the three ways out of it.
+        // The engine's shape: a readable cause, a code, its own alternatives; an explainer issue with both step and beat
+        // names the beat.
+        let none = try XCTUnwrap(MartyPrompts.anchorLines([["id": "lX", "kind": "label", "cause": "occluded", "step": 5, "beat": 3, "part": "core",
+                                                             "by": "casing", "suggest": NSNull(),
+                                                             "noSuggest": ["cause": "part fully hidden in beat 3", "code": "occluded", "beat": 3, "by": "casing",
+                                                                           "alternatives": ["Leave lX out of beat 3's view.annotate list.", "Ghost `casing` in beat 3.", "Change beat 3's camera."]],
+                                                             "repair": "Label lX is hidden."]]))
+        XCTAssertTrue(none.contains("(occluded, beat 3, on `core`, hidden by `casing`)"), none)
+        XCTAssertTrue(none.contains("no checked suggestion (part fully hidden in beat 3); do one of: Leave lX out of beat 3's view.annotate list. Ghost `casing` in beat 3. Change beat 3's camera."), none)
         XCTAssertNotNil(MartyPrompts.hint(for: "annotation.anchor.hidden.lShaft"))
         // A curly apostrophe still negates a cancellation.
         let pm = PoseText.Push(side: 0, depth: 0, sideAbs: 1, outward: 0, arrows: 2, mannequin: true)
