@@ -463,6 +463,24 @@ public enum QuoteCheck {
         return false
     }
 
+    /// Share and comparison words: a claim that uses one needs a quote that uses it too.
+    static let shareWords: Set<String> = ["most", "majority", "half", "halves", "third", "thirds", "quarter", "quarters", "share", "shares",
+        "split", "mainly", "mostly", "chiefly", "primarily", "largely", "largest", "main", "bulk", "predominantly", "dominant", "equal",
+        "equally", "evenly", "uniformly"]
+
+    /// The claim word that none of the found quotes states, or nil: each share or comparison word of the value and
+    /// claim, and for a value in words (no number) at least one of its content words.
+    @MainActor static func unstatedWord(value: String, claim: String, quotes: [String]) -> String? {
+        func words(_ t: String) -> [String] { t.lowercased().split { !$0.isLetter }.map(String.init) }
+        let quoted = Set(quotes.flatMap(words).map(singular))
+        for w in words(value + " " + claim) where shareWords.contains(w) && !quoted.contains(singular(w)) { return w }
+        guard statedNumbers(value, inOrder: true).isEmpty else { return nil }
+        let filler: Set<String> = ["with", "from", "that", "this", "than", "their", "there", "which", "about", "into", "over", "each"]
+        let content = words(value).filter { $0.count >= 4 && !filler.contains($0) }
+        guard let first = content.first else { return nil }
+        return content.contains(where: { quoted.contains(singular($0)) }) ? nil : first
+    }
+
     /// Words of quantity that are no count ("a few", "several", "a number of").
     static let quantifiers: Set<String> = ["few", "several", "many", "couple", "number", "lot", "lots", "some", "more", "most", "all", "multiple", "various"]
 
@@ -649,6 +667,8 @@ public enum QuoteCheck {
         let raws = normalized.split(separator: " ")
         for (n, raw) in raws.enumerated() {
             if raw == "\u{2}" || raw == "\u{2014}" { close(); continue }
+            // An opening parenthesis starts an aside: a hard boundary before it ("1,050 horsepower (incidentally …").
+            if raw.first == "(" || raw.first == "[" { close() }
             // A hyphen between two words ("five-engine", "suit - with") is punctuation: next to a number it stays
             // a word of its own (a sign or a range).
             // A glued hyphen is punctuation ("five-engine" is "five engine"), except in a compound unit right after a
@@ -707,7 +727,8 @@ public enum QuoteCheck {
             guard !words.isEmpty else { continue }
             let gb = n > 0 && r.first.map { !" .,;:!?".contains($0) } == true
             let ga = n < raw.count - 1 && r.last.map { !" .,;:!?".contains($0) } == true
-            parts.append(Part(words: words, gluedBefore: gb, gluedAfter: ga, text: words.map(\.text).joined(separator: " ")))
+            // (Its length is that of its normalized text, as the too-short check measures it: "dry weight: 27kg" is 16.)
+            parts.append(Part(words: words, gluedBefore: gb, gluedAfter: ga, text: r.trimmingCharacters(in: .whitespaces)))
         }
         guard let longest = parts.map(\.text.count).max(), longest >= minimumPart / 2,
               parts.reduce(0, { $0 + $1.text.count }) >= minimumPart else { return nil }
@@ -801,7 +822,12 @@ public enum QuoteCheck {
                 // only by ordinary prose words: any other word may continue the unit, a rate or a product ("100 amp
                 // hours", "100 v a", "10 litres every fifteen minutes").
                 let withUnit = (w[last].hasDigit && w[last].text.contains { !$0.isNumber && !".,".contains($0) }) || (unitEnd && quantityEnd(w, last) != nil)
-                if withUnit, !Self.proseAfterQuantity.contains(next.text) { return false }
+                // (An ordinary word of four letters or more is prose too, "1,050hp other than …"; a unit, time,
+                // magnitude, bound or rate word, or a short symbol-like word, may go on with the quantity.)
+                let plainProse = next.text.count >= 4 && next.text.allSatisfy(\.isLetter) && !Self.isUnitWord(next.text)
+                    && !Self.timeUnits.contains(next.text) && !Self.magnitudes.contains(next.text) && !Self.postBounds.contains(next.text)
+                    && !Self.boundTails.contains(next.text) && !["every", "each", "plus", "times", "minus"].contains(next.text)
+                if withUnit, !Self.proseAfterQuantity.contains(next.text), !plainProse { return false }
                 // An allowed word that leads into another quantity or a time continues it ("10 cm by 20 cm",
                 // "10 litres in 30 seconds", "10 kg over 2 hours").
                 // Modifiers between the connector and the quantity are skipped ("in just 30 seconds", "by about 20 cm").
@@ -1173,6 +1199,15 @@ extension FactTable {
                !foundQuotes.flatMap({ QuoteCheck.statedNumbers($0) }).contains(headline),
                !foundQuotes.contains(where: { QuoteCheck.statesCountWord(headline, $0, entities: QuoteCheck.countedWords(value: rows[n].value, claim: rows[n].claim, unit: rows[n].unit)) }) {
                 downgrades.append("\(rows[n].id): value \(rows[n].value) is in none of its found quotes (computed, not published); left out")
+                after = .unknown
+                rows[n].unconfirmed = true
+            }
+            // A found quote must also state the claim: its share or comparison word ("most of the lifting" needs "most"),
+            // and for a value in words one of its words. A quote that is on the page but says something else is no
+            // evidence for the row.
+            if !rows[n].unconfirmed, after != .unknown,
+               let missing = QuoteCheck.unstatedWord(value: rows[n].value, claim: rows[n].claim, quotes: foundQuotes) {
+                downgrades.append("\(rows[n].id): the found quotes do not state \"\(missing)\" (the claim's key word); left out")
                 after = .unknown
                 rows[n].unconfirmed = true
             }

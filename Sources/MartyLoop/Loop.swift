@@ -430,7 +430,7 @@ public final class MartyLoop {
         var attempts: [[String: Any]] = []
         // The best engine-accepted document that fails Marty's own lint (fewest findings; a later one wins a tie), with
         // its components and attempt. One lint repair at most.
-        var fallback: (report: [String: Any], components: [Any], lint: [String], attempt: Int)? = nil
+        var fallback: (report: [String: Any], components: [Any], lint: [String], attempt: Int, document: Any?)? = nil
         var lintRepairUsed = false
         // When the model could not be reached for the plan, stop: more calls would only fail or wait again.
         if planAdapterFailed { attempts.append(["ok": false, "reason": "adapter"]) }
@@ -495,7 +495,7 @@ public final class MartyLoop {
                 // only asks for one more repair when one is left; the accepted document is kept as the fallback.
                 let lint = document.map(Self.documentLint) ?? []
                 if lint.isEmpty { accepted = report; acceptedComponents = components; break }
-                if fallback == nil || lint.count <= fallback!.lint.count { fallback = (report, components, lint, attempts.count - 1) }
+                if fallback == nil || lint.count <= fallback!.lint.count { fallback = (report, components, lint, attempts.count - 1, document) }
                 attempts[attempts.count - 1]["reason"] = "marty.lint"
                 attempts[attempts.count - 1]["lint"] = lint
                 attempts[attempts.count - 1]["engineOk"] = true
@@ -521,9 +521,25 @@ public final class MartyLoop {
                                            detail: Self.refusalDetail(report, document: document),
                                            anchoredParts: document.map(Self.anchoredParts) ?? [])
         }
-        if accepted == nil, let f = fallback {
-            accepted = f.report; acceptedComponents = f.components
-            receipt["lint"] = f.lint; receipt["lintAttempt"] = f.attempt
+        // The fallback (an engine-accepted document whose lint was not cleared) is not accepted while it states a share
+        // or comparison without a figure or a hedge ("<publisher> claims" is no hedge): Marty removes those sentences
+        // from the says that keep another sentence, checks again, and refuses the document when any is left.
+        if accepted == nil, var f = fallback {
+            if f.lint.contains(where: { $0.contains(Self.shareLint) }), let doc = f.document {
+                let (trimmedDoc, removed) = Self.withoutShareSentences(doc)
+                if !removed.isEmpty, let r = try? engine.check(document: trimmedDoc, ref: nil, components: f.components, strict: true),
+                   (r["ok"] as? Bool) == true, !Self.documentLint(trimmedDoc).contains(where: { $0.contains(Self.shareLint) }) {
+                    f.report = r; f.lint = Self.documentLint(trimmedDoc)
+                    receipt["lintRemoved"] = removed
+                } else {
+                    receipt["lintRefused"] = f.lint.filter { $0.contains(Self.shareLint) }
+                    fallback = nil
+                }
+            }
+            if fallback != nil {
+                accepted = f.report; acceptedComponents = f.components
+                receipt["lint"] = f.lint; receipt["lintAttempt"] = f.attempt
+            }
         }
         receipt["attempts"] = attempts
         receipt["accepted"] = accepted != nil
@@ -788,7 +804,7 @@ public final class MartyLoop {
                                                                ratiosChanged: ratiosChanged,
                                                                refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAPatch,
                                                                movedForceArrows: moved, given: given, table: modelled ? factBlock : nil,
-                                                               push: acceptedPush?.summary, posed: posedNow),
+                                                               push: acceptedPush?.summary, posed: posedNow, viewWord: "step"),
                                  sources: evidence + (modelled ? [question, followUp] : []), push: acceptedPush, posed: posedNow, views: viewsNow, result: &result)
         result["ok"] = answer != nil
         result["answer"] = answer.map { $0 as Any } ?? NSNull()
@@ -968,10 +984,14 @@ extension MartyLoop {
         }
         func problems(_ raw: String) -> (comparative: [String], unsourced: [String]) {
             let text = withoutViewRefs(raw)
-            let c = Self.unsupportedComparatives(text, sources: sources)
+            // The posed views are evidence: their angles, and a comparison of the posed parts ("one arm is raised more
+            // than the other").
+            let c = Self.unsupportedComparatives(text, sources: sources + posed).filter {
+                posed.isEmpty || $0.range(of: #"(?i)\b(arm|arms|shoulder|shoulders|leg|legs|raised|lowered|tilted|posed?|pose)\b"#, options: .regularExpression) == nil
+            }
             // Direction words that disagree with the posed step count with the unsourced sentences.
             let d = push.map { PoseText.disagreements(text, push: $0) } ?? []
-            return (c, (Self.unsourcedSentences(text, sources: sources) + d).filter { !c.contains($0) })
+            return (c, (Self.unsourcedSentences(text, sources: sources + posed) + d).filter { !c.contains($0) })
         }
         // An answer may not deny a motion that a posed view of the model shows: one repair with the posed views.
         // A denial counts when a motion action is in its own clause ("does not show steering"; not "the arm
@@ -1020,13 +1040,16 @@ extension MartyLoop {
             answer = s
             let again = problems(s)
             lint["fixed"] = again.comparative.isEmpty && again.unsourced.isEmpty
+            if !(again.comparative + again.unsourced).isEmpty { lint["remaining"] = again.comparative + again.unsourced }
         }
         result["answerLint"] = lint
         // A denial the rewrite brought in gets the posed repair if it is unused; the status is the final answer's.
         posedRepair(2)
         // (The comparative and number status too is the final answer's.)
         if var final = result["answerLint"] as? [String: Any] {
-            let again = problems(answer); final["fixed"] = again.comparative.isEmpty && again.unsourced.isEmpty; result["answerLint"] = final
+            let again = problems(answer); final["fixed"] = again.comparative.isEmpty && again.unsourced.isEmpty
+            final["remaining"] = (again.comparative + again.unsourced).isEmpty ? nil : again.comparative + again.unsourced
+            result["answerLint"] = final
         }
         if var posedLint = result["answerPosedLint"] as? [String: Any] { posedLint["fixed"] = denials(answer).isEmpty; result["answerPosedLint"] = posedLint }
         else if !denials(answer).isEmpty { result["answerPosedLint"] = ["reason": "answer.posed", "sentences": denials(answer), "fixed": false] }
@@ -1064,7 +1087,8 @@ extension MartyLoop {
 
     // "all the" and "all its" are left out: "the upward parts of all the thrusts balance the weight" is no share claim.
     static let comparativeWords = #"(?i)\b(most|mostly|majority|all of|the bulk|nearly all|almost all|mainly|largely|more than|less than|twice|half of|the largest|the biggest|the lion's share)\b"#
-    static let hedgeWords = #"(?i)\b(about|roughly|around|approximately|estimated?|reported|schematic|not checked|may|might|perhaps|likely)\b"#
+    /// (An attribution, "reported", "<publisher> claims", is no hedge.)
+    static let hedgeWords = #"(?i)\b(about|roughly|around|approximately|estimated?|schematic|not checked|may|might|perhaps|likely)\b"#
 
     /// The numbers in a text ("1,500" and "1.5" stay whole; a trailing period is not a decimal point), normalized:
     /// no thousands commas, no trailing decimal zeros ("1.50" and "1.5", "3000.0" and "3000" match).
@@ -1196,6 +1220,34 @@ extension MartyLoop {
 
     static let maxTextsPerStep = 5
 
+    /// The words that mark a share or comparison lint finding.
+    static let shareLint = "a share or comparison needs"
+
+    /// The document with every unsupported share or comparison sentence removed from a step's or beat's say that keeps
+    /// another sentence; the removed sentences.
+    static func withoutShareSentences(_ document: Any) -> (document: Any, removed: [String]) {
+        guard var d = document as? [String: Any] else { return (document, []) }
+        let key = d["kind"] as? String == "explainer" ? "beats" : "steps"
+        guard var list = d[key] as? [[String: Any]] else { return (document, []) }
+        let evidence = givenFigures(d)
+        var removed: [String] = []
+        for n in list.indices {
+            guard let say = list[n]["say"] as? String else { continue }
+            let all = sentences(say)
+            let bad = Set(unsupportedComparatives(say, sources: evidence))
+            guard !bad.isEmpty, all.contains(where: { !bad.contains($0) }) else { continue }
+            // Each sentence is cut from the say as written (with its end mark), so the rest keeps its punctuation.
+            var t = say
+            for b in all where bad.contains(b) {
+                t = t.replacingOccurrences(of: NSRegularExpression.escapedPattern(for: b) + #"[.!?]*\s*"#, with: "", options: .regularExpression)
+            }
+            list[n]["say"] = t.trimmingCharacters(in: .whitespaces)
+            removed += all.filter { bad.contains($0) }
+        }
+        d[key] = list
+        return (d, removed)
+    }
+
     /// Marty's lint of an engine-accepted document (assembly or explainer): a step or beat that shows more than 5
     /// texts (labels, dimensions and arrows with text), and a caption or label sentence that compares sizes or shares
     /// with no hedge, no {fact} placeholder and no given figure.
@@ -1254,7 +1306,7 @@ extension MartyLoop {
             + texts.sorted { $0.key < $1.key }.map { ("Annotation \($0.key)", $0.value) }
         for (whereText, text) in says {
             for sentence in unsupportedComparatives(text, sources: evidence) {
-                out.append("\(whereText) says \"\(sentence)\": a share or comparison needs a given figure or a {fact}, or a hedge (about, in this schematic).")
+                out.append("\(whereText) says \"\(sentence)\": \(shareLint) a given figure or a {fact}, or a hedge (about, in this schematic); \"<publisher> claims\" is no hedge.")
             }
         }
         return Array(out.prefix(12))

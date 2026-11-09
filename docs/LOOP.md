@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-09. Prompts `marty-prompts/22`. Engine pin as in
+Status: early preview, 2026-11-09. Prompts `marty-prompts/23`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -131,7 +131,11 @@ the MCP server uses), so a run needs no MCP client.
    the row's own words within three words, an ordinal ("a fifth engine"), or
    for 1 an article or "single", for 2 "both", "either" or "pair" ("a rear jet
    engine", "either side") count as stated; "a housing with five rotors"
-   states no 1 rotor, "first flight" no count) (a value computed from other figures, such as a
+   states no 1 rotor, "first flight" no count); a found quote must also state
+   the claim: each share or comparison word of the value and claim ("most",
+   "half", "a third", "mainly", …) must be in a found quote, and a value in
+   words needs one of its content words there; otherwise the row is left out
+   ("the found quotes do not state …") (a value computed from other figures, such as a
    ratio of two rows) is also `unconfirmed` and left out; a VERIFIED row needs
    found quotes on two sites and no found
    quote whose text or page text within 160 characters attributes the figure
@@ -325,7 +329,11 @@ the MCP server uses), so a run needs no MCP client.
    example" or a fact table row id). A lint problem asks for one repair at most (attempt reason
    `marty.lint`, `engineOk` true), when one is left. The engine-accepted
    document with the fewest findings is kept (a later one wins a tie), and it
-   stands, with `lint` and `lintAttempt` in the receipt, when no attempt is
+   stands, with `lint` and `lintAttempt` in the receipt (but never with a share
+   or comparison that has no figure and no hedge; an attribution such as
+   "<publisher> claims" or "reported" is no hedge: Marty removes such sentences
+   from the says that keep another sentence and checks again, `lintRemoved`,
+   or refuses the document, `lintRefused`), when no attempt is
    clean.
 4. **Repair.** A refused document goes back to the model with the exact reason,
    the part, and, for common reasons, a one-line fact that restates the engine
@@ -489,7 +497,13 @@ the MCP server uses), so a run needs no MCP client.
    changed document): an answer that denies a motion while such a view exists
    ("the model does not show steering", "held still", "not a steering move";
    not an unrelated limit such as "not shown to scale") gets one
-   rewrite request to say which beat shows it (`answerPosedLint`); a beat or
+   rewrite request to say which beat or step shows it (assembly answers are
+   told their views are steps; `answerPosedLint`); the posed views' values and a
+   comparison of the posed parts ("one arm is raised more than the other") are
+   evidence for the answer lint, and `answerLint.remaining` records any sentence
+   that keeps it from clearing; the engine's push summary names how many shown
+   thrust arrows it comes from ("the one shown thrust arrow gives (that arrow
+   only, not every engine)"); a beat or
    step number that names one of its views is no fact for the number check. `answerLint`
    records the sentences and whether the
    rewrite cleared them. A sentence with a number, year or version that is in no

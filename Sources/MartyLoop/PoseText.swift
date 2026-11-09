@@ -30,7 +30,9 @@ import MartyEngine
             if outward < -Push.threshold { s.append("the sideways parts point toward the middle") }
             if mannequin, depth < -Push.threshold { s.append("a forward push") }
             if mannequin, depth > Push.threshold { s.append("a backward push") }
-            return "In this step the shown thrust arrows give: " + s.joined(separator: "; ") + "."
+            // (Computed from the shown arrows only: with one, it is that arrow's push, not the whole device's.)
+            let from = arrows == 1 ? "the one shown thrust arrow gives (that arrow only, not every engine)" : "the \(arrows) shown thrust arrows give"
+            return "In this step " + from + ": " + s.joined(separator: "; ") + "."
         }
     }
 

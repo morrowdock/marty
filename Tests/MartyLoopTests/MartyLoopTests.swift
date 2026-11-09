@@ -1470,6 +1470,68 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(rows.rows[3].sources[0].check, "quote too short to check")
     }
 
+    /// Round 2j: a share claim never passes as a lint fallback; a found quote must state the claim; three true quotes
+    /// with numbers are found; the answer lint knows the posed views; the push names its arrows; steps are steps.
+    func testRound2jHonesty() throws {
+        // The lint fallback: a share sentence is removed (another sentence is left) or the document is refused.
+        func run(_ say: String, _ repairSay: String) throws -> [String: Any] {
+            let plan = #"{"inScope": true, "subject": "shaft", "beats": ["a shaft"], "components": ["shaftWithBearing", "housingBase"], "primitives": [], "honesty": ""}"#
+            func doc(_ s: String) -> String {
+                #"{"document": "# + MartyExamples.formatExample.replacingOccurrences(of: "Two bearings hold a shaft in line on a base.", with: s) + "}"
+            }
+            let model = ScriptedAdapter(replies: [plan, doc(say), doc(repairSay)])
+            let out = tempOut()
+            defer { try? FileManager.default.removeItem(at: out) }
+            return try MartyLoop(model: model, out: out, options: .init()).run(question: "How is a shaft held?")
+        }
+        let removed = try run("Two bearings hold a shaft in line. The lower bearing carries most of the load.",
+                              "Two bearings hold a shaft in line. Engadget claims the lower bearing carries most of the load.")
+        XCTAssertEqual(removed["accepted"] as? Bool, true, "\(removed["attempts"] ?? "")")
+        XCTAssertEqual((removed["lintRemoved"] as? [String])?.first, "Engadget claims the lower bearing carries most of the load")
+        let saidAfter = MartyLoop.withoutShareSentences(["steps": [["say": "Two bearings hold a shaft in line. Engadget claims the lower bearing carries most of the load."]]]).document
+        XCTAssertEqual((((saidAfter as? [String: Any])?["steps"] as? [[String: Any]])?.first)?["say"] as? String, "Two bearings hold a shaft in line.")
+        let refused = try run("The lower bearing carries most of the load.", "Engadget claims the lower bearing carries most of the load.")
+        XCTAssertEqual(refused["accepted"] as? Bool, false)
+        XCTAssertNotNil(refused["lintRefused"])
+
+        // Three true quotes with numbers (the round's false misses).
+        XCTAssertTrue(QuoteCheck.found("Dry weight: 27kg", in: "<p><strong>Dry weight:</strong> 27kg</p><p><strong>Flight time:</strong> 5-10 minutes</p>"))
+        XCTAssertTrue(QuoteCheck.found("running the engines at 1,050hp", in: "<p>You would not want to be running the engines at 1,050hp other than for take-off.</p>"))
+        XCTAssertTrue(QuoteCheck.found("does boast a gut-punching 1,050 horsepower",
+                                       in: "<p>But, it does boast a gut-punching 1,050 horsepower (incidentally, that&rsquo;s more than a car).</p>"))
+
+        // A found quote must state the claim.
+        var support = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [
+            ["id": "F1", "claim": "The rear backpack jet does most of the lifting", "value": "Backpack lifts, arm jets steer; reporter counted 3 jets", "label": "CLAIM",
+             "sources": [["url": "https://a.org/10", "publisher": "A", "date": "2021", "quote": "spread uniformly across the three jets"]]],
+            ["id": "F2", "claim": "Fuel", "value": "kerosene", "label": "CLAIM", "sources": [["url": "https://a.org/10", "publisher": "A", "date": "2021", "quote": "it runs on Jet A1 or diesel fuel"]]],
+            ["id": "F3", "claim": "Fuel", "value": "diesel", "label": "CLAIM", "sources": [["url": "https://a.org/10", "publisher": "A", "date": "2021", "quote": "it runs on Jet A1 or diesel fuel"]]]]])))
+        support.checkQuotes(fetcher: TestPages(pages: ["https://a.org/10": "<p>Thrust is spread uniformly across the three jets, and it runs on Jet A1 or diesel fuel.</p>"], fallback: nil))
+        XCTAssertTrue(support.rows[0].unconfirmed, "\(support.downgrades)")
+        XCTAssertTrue(support.downgrades.contains { $0.contains("do not state \"most\"") }, "\(support.downgrades)")
+        XCTAssertTrue(support.rows[1].unconfirmed); XCTAssertFalse(support.rows[2].unconfirmed)
+
+        // The answer lint: pose angles and a comparison of the posed parts are sourced; what stays flagged is recorded.
+        let posed = ["beat 4 poses {\"pilot\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15}}}"]
+        var clean: [String: Any] = [:]
+        _ = try MartyLoop(model: ScriptedAdapter(replies: ["Beat 4 raises the left shoulder to 60 and the right to 15, so one arm is raised more than the other."]),
+                          out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 4, result: &clean)
+        XCTAssertNil(clean["answerLint"], "\(clean)")
+        var stuck: [String: Any] = [:]
+        _ = try MartyLoop(model: ScriptedAdapter(replies: ["It weighs 99 kg.", "It still weighs 99 kg."]), out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], result: &stuck)
+        XCTAssertEqual((stuck["answerLint"] as? [String: Any])?["remaining"] as? [String], ["It still weighs 99 kg"])
+
+        // The push names its arrows; an assembly's views are steps; prompts.
+        let one = PoseText.Push(side: 0.9, depth: 0, sideAbs: 0.9, outward: 0, arrows: 1, mannequin: true)
+        XCTAssertTrue(one.summary.contains("the one shown thrust arrow gives (that arrow only"), one.summary)
+        XCTAssertTrue(MartyPrompts.answerUser(followUp: "q", before: "{}", after: nil, posed: ["step 5 poses {}"], viewWord: "step").contains("say \"step N shows this\""))
+        XCTAssertTrue(MartyPrompts.researchSystem(maxSearches: 10).contains("snippet gives a figure, fetch the page that holds it"))
+        XCTAssertTrue(MartyPrompts.authorSystem(parts: "x", example: "{}", explainer: nil).contains("(example, not confirmed <brand> hardware)\" in its text"))
+        XCTAssertTrue(MartyPrompts.authorSystem(parts: "x", example: "{}", explainer: MartyExamples.explainerExample).contains("\"<publisher> <year>\""))
+    }
+
     func testAnchorIssuesInRepairs() throws {
         let hidden = MartyExamples.formatExample.replacingOccurrences(of: #""offset":[0,-6,40]"#, with: #""offset":[0,0,60]"#)
         XCTAssertNotEqual(hidden, MartyExamples.formatExample)
