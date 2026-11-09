@@ -1056,7 +1056,15 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(first["reason"] as? String, "annotation.anchor.hidden.lShaft")
         XCTAssertNotNil(first["anchor"])
         let repair = model.prompts[2].user
-        XCTAssertTrue(repair.contains("Label and pointer dots the engine refused") && repair.contains("`shaft.upperBearing` hides the anchor"), repair)
+        XCTAssertTrue(repair.contains("Label and pointer dots the engine refused") && repair.contains("apply a suggestion exactly"), repair)
+        XCTAssertTrue(repair.contains(#"set its "at" to exactly {"offset":[5.412,-2.381,53.055],"part":"shaft.shaft"}"#), repair)
+        XCTAssertTrue(repair.contains("Engine: Label lShaft (step 1) is hidden behind shaft.upperBearing"), repair)
+        XCTAssertEqual(MartyPrompts.shortJSON(["b": [1.0, -0.0004, 2.5], "a": "x\"y", "c": true]), #"{"a":"x\"y","b":[1,0,2.5],"c":true}"#)
+        // No suggestion: for a hidden or framing cause, the three ways out of it.
+        let none = try XCTUnwrap(MartyPrompts.anchorLines([["id": "lX", "kind": "label", "cause": "occluded", "beat": 3, "part": "core",
+                                                             "by": "casing", "suggest": NSNull(), "noSuggest": ["cause": "hidden", "by": "casing"],
+                                                             "repair": "Label lX is hidden."]]))
+        XCTAssertTrue(none.contains("no checked suggestion (hidden); remove `lX` from the annotate list of beat 3, or section or ghost `casing` there, or change that view's camera"), none)
         XCTAssertNotNil(MartyPrompts.hint(for: "annotation.anchor.hidden.lShaft"))
         // A curly apostrophe still negates a cancellation.
         let pm = PoseText.Push(side: 0, depth: 0, sideAbs: 1, outward: 0, arrows: 2, mannequin: true)

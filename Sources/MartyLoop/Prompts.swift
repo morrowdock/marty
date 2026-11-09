@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import Foundation
+import MartyEngine
 
 /// The prompts of the Marty loop. They are small on purpose: the plan step sees only the compact catalog, and the
 /// author step sees a short format guide plus `explain` entries for the parts the plan chose. The receipt records the
 /// size and SHA-256 of every prompt, so a change in context is always measured.
 public enum MartyPrompts {
-    public static let version = "marty-prompts/17"
+    public static let version = "marty-prompts/18"
 
     static let role = """
         You are Marty, a teacher who explains how things work with checked 3D models. A deterministic engine \
@@ -241,21 +242,53 @@ public enum MartyPrompts {
         return s + "\n\nFix the cause and reply with the corrected JSON object only (same reply format)."
     }
 
+    /// JSON text with numbers written with at most 3 decimals (as the engine writes them in its repair lines), keys
+    /// sorted, for display in a prompt.
+    static func shortJSON(_ v: Any) -> String {
+        switch v {
+        case let n as NSNumber where CFGetTypeID(n) == CFBooleanGetTypeID(): return n.boolValue ? "true" : "false"
+        case let n as NSNumber:
+            var t = String(format: "%.3f", n.doubleValue)
+            while t.hasSuffix("0") { t.removeLast() }
+            if t.hasSuffix(".") { t.removeLast() }
+            return t == "-0" ? "0" : t
+        case let s as String: return MartyJSON.string([s]).dropFirst().dropLast().description
+        case let a as [Any]: return "[" + a.map(shortJSON).joined(separator: ",") + "]"
+        case let o as [String: Any]: return "{" + o.keys.sorted().map { MartyJSON.string([$0]).dropFirst().dropLast() + ":" + shortJSON(o[$0]!) }.joined(separator: ",") + "}"
+        default: return "null"
+        }
+    }
+
     /// The engine's label and pointer dot issues (`anchor`, `anchorIssues`): at most 6, each with the view, the part,
-    /// what is in the way and the engine's own fix.
+    /// what is in the way, the engine's checked suggestion (to apply exactly) or why there is none, and its repair line.
     public static func anchorLines(_ issues: [[String: Any]]) -> String? {
         guard !issues.isEmpty else { return nil }
         let lines = issues.prefix(6).map { i -> String in
+            let id = i["id"] as? String ?? "?"
             var w: [String] = []
             if let c = i["cause"] as? String { w.append(c) }
-            if let s = i["step"] as? Int { w.append("step \(s)") }
-            if let b = i["beat"] as? Int { w.append("beat \(b)") }
+            let view = (i["step"] as? Int).map { "step \($0)" } ?? (i["beat"] as? Int).map { "beat \($0)" }
+            if let view { w.append(view) }
             if let p = i["part"] as? String { w.append("on `\(p)`") }
             if let b = i["by"] as? String { w.append("hidden by `\(b)`") }
             if let c = i["closer"] as? String { w.append("`\(c)` is nearer") }
-            return "- `\(i["id"] as? String ?? "?")` (" + w.joined(separator: ", ") + "): " + (i["fix"] as? String ?? "")
+            var line = "- `\(id)` (" + w.joined(separator: ", ") + ")"
+            let key = i["kind"] as? String == "pointer" || i["kind"] as? String == "arrow" ? "to" : "at"
+            if let sug = i["suggest"], !(sug is NSNull) {
+                line += ": set its \"\(key)\" to exactly " + shortJSON(sug) + " (checked by the engine)"
+            } else if let none = i["noSuggest"] as? [String: Any] {
+                let cause = none["cause"] as? String ?? "none"
+                line += ": no checked suggestion (\(cause))"
+                if ["hidden", "framing"].contains(cause) {
+                    let blocker = (none["by"] as? String ?? i["by"] as? String).map { "`\($0)`" } ?? "the part in the way"
+                    line += "; remove `\(id)` from \(view.map { "the annotate list of " + $0 } ?? "that view's annotate list"), or section or ghost \(blocker) there, or change that view's camera"
+                }
+            }
+            if let r = (i["repair"] as? String) ?? (i["fix"] as? String), !r.isEmpty { line += ". Engine: " + r }
+            return line
         }
-        return "Label and pointer dots the engine refused (each must sit visibly on the part it names):\n" + lines.joined(separator: "\n")
+        return "Label and pointer dots the engine refused (each must sit visibly on the part it names; apply a suggestion exactly):\n"
+            + lines.joined(separator: "\n")
     }
 
     /// The engine's `parts.resolved` detail (the report's `limit`): the resolved count, the limit and the instances
