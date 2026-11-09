@@ -1455,6 +1455,11 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(QuoteCheck.countedWords(value: "1 kg", claim: "Dry mass"), [])
         XCTAssertEqual(QuoteCheck.countedWords(value: "1", claim: "Thrust"), [])
         XCTAssertFalse(QuoteCheck.statesCountWord("1", "a thrust of fifty newtons", entities: QuoteCheck.countedWords(value: "1 N", claim: "Thrust")))
+        XCTAssertEqual(QuoteCheck.countedWords(value: "1", claim: "Fuel consumption", unit: "kg/h"), [])
+        XCTAssertFalse(QuoteCheck.statesCountWord("1", "The device is powered by a few engines", entities: QuoteCheck.countedWords(value: "1 engine", claim: "Engines")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("2", "Both engine and battery are mounted at the rear", entities: QuoteCheck.countedWords(value: "2 engines", claim: "Engines")))
+        XCTAssertFalse(QuoteCheck.statesCountWord("2", "The aircraft uses a second-generation engine", entities: QuoteCheck.countedWords(value: "2 engines", claim: "Engines")))
+        XCTAssertTrue(QuoteCheck.statesCountWord("2", "both engines are mounted low", entities: QuoteCheck.countedWords(value: "2 engines in the rear", claim: "Engines")))
         XCTAssertEqual(rows.rows[3].sources[0].check, "quote too short to check")
     }
 
