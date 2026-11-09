@@ -54,8 +54,14 @@ public struct FactTable {
     public static let empty = FactTable(needed: false, rows: [], downgrades: [])
 
     /// Parses and checks a research reply: `{"needed": bool, "rows": [...]}`. Nil when the reply has no such object.
+    /// Whether a reply object has the table's shape: "rows" a list, or "needed": false (no research needed).
+    public static func isTableShaped(_ o: [String: Any]?) -> Bool {
+        guard let o else { return false }
+        return o["rows"] is [Any] || (o["needed"] as? Bool) == false
+    }
+
     public static func parse(_ text: String, blocked: [String] = ResearchLimits.defaultBlocked) -> FactTable? {
-        guard let o = ReplyJSON.object(text) else { return nil }
+        guard let o = ReplyJSON.object(text), isTableShaped(o) else { return nil }
         let needed = o["needed"] as? Bool ?? true
         var rows: [Row] = []
         var downgrades: [String] = []

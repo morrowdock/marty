@@ -263,7 +263,6 @@ public struct ClaudeCLIAdapter: ModelAdapter {
         // After a normal exit, give the pipes a short grace, then use what was read (a grandchild may hold them open).
         if !timedOut { _ = group.wait(timeout: .now() + Self.drainGrace) }
         try? fm.removeItem(at: work); try? fm.removeItem(at: ctx)
-        if timedOut { throw AdapterError(reason: "adapter.timeout", detail: "no answer in \(Int(timeout)) s") }
         let seconds = Date().timeIntervalSince(t0)
         lock.lock()
         // A last line without a newline.
@@ -274,8 +273,13 @@ public struct ClaudeCLIAdapter: ModelAdapter {
         func partial(_ why: String) -> ModelReply {
             let text = String(decoding: (try? JSONSerialization.data(withJSONObject: ["needed": true, "rows": streamRows])) ?? Data(), as: UTF8.self)
             return ModelReply(text: text, seconds: Date().timeIntervalSince(t0),
-                              meta: ["partial": true, "partialCause": why, "exit": Int(p.terminationStatus),
+                              meta: ["partial": true, "partialCause": why, "exit": p.isRunning ? -1 : Int(p.terminationStatus),
                                      "webTools": ["web_search_requests": streamCounts["WebSearch"] ?? 0, "web_fetch_requests": streamCounts["WebFetch"] ?? 0]])
+        }
+        // A research call that hung keeps the rows it wrote; any other timeout is an error.
+        if timedOut {
+            if tools != nil, !streamRows.isEmpty { return partial("timeout") }
+            throw AdapterError(reason: "adapter.timeout", detail: "no answer in \(Int(timeout)) s")
         }
         // Stopped at the limit: the rows the model wrote so far make a partial table; with none, the call failed.
         if overBudget {
@@ -290,6 +294,8 @@ public struct ClaudeCLIAdapter: ModelAdapter {
             envData = streamResult ?? Data()
         }
         guard let env = try? JSONSerialization.jsonObject(with: envData) as? [String: Any] else {
+            // A research call that ended without a result event (a crash) keeps the rows it wrote.
+            if tools != nil, !streamRows.isEmpty { return partial("no result event") }
             throw AdapterError(reason: "adapter.output", detail: "exit \(p.terminationStatus): " + String(decoding: err.suffix(400), as: UTF8.self))
         }
         var meta: [String: Any] = ["exit": Int(p.terminationStatus)]
@@ -317,7 +323,8 @@ public struct ClaudeCLIAdapter: ModelAdapter {
         if tools != nil {
             // ROW lines before the final table are not part of it; an unreadable final table falls back to the rows.
             text = Self.withoutRowLines(text)
-            if ReplyJSON.object(text) == nil, !streamRows.isEmpty { return partial("final table unreadable") }
+            // The final table must be a table ("rows" a list, or "needed": false), not just any JSON object.
+            if !FactTable.isTableShaped(ReplyJSON.object(text)), !streamRows.isEmpty { return partial("final table unreadable") }
         }
         return ModelReply(text: text, seconds: seconds, meta: meta)
     }

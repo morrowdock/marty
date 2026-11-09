@@ -186,6 +186,13 @@ public enum QuoteCheck {
         if html {
             t = t.replacingOccurrences(of: #"(?is)<(script|style|noscript)\b.*?</\1\s*>"#, with: " ", options: .regularExpression)
             t = t.replacingOccurrences(of: #"(?s)<!--.*?-->"#, with: " ", options: .regularExpression)
+            // Block tags (cells, rows, paragraphs, line breaks, list items, headings) separate text with a block mark
+            // that is never a thousands space ("<td>1</td><td>144 kgf</td>" is not "1,144 kgf"); inline tags join
+            // their text as it renders ("<span>1</span><span>.5</span>" is "1.5"); any other tag is a space.
+            t = t.replacingOccurrences(of: #"(?i)</?(?:td|th|tr|thead|tbody|tfoot|table|caption|p|div|br|hr|li|ul|ol|dl|dt|dd|h[1-6]|section|article|header|footer|aside|nav|main|figure|figcaption|blockquote|pre|form|fieldset|legend|details|summary|address)\b[^>]*>"#,
+                                       with: "\u{2}", options: .regularExpression)
+            t = t.replacingOccurrences(of: #"(?i)</?(?:span|a|b|i|em|strong|sup|sub|small|abbr|code|mark|u|s|q|cite|bdi|bdo|data|dfn|kbd|samp|var|wbr|time|font)\b[^>]*>"#,
+                                       with: "", options: .regularExpression)
             t = t.replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
             t = decodeEntities(t)
             // Reference marks of the page ("[3]", "[edit]", "[citation needed]") are not quoted text.
@@ -216,8 +223,14 @@ public enum QuoteCheck {
         // A removed tag leaves a space before punctuation ("derail ."); drop it on both sides.
         t = t.replacingOccurrences(of: #" ([.,;:!?)\]])(?![0-9])"#, with: "$1", options: .regularExpression)
             .replacingOccurrences(of: #"([(\[]) "#, with: "$1", options: .regularExpression)
-        // Plain-space thousands groups ("1 144") are one number on the page and in the quote alike.
+        // Plain-space thousands groups ("1 144") are one number on the page and in the quote alike; a block mark
+        // with its spaces is one mark, never a grouping space, then a space.
+        t = t.replacingOccurrences(of: "[ \u{2}]*\u{2}[ \u{2}]*", with: "\u{2}", options: .regularExpression)
         t = groupedThousands(t)
+        t = t.replacingOccurrences(of: "\u{2}", with: " ")
+        t = t.replacingOccurrences(of: #" ?- ?"#, with: "-", options: .regularExpression)
+        t = t.replacingOccurrences(of: #" ([.,;:!?)\]])(?![0-9])"#, with: "$1", options: .regularExpression)
+            .replacingOccurrences(of: #"([(\[]) "#, with: "$1", options: .regularExpression)
         return t.trimmingCharacters(in: .whitespaces)
     }
 
@@ -363,10 +376,13 @@ public enum QuoteCheck {
         // The first 400k characters, without HTML comments (a commented-out tag is not the page's metadata).
         let raw = (html as NSString).substring(to: min((html as NSString).length, 400_000))
         let h = raw.replacingOccurrences(of: #"(?s)<!--.*?(-->|$)"#, with: " ", options: .regularExpression)
-        let ns = h as NSString
-        let scan = NSRange(location: 0, length: ns.length)
+        // Meta tags only outside script, style, template and noscript content (a widget's template text is not
+        // the page's metadata); JSON-LD is read from its own scripts.
+        let tags = h.replacingOccurrences(of: #"(?is)<(script|style|template|noscript)\b.*?(</\1\s*>|$)"#, with: " ", options: .regularExpression)
+        let ns = tags as NSString
         func first(_ p: String) -> String? {
-            guard let re = try? NSRegularExpression(pattern: p), let m = re.firstMatch(in: h, range: scan), m.numberOfRanges > 1 else { return nil }
+            guard let re = try? NSRegularExpression(pattern: p),
+                  let m = re.firstMatch(in: tags, range: NSRange(location: 0, length: ns.length)), m.numberOfRanges > 1 else { return nil }
             return ns.substring(with: m.range(at: 1)).replacingOccurrences(of: "/", with: "-")
         }
         let names = #"(?:article:published_time|og:published_time|date|dc\.date|dc\.date\.issued|citation_publication_date|pubdate)"#
@@ -375,7 +391,7 @@ public enum QuoteCheck {
         if let d = first(#"(?i)<meta[^>]+"# + attr + #"[^>]+content=["']"# + date) ?? first(#"(?i)<meta[^>]+content=["']"# + date + #"[^"']*["'][^>]+"# + attr) {
             return d
         }
-        return jsonLDDate(h, scan)
+        return jsonLDDate(h, NSRange(location: 0, length: (h as NSString).length))
     }
 
     static let articleTypes: Set<String> = ["Article", "NewsArticle", "BlogPosting", "TechArticle", "ScholarlyArticle", "Report",
@@ -407,13 +423,26 @@ public enum QuoteCheck {
         }
         let articles = objects.filter(isArticle)
         let pages = objects.filter(isPage)
-        // 1. The page names its main entity: that article's date (nil when it has none; the owner is known).
+        // 1. The page names its main entity: that article's date (nil when it has none; the owner is known). All
+        // named articles count: two different ones (a collection, two page objects) are ambiguous.
+        var named: [[String: Any]] = []
         for page in pages {
-            guard let me = (page["mainEntity"] as? [Any])?.first ?? page["mainEntity"] else { continue }
-            if let inline = me as? [String: Any], isArticle(inline) { return date(inline) }
-            let ref = (me as? String) ?? ((me as? [String: Any])?["@id"] as? String)
-            if let ref, let a = articles.first(where: { $0["@id"] as? String == ref }) { return date(a) }
+            guard let me = page["mainEntity"] else { continue }
+            for e in (me as? [Any]) ?? [me] {
+                if let inline = e as? [String: Any], isArticle(inline) { named.append(inline); continue }
+                let ref = (e as? String) ?? ((e as? [String: Any])?["@id"] as? String)
+                if let ref, let a = articles.first(where: { $0["@id"] as? String == ref }) { named.append(a) }
+            }
         }
+        // The same article named twice (by @id, or the same inline object) is one.
+        func key(_ a: [String: Any]) -> String {
+            (a["@id"] as? String).map { "id:" + $0 }
+                ?? String(decoding: (try? JSONSerialization.data(withJSONObject: a, options: [.sortedKeys])) ?? Data(), as: UTF8.self)
+        }
+        var seen = Set<String>()
+        let distinct = named.filter { seen.insert(key($0)).inserted }
+        if distinct.count == 1 { return date(distinct[0]) }
+        if distinct.count > 1 { return nil }
         // 2. The one article that says it is the page's main entity.
         let main = articles.filter { $0["mainEntityOfPage"] != nil }
         if main.count == 1 { return date(main[0]) }

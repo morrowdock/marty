@@ -1346,6 +1346,8 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(QuoteCheck.pageDate(graph), "2026-11-01")
         XCTAssertNil(QuoteCheck.pageDate(#"<script type="application/ld+json">[{"@type": "NewsArticle", "datePublished": "2017-01-01"}, {"@type": "NewsArticle"}]</script>"#), "two articles, no owner named")
         XCTAssertEqual(QuoteCheck.pageDate(#"<script type="application/ld+json">[{"@type": "NewsArticle", "datePublished": "2017-01-01"}, {"@type": "Article", "mainEntityOfPage": "https://a.org/x", "datePublished": "2021-03-03"}]</script>"#), "2021-03-03")
+        XCTAssertNil(QuoteCheck.pageDate(#"<script type="application/ld+json">{"@type": "CollectionPage", "mainEntity": [{"@type": "Article", "datePublished": "2017-01-01"}, {"@type": "Article", "datePublished": "2018-01-01"}]}</script>"#), "two named articles")
+        XCTAssertEqual(QuoteCheck.pageDate(#"<script>var t = '<meta name="date" content="2017-01-01">';</script><meta name="date" content="2024-04-04">"#), "2024-04-04", "a script's text is not metadata")
         // A commented-out tag is not metadata.
         XCTAssertEqual(QuoteCheck.pageDate(#"<!-- <meta name="date" content="2017-01-01"> --><script type="application/ld+json">{"@type": "Article", "datePublished": "2026-11-01"}</script>"#), "2026-11-01")
         XCTAssertNil(QuoteCheck.pageDate(#"<time datetime="2015-05-05">May</time>"#), "an unmarked time is not the publication date")
@@ -1367,6 +1369,13 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(QuoteCheck.found("Maximum thrust is 1,144 kgf", in: "<p>Maximum thrust is 1\u{2009}144 kgf</p>"))
         XCTAssertTrue(QuoteCheck.found("it was built in 2019 by a team of 144", in: "<p>it was built in 2019 by a team of 144 people</p>"))
         XCTAssertFalse(QuoteCheck.found("Maximum thrust [\u{2026}] 144 kgf", in: "<p>Maximum thrust is 1 144 kgf</p>"), "a plain grouping space on the page")
+        // Table cells are separate; inline markup joins.
+        let specs = "<p>Maximum thrust of the rig</p><table><tr><th>Motors</th><td>1</td><td>144 kgf</td></tr></table>"
+        XCTAssertFalse(QuoteCheck.found("Maximum thrust [\u{2026}] 1,144 kgf", in: specs))
+        XCTAssertTrue(QuoteCheck.found("Maximum thrust of the rig", in: specs))
+        XCTAssertFalse(QuoteCheck.found("flow [\u{2026}] .5 litres per minute", in: "<p>flow <span>1</span><span>.5</span> litres per minute</p>"))
+        XCTAssertTrue(QuoteCheck.found("flow 1.5 litres per minute", in: "<p>flow <span>1</span><span>.5</span> litres per minute</p>"))
+        XCTAssertTrue(QuoteCheck.found("the suit is fast. It flies", in: "<p>the suit is fast.</p><p>It flies</p>"), "a quote across paragraphs")
         XCTAssertTrue(QuoteCheck.found("Maximum thrust is 1 144 kgf", in: "<p>Maximum thrust is 1 144 kgf</p>"))
         XCTAssertFalse(QuoteCheck.found("Minimum temperature [\u{2026}] .5 degrees Celsius", in: "<p>Minimum temperature is \u{2212}.5 degrees Celsius</p>"))
         XCTAssertTrue(QuoteCheck.found("Minimum temperature is \u{2212}.5 degrees Celsius", in: "<p>Minimum temperature is \u{2212}.5 degrees Celsius</p>"))
@@ -1994,6 +2003,17 @@ final class ClaudeAdapterProcessTests: XCTestCase {
         let mixedExe = try fake("cat >/dev/null; echo '\(rowText)'; printf '%s\\n' '\(mixed)'")
         let m = try ClaudeCLIAdapter(model: "m", executable: mixedExe, timeout: 30).research(system: "s", user: "u", limits: ResearchLimits(maxTurns: 5))
         XCTAssertNil(m.meta["partial"]); XCTAssertEqual(FactTable.parse(m.text)?.rows.count, 2, m.text)
+        // A bare row as the final reply is no table: the streamed rows are used.
+        let bare = #"{"type":"result","result":"{\"id\": \"F9\", \"claim\": \"x\"}","is_error":false}"#
+        let bareExe = try fake("cat >/dev/null; echo '\(rowText)'; echo '\(bare)'")
+        let b = try ClaudeCLIAdapter(model: "m", executable: bareExe, timeout: 30).research(system: "s", user: "u", limits: ResearchLimits(maxTurns: 5))
+        XCTAssertEqual(b.meta["partialCause"] as? String, "final table unreadable"); XCTAssertEqual(FactTable.parse(b.text)?.rows.first?.claim, "c")
+        XCTAssertNil(FactTable.parse(#"{"id": "F1", "claim": "Wheel teeth", "value": "36"}"#))
+        // No result event (a crash), and a hang: the rows written so far.
+        let crash = try fake("cat >/dev/null; echo '\(rowText)'; exit 1")
+        XCTAssertEqual(try ClaudeCLIAdapter(model: "m", executable: crash, timeout: 30).research(system: "s", user: "u", limits: ResearchLimits(maxTurns: 5)).meta["partialCause"] as? String, "no result event")
+        let hang = try fake("cat >/dev/null; echo '\(rowText)'; sleep 30")
+        XCTAssertEqual(try ClaudeCLIAdapter(model: "m", executable: hang, timeout: 2).research(system: "s", user: "u", limits: ResearchLimits(maxTurns: 5)).meta["partialCause"] as? String, "timeout")
         let many = try fake("cat >/dev/null; for i in 1 2 3 4 5 6; do echo '\(use)'; done; sleep 20; echo '\(result)'")
         XCTAssertThrowsError(try ClaudeCLIAdapter(model: "m", executable: many, timeout: 30).research(system: "s", user: "u", limits: ResearchLimits(maxTurns: 3))) {
             XCTAssertEqual(($0 as? AdapterError)?.reason, "adapter.research.turns")

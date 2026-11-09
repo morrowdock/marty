@@ -43,7 +43,9 @@ the MCP server uses), so a run needs no MCP client.
    (informational 1xx blocks skipped; `Location` only from the final block) and
    stops curl itself past its deadline (SIGTERM, then SIGKILL). Marty looks for the source's quote in the page text
    (scripts, styles, tags and the page's reference marks such as "[3]" or
-   "[edit]" removed, entities decoded, Unicode NFKC, zero-width characters and
+   "[edit]" removed; block tags such as table cells and paragraphs separate
+   text, never as a thousands space, and inline tags such as `<span>` join it
+   as it renders; entities decoded, Unicode NFKC, zero-width characters and
    joiners such as U+2060 removed, case, quote marks, dashes and the spaces
    around them, and white space unified; trailing punctuation ignored; an
    ellipsis or a bracketed insertion such as "[…]" or "[s]" in the quote is a
@@ -59,10 +61,11 @@ the MCP server uses), so a run needs no MCP client.
    is kept (".5 litres" is not "5 litres"), and a part that starts with a sign
    or a decimal point, "-5 degrees", may follow a letter but not a digit). A found
    Each source's date comes only from its fetched page: its publication date
-   (HTML comments ignored: its page-level publication meta tag, by property or
+   (HTML comments ignored: its page-level publication meta tag outside
+   scripts, styles and templates, by property or
    name, in either attribute order and either quote style; else the
    `datePublished` of the page's own JSON-LD article: the one a page object
-   names as `mainEntity`, else the one article with `mainEntityOfPage`, else
+   names as `mainEntity` (two different named articles are ambiguous), else the one article with `mainEntityOfPage`, else
    the only article, else with no article the only page object; with several
    candidates the owner is unknown and the date stays empty; never a nested one
    such as a related article's or a comment's; microdata and `<time>` are not
@@ -96,7 +99,8 @@ the MCP server uses), so a run needs no MCP client.
    id replaces an earlier one, an identical row is skipped, at most 20 kept);
    ROW lines in the final reply are not part of its table. When the call is
    stopped at Marty's limit or the CLI's own turn limit (`error_max_turns`),
-   ends in an error, or its final table is unreadable, those rows make a
+   ends in an error, times out, ends without a result event, or its final
+   reply is not a table (no "rows" list), those rows make a
    partial table (`partial`, its `partialCause`, a `warning` with the cause in the
    receipt, and a line in the plan and author prompts that the table is
    partial); with no row written there is no table and the same warning
