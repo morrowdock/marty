@@ -259,6 +259,9 @@ public final class MartyEngine {
 
     // MARK: catalog and explain
 
+    /// The engine's camera preset names (for prompts and repair lines).
+    nonisolated public static var cameraPresets: [String] { MGSolidCamera.presets.keys.sorted() }
+
     public func catalog(compact: Bool, components: [Any]) throws -> [String: Any] {
         let lib: MGSolidLibrary
         switch try library(components) { case .failure(let r): return r.report; case .success(let l): lib = l }

@@ -172,6 +172,50 @@ public final class MartyLoop {
         return out
     }
 
+    /// The document with each bare part anchor of an annotation (`{"part": id}` with no point or offset, which the
+    /// engine refuses) written as the part's centre (`{"part": id, "point": "centre"}`); the annotation ids changed.
+    static func bareAnchorsFixed(_ document: Any) -> (document: Any, fixed: [String]) {
+        var fixed: [String] = []
+        func anchors(_ ann: [String: Any]) -> [String: Any] {
+            var ann = ann
+            for kind in ["labels", "arrows", "dimensions"] {
+                guard var list = ann[kind] as? [[String: Any]] else { continue }
+                for n in list.indices {
+                    for (k, v) in list[n] {
+                        guard let o = v as? [String: Any], o.count == 1, let part = o["part"] as? String else { continue }
+                        list[n][k] = ["part": part, "point": "centre"]
+                        if let id = list[n]["id"] as? String, !fixed.contains(id) { fixed.append(id) }
+                    }
+                }
+                ann[kind] = list
+            }
+            return ann
+        }
+        guard var d = document as? [String: Any] else { return (document, []) }
+        if let ann = d["annotations"] as? [String: Any] { d["annotations"] = anchors(ann) }
+        if var solid = d["solid"] as? [String: Any], let ann = solid["annotations"] as? [String: Any] {
+            solid["annotations"] = anchors(ann); d["solid"] = solid
+        }
+        return (d, fixed)
+    }
+
+    /// The beats (explainer) or steps (assembly) that pose parts, in words for the answer: "beat 4 poses pilot
+    /// {...}". An answer may not say the model does not show what one of them shows.
+    static func posedViews(_ document: Any?) -> [String] {
+        guard let d = document as? [String: Any] else { return [] }
+        let explainer = d["kind"] as? String == "explainer"
+        let list = (explainer ? d["beats"] : d["steps"]) as? [[String: Any]] ?? []
+        return list.enumerated().compactMap { n, b in
+            let pose = explainer ? (b["view"] as? [String: Any])?["pose"] : b["pose"]
+            guard let p = pose, !(p is NSNull) else { return nil }
+            let say = (b["say"] as? String).map { " (\"\($0.prefix(120))\")" } ?? ""
+            return "\(explainer ? "beat" : "step") \(n + 1) poses \(compact(p))\(say)"
+        }
+    }
+
+    /// Sentences that deny a motion the model shows ("the model does not show steering", "the arms are held still").
+    static let denials = #"(?i)\b(?:does not|doesn't|do not|don't|cannot|can't|can not|is not|isn't|not)\s+(?:\w+\s+){0,2}(?:show|shown|depict|depicted|model|modelled|modeled|animate|animated)\b|\bnot a (?:steering|turning|moving|tilting)\b|\bheld still\b|\bonly (?:shows|models) the hover\b|\bshows the hover, not\b"#
+
     /// The document with every non-integer number in a board table's cells written as text, so the engine shows it
     /// with every published digit (85.06, not its rounded 85.1).
     static func exactTableNumbers(_ document: Any) -> Any {
@@ -420,6 +464,7 @@ public final class MartyLoop {
             let reply = ReplyJSON.object(text)
             var document: Any? = nil
             var trimmedNow: [String] = []
+            var formFixedNow: [String] = []
             var autoFixed: [String] = []
             if let reply { document = reply["document"] ?? (reply["kind"] != nil ? reply as Any : nil) }
             let components = reply?["components"] as? [Any] ?? []
@@ -428,7 +473,9 @@ public final class MartyLoop {
                 report = ["ok": false, "reason": "components.count", "part": NSNull()]
             } else if let doc0 = document {
                 // Over-long texts are cut at a word before the check (recorded); then strict, as the engine recommends.
-                let (doc1, cut) = TextBudget.trimmed(Self.exactTableNumbers(doc0))
+                let (formed, formFixed) = Self.bareAnchorsFixed(Self.exactTableNumbers(doc0))
+                formFixedNow = formFixed
+                let (doc1, cut) = TextBudget.trimmed(formed)
                 document = doc1; trimmedNow = cut
                 do { report = try engine.check(document: doc1, ref: nil, components: components, strict: true) }
                 catch let e as ToolError { report = ["ok": false, "reason": e.reason] }
@@ -452,6 +499,7 @@ public final class MartyLoop {
                     + "; this is the document after them.)\n" + MartyJSON.string(["document": document ?? NSNull(), "components": components])
             var outcome = Self.outcome(report)
             if !trimmedNow.isEmpty { outcome["trimmed"] = trimmedNow }
+            if !formFixedNow.isEmpty { outcome["formFixed"] = formFixedNow }
             if !autoFixed.isEmpty { outcome["autoFixed"] = autoFixed }
             note(i, outcome)
             attempts.append(outcome)
@@ -752,6 +800,8 @@ public final class MartyLoop {
         if let acceptedPush { result["push"] = acceptedPush.summary }
         // Given figures go to a modelled answer only; the refused answer keeps to the report before.
         let given = modelled ? Self.givenFigures(try? JSONSerialization.jsonObject(with: Data(docText.utf8))) : []
+        // The posed steps of the model as accepted (the base when nothing changed).
+        let posedNow = modelled ? Self.posedViews(after == nil ? (try? JSONSerialization.jsonObject(with: Data(docText.utf8))) : nil) : []
         let evidence = given + (modelled ? facts.lines : []) + Self.factTexts(report) + Self.factTexts(after) + Self.numberLeaves(report["ratios"])
             + Self.numberLeaves(after?["ratios"]) + Self.numberLeaves(acceptedPatch)
         let answer = writeAnswer(system: modelled ? MartyPrompts.answerSystem() : MartyPrompts.answerRefusedSystem(),
@@ -762,8 +812,8 @@ public final class MartyLoop {
                                                                ratiosChanged: ratiosChanged,
                                                                refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAPatch,
                                                                movedForceArrows: moved, given: given, table: modelled ? factBlock : nil,
-                                                               push: acceptedPush?.summary),
-                                 sources: evidence + (modelled ? [question, followUp] : []), push: acceptedPush, result: &result)
+                                                               push: acceptedPush?.summary, posed: posedNow),
+                                 sources: evidence + (modelled ? [question, followUp] : []), push: acceptedPush, posed: posedNow, result: &result)
         result["ok"] = answer != nil
         result["answer"] = answer.map { $0 as Any } ?? NSNull()
         result["answerSource"] = "model text written from the engine reports; its numbers are not checked"
@@ -806,7 +856,8 @@ extension MartyLoop {
                 user += "\n\n\"document\" must be the whole changed explainer object, or null. Reply again."
                 continue
             }
-            let (trimmedDoc, explainerCut) = TextBudget.trimmed(Self.exactTableNumbers(changed0))
+            let (formedDoc, explainerFormFixed) = Self.bareAnchorsFixed(Self.exactTableNumbers(changed0))
+            let (trimmedDoc, explainerCut) = TextBudget.trimmed(formedDoc)
             var changed = trimmedDoc as? [String: Any] ?? changed0
             var r: [String: Any]
             var autoFixed: [String] = []
@@ -847,6 +898,7 @@ extension MartyLoop {
             }
             var o = Self.outcome(r)
             if !explainerCut.isEmpty { o["trimmed"] = explainerCut }
+            if !explainerFormFixed.isEmpty { o["formFixed"] = explainerFormFixed }
             if !autoFixed.isEmpty { o["autoFixed"] = autoFixed }
             note(i, o); attempts.append(o)
             if (r["ok"] as? Bool) == true {
@@ -898,6 +950,7 @@ extension MartyLoop {
         let engineSawAChange = engineChecked || attempts.contains { !marty.contains($0["reason"] as? String ?? "") }
         let shownReason = engineSawAChange ? (attempts.last { !marty.contains($0["reason"] as? String ?? "") }?["reason"] as? String ?? lastReason) : lastReason
         let given = modelled ? Self.givenFigures(acceptedDoc ?? base) : []
+        let posedNow = modelled ? Self.posedViews(acceptedDoc ?? base) : []
         let changeObject = acceptedChange.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) }
         let evidence = given + (modelled ? facts.lines : []) + Self.factTexts(report) + Self.factTexts(after) + Self.numberLeaves(report["ratios"])
             + Self.numberLeaves(after?["ratios"]) + Self.numberLeaves(changeObject)
@@ -906,8 +959,8 @@ extension MartyLoop {
                                                                patch: acceptedChange, ratiosChanged: ratiosChanged,
                                                                refused: modelled ? nil : shownReason, engineSawAPatch: engineSawAChange,
                                                                movedForceArrows: moved, given: given, table: modelled ? factBlock : nil,
-                                                               push: acceptedPush?.summary),
-                                 sources: evidence + (modelled ? [question, followUp] : []), push: acceptedPush, result: &result)
+                                                               push: acceptedPush?.summary, posed: posedNow),
+                                 sources: evidence + (modelled ? [question, followUp] : []), push: acceptedPush, posed: posedNow, result: &result)
         result["ok"] = answer != nil
         result["answer"] = answer.map { $0 as Any } ?? NSNull()
         result["answerSource"] = "model text written from the engine reports; its numbers are not checked"
@@ -917,7 +970,8 @@ extension MartyLoop {
     /// The follow-up answer. A sentence that compares sizes or shares ("most", "the majority", "all of the") with no
     /// hedge and no number from the sources (the document with its given figures, the engine reports, the change) gets
     /// one rewrite request; `answerLint` records it and whether the rewrite cleared it.
-    func writeAnswer(system: String, user: String, sources: [String], push: PoseText.Push? = nil, result: inout [String: Any]) -> String? {
+    func writeAnswer(system: String, user: String, sources: [String], push: PoseText.Push? = nil, posed: [String] = [],
+                     result: inout [String: Any]) -> String? {
         let (first, i) = ask("answer", attempt: 0, system: system, user: user)
         note(i, ["ok": first != nil])
         guard var answer = first?.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
@@ -926,6 +980,20 @@ extension MartyLoop {
             // Direction words that disagree with the posed step count with the unsourced sentences.
             let d = push.map { PoseText.disagreements(text, push: $0) } ?? []
             return (c, (Self.unsourcedSentences(text, sources: sources) + d).filter { !c.contains($0) })
+        }
+        // An answer may not deny a motion that a posed view of the model shows: one repair with the posed views.
+        func denials(_ text: String) -> [String] { posed.isEmpty ? [] : Self.sentences(text).filter { $0.range(of: Self.denials, options: .regularExpression) != nil } }
+        let denied = denials(answer)
+        if !denied.isEmpty {
+            let (fixed, k) = ask("answer", attempt: 1, system: system, user: user + "\n\nYour previous answer:\n\(answer)\n\n"
+                + MartyPrompts.answerPosedRepair + "\n" + denied.joined(separator: "\n") + "\n\nPosed views:\n" + posed.map { "- \($0)" }.joined(separator: "\n"))
+            note(k, ["ok": fixed != nil, "reason": "answer.posed"])
+            var lint: [String: Any] = ["reason": "answer.posed", "sentences": denied, "fixed": false]
+            if let f = fixed?.trimmingCharacters(in: .whitespacesAndNewlines), !f.isEmpty {
+                answer = f
+                lint["fixed"] = denials(f).isEmpty
+            }
+            result["answerPosedLint"] = lint
         }
         let (comparative, unsourced) = problems(answer)
         let flagged = comparative + unsourced
@@ -1432,5 +1500,5 @@ extension MartyLoop {
 public enum MartyExamples {
     public static let formatExample = #"{"v":2,"kind":"assembly","title":"A shaft held in two bearings","units":"mm","parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"labels":[{"id":"lShaft","at":{"part":"shaft.input","offset":[0,-6,40]},"text":"Shaft"},{"id":"lRated","at":{"world":[0,-70,20]},"text":"Rated 3000 rpm","unchecked":"assumed example"}],"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-80]},"to":{"part":"base.base","offset":[0,0,-120]},"text":"Weight"}]},"steps":[{"say":"Two bearings hold a shaft in line on a base.","camera":"hero","annotate":["lShaft","lRated","aW"]},{"say":"Input: the shaft makes {shaft.input.speed} turn for each input turn.","highlight":["shaft.input"],"spin":1,"check":[{"value":"shaft.input.speed","eq":1}],"annotate":["lShaft"]},{"say":"Cut open: the lower bearing rings the shaft.","section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"highlight":["shaft.lowerBearing"],"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]},{"say":"Seen through the base.","ghost":["base.base"],"annotate":["aW"]}]}"#
     /// A small explainer: the same shaft with a table of one given number (with its source) and one engine fact.
-    public static let explainerExample = #"{"v":1,"kind":"explainer","title":"A shaft held in two bearings","primary":"solid","notes":{"t":{"basis":"F1 maker's data sheet, 2024, claimed"}},"board":{"v":1,"items":[{"id":"cap","k":"text","at":[6,7],"text":"Key figures"}]},"solid":{"v":2,"parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-80]},"to":{"part":"base.base","offset":[0,0,-120]},"text":"Weight"}]}},"beats":[{"say":"Two bearings hold a shaft on a base; the table gives its rated speed.","highlight":["t.r1","shaft.shaft"],"ops":[{"op":"add","item":{"id":"t","k":"table","at":[6,4],"header":true,"cells":[["Item","Value"],["Rated rpm",3000],["Turns/input","{shaft.input.speed}"]]}}],"view":{"annotate":["aW"]}},{"say":"Cut open: the lower bearing rings the shaft.","highlight":["shaft.lowerBearing"],"view":{"section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]}}]}"#
+    public static let explainerExample = #"{"v":1,"kind":"explainer","title":"A shaft held in two bearings","primary":"solid","notes":{"t":{"basis":"F1 maker's data sheet, 2024, claimed"}},"board":{"v":1,"items":[{"id":"t","k":"table","at":[6,4],"header":true,"cells":[["Item","Value"]]}]},"solid":{"v":2,"parts":[{"id":"base","use":"housingBase","at":[0,0,-1]},{"id":"shaft","use":"shaftWithBearing","with":{"radius":6,"length":80}}],"annotations":{"arrows":[{"id":"aW","meaning":"force","cause":"gravity","from":{"part":"base.base","offset":[0,0,-80]},"to":{"part":"base.base","offset":[0,0,-120]},"text":"Weight"}]}},"beats":[{"say":"Two bearings hold a shaft on a base; the table gives its rated speed.","highlight":["t.r1","shaft.shaft"],"ops":[{"op":"set","id":"t","key":"cells","value":[["Item","Value"],["Rated rpm",3000],["Turns/input","{shaft.input.speed}"]]}],"view":{"annotate":["aW"]}},{"say":"Cut open: the lower bearing rings the shaft.","highlight":["shaft.lowerBearing"],"view":{"section":{"normal":[0,-1,0],"parts":["shaft.lowerBearing"]},"focus":["shaft.lowerBearing","shaft.shaft"],"annotate":[]}}]}"#
 }

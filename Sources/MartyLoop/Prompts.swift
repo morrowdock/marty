@@ -6,7 +6,7 @@ import MartyEngine
 /// author step sees a short format guide plus `explain` entries for the parts the plan chose. The receipt records the
 /// size and SHA-256 of every prompt, so a change in context is always measured.
 public enum MartyPrompts {
-    public static let version = "marty-prompts/21"
+    public static let version = "marty-prompts/22"
 
     static let role = """
         You are Marty, a teacher who explains how things work with checked 3D models. A deterministic engine \
@@ -80,9 +80,10 @@ public enum MartyPrompts {
           (strict check: joint.idle.<id>). A turn axis runs through the part's own origin along its joint vector and
           must pass through the part's own shape (frame.axis.off.<id>): put the shape on the axis (the shape entry's own
           "at"), or mark a part that turns about an outside axis on purpose with "offAxis": true.
-        - Text (title, name, say) may not hold <, >, :// or control characters; write "less than" instead of <.
+        - Text may not hold <, >, :// or control characters (write "less than").
         - Step: {"say": "<= 240 chars, one or two short sentences", "highlight": [ids], "explode": 0..1,
           "camera": "<preset>", "orbit": degrees, "spin": input turns, "check": [claims]}. At most 16 steps.
+          Cameras: \(MartyEngine.cameraPresets.joined(separator: ", ")) only.
         - Numbers in a step's say come ONLY from engine facts: write {fact} or {fact|mod} and the engine fills it.
           Any number character in a say is refused, also ½, ² or ₂ (text.number.step.<n>). Facts: <part>.teeth, <part>.module, <part>.speed
           (turns per input turn, signed, relative to its parent), <part>.worldSpeed, <part>.travel (stroke of a sliding
@@ -93,7 +94,7 @@ public enum MartyPrompts {
           Example: {"say": "The rotor turns {rotor.speed|abs|frac} of a turn the other way.",
                     "check": [{"value": "rotor.speed", "lt": 0}]}.
         - A claim {"value": "<fact>", "eq" | "lt" | "gt": number} is proved by the engine; a false claim is refused.
-          Keep digits out of the title too (a title with digits is shown as not checked).
+          Keep digits out of the title (it would show as not checked).
         - Only when a step must state a number that is not a fact, add "unchecked": "<why, 1-60 chars>" to it; it is then
           shown as "Not checked". Prefer facts.
         - Materials: brushedSteel, polishedSteel, darkSteel, blackOxide, brass, bronze, aluminum, rubber, glass,
@@ -140,19 +141,21 @@ public enum MartyPrompts {
         - Facts beyond the engine: a figure, date, product name or version, or load share only from the fact table, in
           an unchecked label or a noted table row whose "unchecked" text or note starts with its row id ("F3 <publisher>
           <year>"), in the row's wording (VERIFIED plainly, CLAIM "claimed", PLAUSIBLE "likely" or "example", UNKNOWN
-          only "not found in this search", never "not published"). No row, no such fact; never merge rows into a range. A share or comparison (most, all
+          only "not found in this search", never "not published"; a row's fact is stated). No row, no such fact; never
+          merge rows into a range. A share or comparison (most, all
           of, more than) needs a row or a {fact}, or a hedge. Never derive a performance figure from the simple model.
         - Name the product version and years the model shows (title or first step), from the table. Anchor each inside
           label on the named inner part, not on the casing or body. An inside whose real parts are not public is
           labelled "<class>-style <kind> (example)" with "Not confirmed <brand> hardware".
-        - Show each named unit in a view facing it (back unit: three-quarter-back or back view); force in pounds: "lbf".
+        - Show each named unit in a view facing it (back unit: camera "back") and all in one whole-figure view. Force:
+          "lbf", "kgf".
         - Physics words: a hover is a balance (the upward parts of the thrusts balance the weight of person, device and
           fuel, and the side forces and turning moments balance), never "thrust equals weight"; fuel burns with the
           oxygen in the compressed air; thrust is the reaction to the gas accelerated out of the nozzle. Steering: name
           the part that really moves (the limb or mount a unit is fixed to).
         - Free text (a figure, a note) is a label on a {"world": [x, y, z]} anchor beside the model, not on a part.
         - Lengths (characters; labels count after {fact} placeholders are filled): title 80, step say 240, part name
-          60, label and arrow text 60, unchecked 60; explainer beat say 200, note 60. Marty cuts longer text at a word.
+          60, label and arrow text 60, unchecked 60; explainer beat say 200, note 60.
         - If the engine cannot show part of the subject, build the best schematic and say so in the title or a step
           (for example "schematic: chain not modelled"). Never present an unchecked fake as real.
         """
@@ -160,9 +163,9 @@ public enum MartyPrompts {
     /// The explainer form (MartyGraphics docs/EXPLAINER.md), added to the author prompt only when the plan chose it.
     static let explainerGuide = """
         Explainer form (your plan chose it): {"v": 1, "kind": "explainer", "title": "...", "notes": {"<table id>":
-         {"basis": "<source>"}}, "primary": "solid", "board": {"v": 1, "items": [{"id": "cap", "k": "text",
-         "at": [6, 7], "text": "Key figures"}]}, "solid": { ...the assembly as above, without "kind", "title" and
-         "steps"... }, "beats": [...]}
+         {"basis": "<source>"}}, "primary": "solid", "board": {"v": 1, "items": [<the first table>]}, "solid": {
+         ...the assembly as above, without "kind", "title" and "steps"... }, "beats": [...]}. No board text item (it
+         shows on every beat); a table shows each figure's publisher (a "Source" column).
         - Keep the table small (at most 4 rows; 12 characters a cell; numbers with absolute value below 1000000) and add
           it in the first beat that needs it: {"op": "add", "item": {"id": "t", "k": "table", "at": [6, 4], "header":
           true, "cells": [["Item", "Value"], ["<name>", <number>]]}} in that beat's "ops"; a later beat may remove it
@@ -216,8 +219,11 @@ public enum MartyPrompts {
         sharing if parts share a job; its inside parts if public. One figure per row, never a merged range.
         For a named product, fetch the MAKER'S own website (its product, specification or news page) for the current \
         version and model name, and search for interviews with the maker, founder or inventor for how it works and \
-        how its parts share the load. A ratio (such as thrust to weight) only as a source states it, never computed \
-        from two rows.
+        how its parts share the load. Fetch the maker's product pages by name (its product, technology or innovation \
+        pages, not only its home page) and write its current model name as a row; keep looking for the inventor's \
+        own account of how thrust or load is shared, and for published thrust figures in the aviation or engineering \
+        press. A ratio (such as thrust to weight) only as a source states it, never computed from two rows. Each \
+        quote at least 16 characters.
         As soon as you confirm a fact, write it on its own line as: ROW {the row object}. When you are done, reply \
         with the whole JSON object below.
         Labels: VERIFIED when at least 2 independent sources (different publishers, not copies of one article) state it; \
@@ -401,6 +407,9 @@ public enum MartyPrompts {
             ("annotation.anchor.hidden", "A label dot or pointer tip is hidden, ghosted, off screen or covered by another part in a view that shows it: apply the engine's checked suggestion below, or one of the alternatives it lists for that dot (only those: a part a label or pointer sits on must not be ghosted)."),
             ("annotation.arrow.hidden", "An arrow (force, flow, motion or pointer) is mostly hidden or off screen in a view that shows it: apply the engine's checked move below (it keeps the arrow's direction and length in every view), or one of the alternatives it lists for that arrow (only those: a part a label or pointer sits on must not be ghosted)."),
             ("annotation.arrow.untested", "The engine's arrow test ran out of budget: show fewer arrows in that view, or hide parts that view does not need and no label or arrow sits on."),
+            ("view.camera", "A beat view's \"camera\" must be one of the presets, exactly: \(MartyEngine.cameraPresets.joined(separator: ", ")) (for a back view: \"back\")."),
+            ("step.camera", "A step's \"camera\" must be one of the presets, exactly: \(MartyEngine.cameraPresets.joined(separator: ", ")) (for a back view: \"back\")."),
+            ("anchor.form", "An anchor is a part id, {\"part\", \"offset\": [x, y, z]}, {\"part\", \"point\": \"centre\"} or {\"world\": [x, y, z]}."),
             ("annotation.anchor.untested", "The engine's anchor test ran out of budget: show fewer labels in that view, or hide parts that view does not need and no label or arrow sits on."),
             ("parts.count", "\"parts\" holds 1 to 48 entries, and component expansion may make at most 96 parts (a microTurbojet is 11, a mannequin 12): use fewer component instances, or plain shapes for the units that are not cut open."),
             ("parts.resolved", "The model has too many parts after component and repeat expansion: use fewer component instances, or plain shapes for the units that are not cut open."),
@@ -478,6 +487,13 @@ public enum MartyPrompts {
 
     /// One rewrite request when an answer compares sizes or shares without a figure, or states a number that is in
     /// no source.
+    /// The answer repair when it denies a motion that a posed beat or step already shows.
+    public static let answerPosedRepair = """
+        These sentences say the model does not show a motion, but the model already poses parts in the views below. \
+        Say which beat or step shows it ("beat N shows this"), and never say the model does not show it. Reply with \
+        the whole answer text only:
+        """
+
     public static let answerComparativeRepair = """
         These sentences compare sizes or shares without a given figure or an engine number, or state a number, year or \
         version that is not in the fact table, the engine reports or the question. Hedge a comparison (about, in this \
@@ -526,7 +542,7 @@ public enum MartyPrompts {
 
     public static func answerUser(followUp: String, before: String, after: String?, patch: String? = nil, ratiosChanged: Bool = false,
                                   refused: String? = nil, engineSawAPatch: Bool = true, movedForceArrows: [String] = [], given: [String] = [],
-                                  table: String? = nil, push: String? = nil) -> String {
+                                  table: String? = nil, push: String? = nil, posed: [String] = []) -> String {
         var s = "Learner asks: \(followUp)\n\nEngine report before:\n\(before)\n\n"
         if refused == nil, let table { s += "\(table)\n\n" }
         if refused == nil, !given.isEmpty {
@@ -537,6 +553,10 @@ public enum MartyPrompts {
             return s + (engineSawAPatch
                 ? "The engine refused every change that was tried (last reason: \(refused)), so this model cannot show the what-if.\n"
                 : "No change could be checked by the engine (last problem: \(refused)), so this model cannot show the what-if.\n")
+        }
+        if !posed.isEmpty {
+            s += "Views of the model that already pose parts (the engine poses them):\n" + posed.map { "- \($0)" }.joined(separator: "\n")
+                + "\nIf one of them shows what the learner asks, say \"beat N shows this\" (or step N); never say the model does not show it.\n\n"
         }
         guard let after else { return s + "No model change.\n" }
         if let patch { s += "The change you made (sizes you set may be stated):\n\(patch)\n\n" }

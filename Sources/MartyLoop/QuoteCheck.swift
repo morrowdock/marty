@@ -333,7 +333,9 @@ public enum QuoteCheck {
         "seven": "7", "eight": "8", "nine": "9", "ten": "10", "eleven": "11", "twelve": "12", "thirteen": "13", "fourteen": "14",
         "fifteen": "15", "sixteen": "16", "seventeen": "17", "eighteen": "18", "nineteen": "19", "twenty": "20", "thirty": "30",
         "forty": "40", "fifty": "50", "sixty": "60", "seventy": "70", "eighty": "80", "ninety": "90", "hundred": "100",
-        "thousand": "1000", "million": "1000000", "billion": "1000000000", "single": "1", "twin": "2", "pair": "2", "dozen": "12"]
+        "thousand": "1000", "million": "1000000", "billion": "1000000000", "single": "1", "twin": "2", "pair": "2", "dozen": "12",
+        "first": "1", "second": "2", "third": "3", "fourth": "4", "fifth": "5", "sixth": "6", "seventh": "7", "eighth": "8",
+        "ninth": "9", "tenth": "10"]
 
     /// The numbers a quote states: its digits, number words ("five"), and Roman version numerals after a version
     /// word ("Mk IV" is 4).
@@ -406,6 +408,17 @@ public enum QuoteCheck {
         }
         let ordered = found.map(\.1)
         return inOrder ? ordered : Array(Set(ordered + MartyLoop.numbers(quote)))
+    }
+
+    /// Whether `quote` states the count 1 or 2 in words that are no number words: "a", "an", "one", "single", "sole"
+    /// for 1 ("a rear jet engine"), "both", "either", "pair", "twin" for 2 ("either side of the engine").
+    static func statesSmallCount(_ headline: String, _ quote: String) -> Bool {
+        let q = quote.lowercased()
+        switch headline {
+        case "1": return q.range(of: #"\b(a|an|one|single|sole)\b"#, options: .regularExpression) != nil
+        case "2": return q.range(of: #"\b(both|either|pair|twin|two)\b"#, options: .regularExpression) != nil
+        default: return false
+        }
     }
 
     /// The value of a Roman numeral (i to mmmcmxcix), or nil.
@@ -1021,6 +1034,10 @@ extension FactTable {
                     }
                 }
                 guard !src.quote.isEmpty else { rows[n].sources[k].check = "no quote"; continue }
+                // A quote under the minimum is never evidence: it is reported as too short, not as not found.
+                guard QuoteCheck.normalized(src.quote, html: false).count >= QuoteCheck.minimumPart else {
+                    rows[n].sources[k].check = "quote too short to check"; continue
+                }
                 guard let url = URL(string: src.url) else { rows[n].sources[k].check = "bad url"; continue }
                 let page: (status: Int, body: String?, final: URL?)
                 if let cached = pages[src.url] { page = cached }
@@ -1059,7 +1076,8 @@ extension FactTable {
             // The row's value must be what a found quote states: its headline number in one of them. A value computed
             // from other figures (a ratio of two rows' numbers) is no published fact: the row is left out.
             if !rows[n].unconfirmed, after != .unknown, let headline = QuoteCheck.statedNumbers(rows[n].value, inOrder: true).first,
-               !foundQuotes.flatMap({ QuoteCheck.statedNumbers($0) }).contains(headline) {
+               !foundQuotes.flatMap({ QuoteCheck.statedNumbers($0) }).contains(headline),
+               !foundQuotes.contains(where: { QuoteCheck.statesSmallCount(headline, $0) }) {
                 downgrades.append("\(rows[n].id): value \(rows[n].value) is in none of its found quotes (computed, not published); left out")
                 after = .unknown
                 rows[n].unconfirmed = true
