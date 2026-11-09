@@ -50,8 +50,8 @@ the MCP server uses), so a run needs no MCP client.
    numeric entities decoded (an unknown one is a symbol); NFKC; zero-width
    characters and joiners such as U+2060 removed; case, quote marks and dashes
    folded; a prime after a digit, ASCII or curly, stays a unit mark ("5'11\""
-   is 5′11″, not "511") unless a quote mark of the same kind opened right
-   before the number; vulgar and spaced mixed fractions are "+n/d" ("1½" is
+   is 5′11″, not "511") unless it closes a quotation of its kind that is open
+   in the same block; vulgar and spaced mixed fractions are "+n/d" ("1½" is
    "1+1/2"); grouping spaces before 3 digits join thousands ("1 144" is
    "1,144"); number operators bind without spaces ("10 ^ 3", "3 / 4",
    "10 ± 2", "4 + 4", "10 x 20", "1.5·10^6", "≥ 10", ">= 10", "10 m / s",
@@ -68,8 +68,10 @@ the MCP server uses), so a run needs no MCP client.
    "6.674 30", "5′ 11″", "− $500") unless a hard boundary is between them, and
    a signed part never follows a word with a digit ("2e-3" is not "-3"); a
    part that ends with a number or a unit after one may not be followed by
-   such a word, nor by "to" and a number (a range, "−40 to +85"); a dash
-   before a word is punctuation ("1,050 bhp — the company").
+   such a word; a range in words is whole at both ends ("10 to 20 bar" gives
+   neither "10" nor "20 bar"); a gap glued to a number keeps these rules
+   ("[…]5 degrees" is not "−5 degrees"); a dash before a word is punctuation
+   ("1,050 bhp — the company").
    Each source's date comes only from its fetched page: its publication date
    (HTML comments ignored: its page-level publication meta tag outside
    scripts, styles and templates, by property or

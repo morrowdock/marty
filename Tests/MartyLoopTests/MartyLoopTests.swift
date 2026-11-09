@@ -1501,6 +1501,18 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(QuoteCheck.found("The rating was -5 on this scale", in: "<p>The rating was “−5” on this scale</p>"), "The rating was -5 on this scale | The rating was “−5” on this scale")
         XCTAssertTrue(QuoteCheck.found("the engines produce 144 kgf of thrust", in: "<p><p>the engines produce 144 kgf of thrust.</p><table><tr><td>5</td></tr></table></p>"), "the engines produce 144 kgf of thrust | <p>the engines produce 144 kgf of thrust.</p><table><tr><td>5</td></tr></table>")
         XCTAssertTrue(QuoteCheck.found("rose from 5 to 10 percent", in: "<p>rose from 5 to 10 percent</p>"), "rose from 5 to 10 percent | rose from 5 to 10 percent")
+        // Round 16: number edges hold at glued gaps; ranges in words at both ends; quotations close.
+        XCTAssertFalse(QuoteCheck.found("Minimum temperature […]5 degrees Celsius", in: "<p>Minimum temperature is −5 degrees Celsius</p>"), "Minimum temperature […]5 degrees Celsius | Minimum temperature is −5 degrees Celsius")
+        XCTAssertFalse(QuoteCheck.found("The operating pressure is 10... under load", in: "<p>The operating pressure is 10–20 bar under load</p>"), "The operating pressure is 10... under load | The operating pressure is 10–20 bar under load")
+        XCTAssertFalse(QuoteCheck.found("The part measures 10 mm[…]", in: "<p>The part measures 10 mm ± 2 mm</p>"), "The part measures 10 mm[…] | The part measures 10 mm ± 2 mm")
+        XCTAssertFalse(QuoteCheck.found("20 bar is the operating pressure", in: "<p>10 to 20 bar is the operating pressure</p>"), "20 bar is the operating pressure | 10 to 20 bar is the operating pressure")
+        XCTAssertFalse(QuoteCheck.found("Operating pressure […] 20 bar", in: "<p>Operating pressure is 10 to 20 bar</p>"), "Operating pressure […] 20 bar | Operating pressure is 10 to 20 bar")
+        XCTAssertFalse(QuoteCheck.found("20 bar is the operating pressure", in: "<p>10 bar to 20 bar is the operating pressure</p>"), "20 bar is the operating pressure | 10 bar to 20 bar is the operating pressure")
+        XCTAssertTrue(QuoteCheck.found("a 10-speed hub in the rear", in: "<p>Features — a 10-speed hub in the rear.</p>"), "a 10-speed hub in the rear | Features — a 10-speed hub in the rear.")
+        XCTAssertTrue(QuoteCheck.found("The turbine produces 144", in: "<p>She said, “The turbine produces 144” and left.</p>"), "The turbine produces 144 | She said, “The turbine produces 144” and left.")
+        XCTAssertTrue(QuoteCheck.found("The turbine produces 144 kgf", in: "<p>She said, \"The turbine produces 144 kgf\" and left.</p>"), "The turbine produces 144 kgf | She said, \"The turbine produces 144 kgf\" and left.")
+        XCTAssertTrue(QuoteCheck.found("The engine[s] produce 144 kgf of thrust", in: "<p>The engines produce 144 kgf of thrust.</p>"), "The engine[s] produce 144 kgf of thrust | The engines produce 144 kgf of thrust.")
+        XCTAssertTrue(QuoteCheck.found("it went from the dock to 20 metres out", in: "<p>it went from the dock to 20 metres out</p>"), "it went from the dock to 20 metres out | it went from the dock to 20 metres out")
         // Table cells are separate; inline markup joins.
         let specs = "<p>Maximum thrust of the rig</p><table><tr><th>Motors</th><td>1</td><td>144 kgf</td></tr></table>"
         XCTAssertFalse(QuoteCheck.found("Maximum thrust [\u{2026}] 1,144 kgf", in: specs))

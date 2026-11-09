@@ -222,10 +222,7 @@ public enum QuoteCheck {
         // A prime after a digit, ASCII or curly, is a unit mark ("5'11\"" and "5’11”" are 5′11″), kept, never a quote mark
         // (dropping it would make "511"), unless a quote mark opened right before the number ("\"10\"", "“-5”" are
         // quoted numbers).
-        // The opening mark must be of the same kind ("\"5'11\"\"" is a quoted 5′11″).
-        let number = "[-+\u{2212}0-9., ]{1,16}"
-        t = t.replacingOccurrences(of: "(?<!['\u{2018}]" + number + ")(?<=[0-9])['\u{2019}]", with: "\u{2032}", options: .regularExpression)
-            .replacingOccurrences(of: "(?<![\"\u{201C}]" + number + ")(?<=[0-9])[\"\u{201D}]", with: "\u{2032}\u{2032}", options: .regularExpression)   // as NFKC writes ″
+        t = unitPrimes(t)
         for (a, b) in [("\u{2018}", "'"), ("\u{2019}", "'"), ("\u{201A}", "'"), ("\u{201B}", "'"),
                        ("\u{201C}", "\""), ("\u{201D}", "\""), ("\u{201E}", "\""), ("\u{00AB}", "\""), ("\u{00BB}", "\""),
                        ("\u{2010}", "-"), ("\u{2011}", "-"), ("\u{2012}", "-"), ("\u{2013}", "-"), ("\u{2014}", "-"), ("\u{2015}", "-"),
@@ -266,6 +263,33 @@ public enum QuoteCheck {
 
     static let superscripts: [Character: Character] = ["\u{2070}": "0", "\u{00B9}": "1", "\u{00B2}": "2", "\u{00B3}": "3", "\u{2074}": "4",
         "\u{2075}": "5", "\u{2076}": "6", "\u{2077}": "7", "\u{2078}": "8", "\u{2079}": "9", "\u{207A}": "+", "\u{207B}": "-"]
+
+    /// A quote mark after a digit is a prime (a unit mark: "5'11\"", "5’11”" are 5′11″; ″ as NFKC writes it, ′′) unless
+    /// it closes a quotation of its own kind that is open in the same block ("“The turbine produces 144”",
+    /// "\"5'11\"\"" is a quoted 5′11″). Straight double quotes pair in order; a block mark ends every quotation.
+    static func unitPrimes(_ s: String) -> String {
+        var out = "", curlyDouble = 0, curlySingle = 0, straightDouble = false, straightSingle = false
+        for c in s {
+            let afterDigit = out.last?.isNumber == true
+            switch c {
+            case "\u{2}": curlyDouble = 0; curlySingle = 0; straightDouble = false; straightSingle = false; out.append(c)
+            case "\u{201C}": curlyDouble += 1; out.append(c)
+            case "\u{2018}": curlySingle += 1; out.append(c)
+            case "\u{201D}":
+                if afterDigit, curlyDouble == 0 { out += "\u{2032}\u{2032}" } else { curlyDouble = max(0, curlyDouble - 1); out.append(c) }
+            case "\u{2019}":
+                if afterDigit, curlySingle == 0 { out += "\u{2032}" } else { curlySingle = max(0, curlySingle - 1); out.append(c) }
+            case "\"":
+                if afterDigit, !straightDouble { out += "\u{2032}\u{2032}" } else { straightDouble.toggle(); out.append(c) }
+            case "'":
+                if afterDigit, !straightSingle { out += "\u{2032}" }
+                else if out.last?.isLetter == true { out.append(c) }   // an apostrophe ("it's") opens nothing
+                else { straightSingle.toggle(); out.append(c) }
+            default: out.append(c)
+            }
+        }
+        return out
+    }
 
     /// Each vulgar fraction character as "n/d", after a digit as "+n/d" ("1½" is "1+1/2").
     static func plainFractions(_ s: String) -> String {
@@ -388,12 +412,11 @@ public enum QuoteCheck {
         guard let longest = parts.map(\.text.count).max(), longest >= minimumPart / 2,
               parts.reduce(0, { $0 + $1.text.count }) >= minimumPart else { return nil }
         func isSign(_ t: Token) -> Bool { t.text == "-" || t.text == "+" }
-        // A number, a sign, or a unit right after a number in the quote.
-        func numeric(_ words: [Token], at i: Int, towardInside step: Int) -> Bool {
-            let w = words[i]
-            if w.hasDigit || isSign(w) { return true }
-            let j = i + step
-            return w.hasLetter && j >= 0 && j < words.count && words[j].hasDigit
+        // At the start: a number or a sign. At the end: a number, or a unit right after a number.
+        func numericStart(_ words: [Token]) -> Bool { words[0].hasDigit || isSign(words[0]) }
+        func numericEnd(_ words: [Token]) -> Bool {
+            let last = words.count - 1
+            return words[last].hasDigit || (words[last].hasLetter && last > 0 && words[last - 1].hasDigit)
         }
         func bare(_ t: Token) -> Bool { !t.hasLetter }
         // A letters-only quote word glued to a gap may be completed by it, unless it is a unit after a number.
@@ -405,23 +428,28 @@ public enum QuoteCheck {
         func fits(_ part: Part, at s: Int) -> Bool {
             let w = part.words, last = w.count - 1
             guard s + last < p.count else { return false }
+            // Whether a glued gap completes the first or last word (then that edge is inside a word).
+            var completedStart = false, completedEnd = false
             for j in 0...last {
                 let page = p[s + j].text, mine = w[j].text
                 if page == mine { continue }
-                if j == 0, part.gluedBefore, completable(w, at: 0, neighbor: 1), page.hasSuffix(mine) { continue }
-                if j == last, part.gluedAfter, completable(w, at: last, neighbor: last - 1), page.hasPrefix(mine) { continue }
+                if j == 0, part.gluedBefore, completable(w, at: 0, neighbor: 1), page.hasSuffix(mine) { completedStart = true; continue }
+                if j == last, part.gluedAfter, completable(w, at: last, neighbor: last - 1), page.hasPrefix(mine) { completedEnd = true; continue }
                 return false
             }
-            // The start: a number may not continue an expression before it.
-            if !part.gluedBefore, s > 0, !p[s].closedBefore, numeric(w, at: 0, towardInside: 1) {
+            // The start: a number may not continue an expression before it (a gap glued to it changes nothing).
+            if !completedStart, s > 0, !p[s].closedBefore, numericStart(w) {
                 let prev = p[s - 1]
                 if bare(prev) { return false }
+                // The end of a range in words ("10 to 20 bar", "10 bar to 20 bar").
+                if prev.text == "to", !prev.closedBefore, s >= 2,
+                   p[s - 2].hasDigit || (p[s - 2].hasLetter && s >= 3 && p[s - 3].hasDigit && !p[s - 2].closedBefore) { return false }
                 if isSign(w[0]) || w[0].text.first == "+" || w[0].text.first == "-", prev.hasDigit { return false }
                 if w[0].hasDigit, prev.text.last == "e", prev.text.dropLast().last?.isNumber == true { return false }
             }
             // The end: a number may not go on after it.
             let e = s + last
-            if !part.gluedAfter, e + 1 < p.count, !p[e].closedAfter, numeric(w, at: last, towardInside: -1) {
+            if !completedEnd, e + 1 < p.count, !p[e].closedAfter, numericEnd(w) {
                 let next = p[e + 1]
                 // A dash goes on with a number only when a number follows it ("10 - 20"); before a word it is
                 // punctuation ("1,050 bhp - the company").
