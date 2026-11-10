@@ -1712,6 +1712,14 @@ final class MartyLoopTests: XCTestCase {
                 .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 2, result: &r)
             XCTAssertEqual(r["answerLint"] != nil, flagged, line)
         }
+        // Round 22: articles before a qualifier; punctuation inside an aside; every distinguishing value word.
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW at its peak output.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW at the peak output.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres (for example, through the outlet) per minute.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (pictured, right) at peak output.</p>"))
+        XCTAssertEqual(QuoteCheck.unstatedWord(value: "liquid hydrogen", claim: "Fuel type", quotes: ["The engine uses liquid methane as fuel"]), "hydrogen")
+        XCTAssertEqual(QuoteCheck.unstatedWord(value: "aviation kerosene", claim: "Fuel type", quotes: ["The engine runs on aviation gasoline"]), "kerosene")
+        XCTAssertNil(QuoteCheck.unstatedWord(value: "kerosene-based aviation fuel", claim: "Fuel type", quotes: ["It burns kerosene, an aviation fuel"]))
         // Round 21: the limb word is resolved again per verb; asides are skipped at a quantity's end; the value's
         // distinguishing word.
         XCTAssertFalse(PoseClaims.holds("The left arm is bent to 60 degrees and the right is raised to 15 degrees",

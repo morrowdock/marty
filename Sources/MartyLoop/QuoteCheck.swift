@@ -543,8 +543,11 @@ public enum QuoteCheck {
         let content = words(value).filter { !filler.contains($0) }
         // The value's first word that the claim label does not already name must be quoted ("kerosene-based
         // aviation fuel" for "Fuel type" needs "kerosene"; "diesel fuel" shares only the category word).
+        // (Every such word, but generic modifiers: "liquid hydrogen" needs "hydrogen" too, not only "liquid".)
         let claimWords = Set(words(claim).map(singular))
-        if let d = content.first(where: { !claimWords.contains(singular($0)) }) { return quoted.contains(singular(d)) ? nil : d }
+        let generic: Set<String> = ["based", "type", "grade", "standard", "blend", "mixture", "mix", "kind", "form", "version"]
+        let distinguishing = content.filter { !claimWords.contains(singular($0)) && !generic.contains($0) }
+        if !distinguishing.isEmpty { return distinguishing.first { !quoted.contains(singular($0)) } }
         guard let first = content.first else { return nil }
         return content.contains(where: { quoted.contains(singular($0)) }) ? nil : first
     }
@@ -944,7 +947,9 @@ public enum QuoteCheck {
             // diagram) per minute"; an aside that ends the sentence ends it.)
             var ni = e + 1
             var asideEnded = false
-            while ni < p.count, p[ni].inAside { if p[ni].closedAfter { asideEnded = true }; ni += 1 }
+            // (Only a sentence end at the aside's last word ends it: a comma inside, "(pictured, right)", does not.)
+            while ni < p.count, p[ni].inAside { ni += 1 }
+            if ni > e + 1 { asideEnded = p[ni - 1].closedAfter }
             if !completedEnd, ni < p.count, !asideEnded, !p[e].closedAfter, numericEnd(w) || countEnd {
                 let next = p[ni]
                 // A dash goes on with a number only when a number follows it ("10 - 20"); before a word it is
@@ -968,8 +973,16 @@ public enum QuoteCheck {
                 if withUnit, !Self.proseAfterQuantity.contains(next.text), !plainProse { return false }
                 // A prose word before a qualifier goes on too ("10 kW at peak output", "10 kW at full throttle").
                 // ("in total", "in all" only restate the sum.)
-                if withUnit || w[last].hasDigit, let t = after, !(next.text == "in" && ["total", "all"].contains(t.text)),
-                   Self.continuations.contains(t.text) || (Self.postBounds.contains(t.text) && !["or", "plus"].contains(t.text)) { return false }
+                // (Articles and possessives between are skipped: "at its peak output", "at the peak output".)
+                if withUnit || w[last].hasDigit, !next.closedAfter, let t = after, !(next.text == "in" && ["total", "all"].contains(t.text)) {
+                    var k = ni + 1
+                    while k < p.count, k <= ni + 4 {
+                        let x = p[k].text
+                        if Self.continuations.contains(x) || (Self.postBounds.contains(x) && !["or", "plus"].contains(x)) { return false }
+                        guard ["the", "a", "an", "its", "their", "his", "her", "this", "that", "our", "your"].contains(x), !p[k].closedAfter else { break }
+                        k += 1
+                    }
+                }
                 // An allowed word that leads into another quantity or a time continues it ("10 cm by 20 cm",
                 // "10 litres in 30 seconds", "10 kg over 2 hours").
                 // Modifiers between the connector and the quantity are skipped ("in just 30 seconds", "by about 20 cm").
