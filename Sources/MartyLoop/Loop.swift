@@ -1031,7 +1031,8 @@ extension MartyLoop {
         let posedEvidence = posedPoses.map { Self.poseNumbers($0).joined(separator: " ") }.filter { !$0.isEmpty }
         // A limb comparison is sourced only by a pose whose left and right limb values differ.
         let uneven = posedPoses.reduce(into: Set<String>()) { $0.formUnion(Self.unevenLimbs($1)) }
-        let poseComparison = #"(?i)\b(raised|lowered|tilted|bent|angled)\s+(?:much\s+|far\s+)?(?:more|less|further|higher|lower)\s+than(?:\s+the\s+other)?\b|\b(higher|lower|further)\s+than\s+the\s+other\b"#
+        // (Its target is the other posed limb: "than the other", "than the right arm"; not "than the safety limit".)
+        let poseComparison = #"(?i)\b(?:(?:raised|lowered|tilted|bent|angled)\s+(?:much\s+|far\s+)?(?:more|less|further|higher|lower)|higher|lower|further)\s+than\s+(?:the\s+|its\s+|his\s+|her\s+)?(?:other(?:\s+(?:one|arm|leg|shoulder|limb|hip|knee|elbow))?|(?:left|right)(?:\s+(?:one|arm|leg|shoulder|limb|hip|knee|elbow))?)\b"#
         func problems(_ raw: String) -> (comparative: [String], unsourced: [String]) {
             let text = withoutViewRefs(raw)
             // The posed views are evidence: their angles, and a comparison of the posed parts ("one arm is raised more
@@ -1084,6 +1085,10 @@ extension MartyLoop {
                     let bare = poseVerb && before.range(of: #"\b(?:to|at|by)\s+$"#, options: .regularExpression) != nil
                         && after.range(of: #"^\s*(?:$|[.,;:!?)]|and\b|or\b|while\b|so\b|but\b)"#, options: .regularExpression) != nil
                     if !angle && !bare { return true }
+                    // The number's own clause must be about a limb: "and the right to 15" is, "and the price is set
+                    // at 15" or "the ramp is tilted 15 degrees" is not.
+                    let clause = before.replacingOccurrences(of: #"(?s)^.*(?:[,;:]|\band\b|\bbut\b|\bwhile\b|\bwhereas\b|\bso\b|\bor\b)"#, with: "", options: .regularExpression)
+                    if clause.range(of: #"\b(arm|arms|shoulder|shoulders|elbow|elbows|hand|hands|leg|legs|hip|hips|knee|knees|limb|limbs|left|right)\b"#, options: .regularExpression) == nil { return true }
                 }
                 return !Self.unsourcedSentences(sentence, sources: sources + posedEvidence).isEmpty
             }

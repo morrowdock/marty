@@ -1647,6 +1647,20 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (see the table below).</p>"))
         XCTAssertEqual(QuoteCheck.unstatedWord(value: "most of the lifting force", claim: "Rear unit lift", quotes: ["The rear unit provides \u{FF3B}\u{FE0F}most of\u{FF3D} the lifting force"]), "most")
         XCTAssertNil(QuoteCheck.unstatedWord(value: "paraffin", claim: "Fuel", quotes: ["The engine runs on para\u{FB03}n fuel"]))
+        // Round 11: qualifiers inside a parenthesis, modifiers before a rate, the pose comparison's target, a bare
+        // number's own clause, a non-breaking hyphen.
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (a peak rating).</p>"))
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres just twice a day.</p>"))
+        for (line, flagged) in [("One arm is raised more than the safety limit.", true),
+                                ("The left shoulder is raised 60 degrees and the price is set at 15.", true),
+                                ("The left shoulder is raised 60 degrees and the ramp is tilted 15 degrees.", true),
+                                ("Beat raises the left shoulder to 60 and the right to 15.", false)] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: [line, "The pilot is shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: shoulders, views: 1, result: &r)
+            XCTAssertEqual(r["answerLint"] != nil, flagged, line)
+        }
+        XCTAssertNil(QuoteCheck.unstatedWord(value: "27 kg", claim: "All\u{2011}up weight", quotes: ["The total loaded weight is 27 kg"]))
         var stuck: [String: Any] = [:]
         _ = try MartyLoop(model: ScriptedAdapter(replies: ["It weighs 99 kg.", "It still weighs 99 kg."]), out: tempOut(), options: .init())
             .writeAnswer(system: "s", user: "u", sources: [], result: &stuck)
