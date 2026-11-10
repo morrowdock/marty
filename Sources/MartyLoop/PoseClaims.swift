@@ -33,10 +33,12 @@ import Foundation
     /// right arm"; not "than the safety limit", "than the other model allows").
     static let comparison = #"(?i)\b(?:(raised|lowered|tilted|bent|angled)\s+(?:much\s+|far\s+)?(more|less|further|higher|lower)|(higher|lower|further))\s+than\s+(?:the\s+|its\s+|his\s+|her\s+)?(other|left|right)(?:\s+(?:one|arm|shoulder|elbow|forearm))?(?:\s+(?:does|is|was))?(?=\s*(?:$|[.,;:!?)]|and\b|but\b|while\b|so\b|as\b|in\b|at\b|on\b))"#
 
-    /// Whether a sentence is about the pose alone: a limb or angle word, no performance, unit or share word, and no
-    /// comparison but a pose comparison.
+    /// Whether a sentence is about the pose alone: a limb or angle word, no performance, unit or share word, no
+    /// comparison but a pose comparison, and no negation ("the left arm is not raised more than the right" is checked
+    /// as it is).
     static func isPoseSentence(_ sentence: String) -> Bool {
         let lower = sentence.lowercased()
+        guard lower.range(of: #"\b(not|never|no|neither|nor|cannot|without)\b|n't\b|n\x{2019}t\b"#, options: .regularExpression) == nil else { return false }
         guard lower.range(of: #"\b(arm|arms|shoulder|shoulders|elbow|elbows|forearm|forearms|limb|limbs|degrees?|angle|angled|tilt\w*|rotat\w*|raised|lowered|bent)\b|\x{00B0}"#, options: .regularExpression) != nil,
               lower.range(of: #"\b(fuel|power|speed|weight|weighs?|mass|energy|force|load|lift|thrust|support|work|times|kg|kgf|lbf|newtons?|percent|bhp|hp|kw|litres?|liters?|mph|km|seconds?|minutes?|engines?|jets?|turbines?|pounds?|watts?)\b|%"#, options: .regularExpression) == nil
         else { return false }
@@ -112,10 +114,17 @@ import Foundation
         let poseVerb = lower.range(of: #"\b(rais\w*|lower\w*|tilt\w*|bend\w*|bent|angl\w*|rotat\w*|turn\w*|swing\w*|swung|pos\w*|set|sets)\b"#, options: .regularExpression) != nil
         // (A signed number is one: "-60" is no "60"; the minus sign U+2212 too.)
         guard let numRE = try? NSRegularExpression(pattern: #"(?<![\w.])[-\x{2212}]?\d+(?:\.\d+)?"#) else { return false }
+        var previousEnd = 0
         for m in numRE.matches(in: lower, range: NSRange(location: 0, length: ns.length)) {
             claims += 1
             let after = ns.substring(from: m.range.location + m.range.length)
             let before = ns.substring(to: m.range.location)
+            // A number whose own subject (the text since the number before it) names both sides, or both or each, is
+            // shared ("the left and right shoulders are raised 60 degrees"): no single posed value, so not exempt.
+            let own = ns.substring(with: NSRange(location: previousEnd, length: m.range.location - previousEnd))
+            previousEnd = m.range.location + m.range.length
+            if (own.range(of: #"\bleft\b"#, options: .regularExpression) != nil && own.range(of: #"\bright\b"#, options: .regularExpression) != nil)
+                || own.range(of: #"\b(both|each|all)\b"#, options: .regularExpression) != nil { return false }
             let angle = after.range(of: #"^\s*(?:\x{00B0}|degrees?\b|deg\b)"#, options: .regularExpression) != nil
             let bare = poseVerb && before.range(of: #"\b(?:to|at|by)\s+$"#, options: .regularExpression) != nil
                 && after.range(of: #"^\s*(?:$|[.,;:!?)]|and\b|or\b|while\b|so\b|but\b)"#, options: .regularExpression) != nil

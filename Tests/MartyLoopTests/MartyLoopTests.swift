@@ -1712,6 +1712,16 @@ final class MartyLoopTests: XCTestCase {
                 .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 2, result: &r)
             XCTAssertEqual(r["answerLint"] != nil, flagged, line)
         }
+        // Round 15: negated comparisons and shared angles are not exempt.
+        let mixed = ["step 1 poses {\"pilot\":{\"with\":{\"leftShoulder\":15,\"rightShoulder\":60}}}"]
+        for (posedLines, line) in [(shoulders, "The left arm is not raised more than the right."),
+                                   (mixed, "The left and right shoulders are raised 60 degrees."),
+                                   (mixed, "Both the left and right arms are raised to 60 degrees.")] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: [line, "The pilot is shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 1, result: &r)
+            XCTAssertNotNil(r["answerLint"], line)
+        }
         XCTAssertEqual(PoseClaims.facts(twoViews)[2]?["leftshoulder"], 15)
         XCTAssertEqual(PoseClaims.namedViews("Steps 2-4 and beat 6 show it"), [2, 3, 4, 6])
         var stuck: [String: Any] = [:]
