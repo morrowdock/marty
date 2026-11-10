@@ -930,9 +930,10 @@ final class MartyLoopTests: XCTestCase {
                 ["id": "tL", "meaning": "force", "from": ["part": "jetL", "offset": [0, 0, -400]], "to": ["part": "jetL", "offset": [0, 0, -150]]]]],
              "steps": steps]
         }
-        let first: [String: Any] = ["say": "A pilot with two arm units.", "annotate": ["tR", "tL"]]
-        let mirror: [String: Any] = ["say": "x", "pose": ["pilot": ["with": ["leftShoulder": 45, "rightShoulder": 45]]], "annotate": ["tR", "tL"]]
-        let one: [String: Any] = ["say": "x", "pose": ["pilot": ["with": ["rightShoulder": 60]]], "annotate": ["tR", "tL"]]
+        // (At the pin's arrow-tail rule no move clears the hands in the first view, so it ghosts them.)
+        let first: [String: Any] = ["say": "A pilot with two arm units.", "annotate": ["tR", "tL"], "ghost": ["pilot.handR", "pilot.handL"]]
+        let mirror: [String: Any] = ["say": "x", "pose": ["pilot": ["with": ["leftShoulder": 45, "rightShoulder": 45]]], "annotate": ["tR", "tL"], "ghost": ["pilot.handR", "pilot.handL"]]
+        let one: [String: Any] = ["say": "x", "pose": ["pilot": ["with": ["rightShoulder": 60]]], "annotate": ["tR", "tL"], "ghost": ["pilot.handR", "pilot.handL"]]
         let engine = MartyEngine(outputRoot: nil)
         let pm = try XCTUnwrap(PoseText.push(engine: engine, document: doc([first, mirror]), step: 1, components: []))
         let po = try XCTUnwrap(PoseText.push(engine: engine, document: doc([first, one]), step: 1, components: []))
@@ -1472,6 +1473,52 @@ final class MartyLoopTests: XCTestCase {
 
     /// Round 2j: a share claim never passes as a lint fallback; a found quote must state the claim; three true quotes
     /// with numbers are found; the answer lint knows the posed views; the push names its arrows; steps are steps.
+    func testRound2kDeclaredNames() throws {
+        func src(_ quote: String, found: Bool = true) -> FactTable.Source {
+            var s = FactTable.Source(url: "https://example.org/a", publisher: "Example", date: "2024", quote: quote, host: "example.org")
+            s.check = found ? "quote found" : "quote not found"
+            return s
+        }
+        var unconfirmed = FactTable.Row(id: "F3", claim: "B737 range", value: "5,000 km", unit: "", label: .claim, appliesTo: "", sources: [src("The B737 flies 5,000 km")])
+        unconfirmed.unconfirmed = true
+        let table = FactTable(needed: true, rows: [
+            FactTable.Row(id: "F1", claim: "A320 cruise speed", value: "828 km/h", unit: "", label: .claim, appliesTo: "A320 family",
+                          sources: [src("The A320 cruises at 828 km/h")]),
+            FactTable.Row(id: "F2", claim: "Mach2 rating", value: "yes", unit: "", label: .verified, appliesTo: "",
+                          sources: [src("It is rated Mach2 in the brochure"), src("rated Mach2")]),
+            unconfirmed,
+            FactTable.Row(id: "F4", claim: "V8 engine", value: "petrol", unit: "", label: .claim, appliesTo: "", sources: [src("A petrol engine", found: true)]),
+            FactTable.Row(id: "F5", claim: "F-35 variant", value: "F-35A", unit: "", label: .plausible, appliesTo: "", sources: []),
+        ], downgrades: [])
+        // Only confirmed rows, only tokens their found quotes write exactly (not "V8": the quote does not say it).
+        XCTAssertEqual(MartyLoop.declaredNames(table), ["A320", "Mach2"])
+        XCTAssertEqual(MartyLoop.refusedNameIndex("names.number.2"), 2)
+        XCTAssertNil(MartyLoop.refusedNameIndex("text.number.step.1"))
+
+        // The engine at the pin: a declared name in a say is no typed number; an undeclared one is; a quantity name is
+        // refused as names.number.<n>.
+        let engine = MartyEngine(outputRoot: nil)
+        var doc = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(MartyExamples.formatExample.utf8)) as? [String: Any])
+        var steps = try XCTUnwrap(doc["steps"] as? [[String: Any]])
+        steps[0]["say"] = "The A320 example: a shaft held in two bearings."
+        doc["steps"] = steps
+        let plain = try engine.check(document: doc, ref: nil, components: [], strict: true)
+        XCTAssertEqual(plain["ok"] as? Bool, false)
+        XCTAssertTrue((plain["reason"] as? String ?? "").hasPrefix("text.number"), "\(plain["reason"] ?? "")")
+        let named = try engine.check(document: MartyLoop.withDeclaredNames(doc, ["A320"]), ref: nil, components: [], strict: true)
+        XCTAssertEqual(named["ok"] as? Bool, true, "\(named["reason"] ?? "")")
+        let quantity = try engine.check(document: MartyLoop.withDeclaredNames(doc, ["A320", "Mach2"]), ref: nil, components: [], strict: true)
+        XCTAssertEqual(MartyLoop.refusedNameIndex(quantity["reason"] as? String), 2, "\(quantity["reason"] ?? "")")
+        // A list the model wrote is replaced; no names removes it; a v1 document is left alone.
+        var withModelNames = doc; withModelNames["names"] = ["Z9"]
+        XCTAssertEqual((MartyLoop.withDeclaredNames(withModelNames, ["A320"]) as? [String: Any])?["names"] as? [String], ["A320"])
+        XCTAssertNil((MartyLoop.withDeclaredNames(withModelNames, []) as? [String: Any])?["names"])
+        XCTAssertNil((MartyLoop.withDeclaredNames(["v": 1, "kind": "assembly"], ["A320"]) as? [String: Any])?["names"])
+        // The guide and the hints teach the names and the arrow tail.
+        XCTAssertNotNil(MartyPrompts.hint(for: "names.number.1"))
+        XCTAssertTrue(MartyPrompts.hint(for: "annotation.arrow.hidden.aT")?.contains("tail") == true)
+    }
+
     func testRound2jHonesty() throws {
         // The lint fallback: a share sentence is removed (another sentence is left) or the document is refused.
         func run(_ say: String, _ repairSay: String) throws -> [String: Any] {

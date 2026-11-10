@@ -1,6 +1,6 @@
 # The Marty loop (reference agent)
 
-Status: early preview, 2026-11-09. Prompts `marty-prompts/23`. Engine pin as in
+Status: early preview, 2026-11-09. Prompts `marty-prompts/24`. Engine pin as in
 `Package.swift`.
 
 `marty ask` and `marty bench` run one reference agent on the engine. The
@@ -335,6 +335,15 @@ the MCP server uses), so a run needs no MCP client.
    from the says that keep another sentence and checks again, `lintRemoved`,
    or refuses the document, `lintRefused`), when no attempt is
    clean.
+   Declared names: before the check, Marty sets the document's `names` (a v2
+   assembly or an explainer; the explainer's names cover its solid) to the model
+   and version names a confirmed research row states, exactly as a found quote
+   writes them (a token of the row's claim, value or scope that starts with a
+   letter and holds a digit, "A320", "F-35"; at most 24); a list the model wrote
+   is replaced. Only such a name may be typed in a text with its digit. A name
+   the engine refuses (`names.number.<n>`, a quantity such as "Mach2";
+   `names.token.<n>`, `names.text.<n>`) is dropped and the check runs again. The
+   receipt has `names` and `namesDropped`.
 4. **Repair.** A refused document goes back to the model with the exact reason,
    the part, and, for common reasons, a one-line fact that restates the engine
    rule (for example the centre-distance formula). A caption or claim refusal
