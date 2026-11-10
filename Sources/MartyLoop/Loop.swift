@@ -525,11 +525,16 @@ public final class MartyLoop {
                 catch let e as ToolError { report = ["ok": false, "reason": e.reason] }
                 // A name the engine refuses (a quantity such as "Mach2", not a name) is dropped and the check run again.
                 var nameDrops: [String] = []
+                // (At most three such rechecks; after that every name is dropped and the check runs once more, so the
+                // engine's document cache is not filled by name rechecks.)
+                var nameRechecks = 0
                 while let k = Self.refusedNameIndex(report["reason"] as? String), k >= 1, k <= names.count, let cur = document {
-                    nameDrops.append(names.remove(at: k - 1))
+                    nameRechecks += 1
+                    if nameRechecks > 3 { nameDrops += names; names = [] } else { nameDrops.append(names.remove(at: k - 1)) }
                     let next = Self.withDeclaredNames(cur, names)
                     guard let r2 = try? engine.check(document: next, ref: nil, components: components, strict: true) else { break }
                     document = next; report = r2
+                    if names.isEmpty { break }
                 }
                 // (Per attempt; the receipt's `names` are the accepted document's.)
                 if let ref = report["ref"] as? String { namesByRef[ref] = names }
@@ -544,6 +549,7 @@ public final class MartyLoop {
                     guard let r2 = try? engine.check(document: fixed, ref: nil, components: components, strict: true) else { break }
                     document = fixed; report = r2; autoFixed += applied
                 }
+                if let ref = report["ref"] as? String { namesByRef[ref] = names }
             } else {
                 report = ["ok": false, "reason": "json", "part": NSNull()]
             }
@@ -622,6 +628,12 @@ public final class MartyLoop {
                 }
             }
             if fallback != nil {
+                // (A fallback whose document left the engine's cache is checked again, so render and follow-up find it.)
+                if let ref = f.report["ref"] as? String, engine.canonicalDocument(ref: ref) == nil, let doc = f.document,
+                   let r = try? engine.check(document: doc, ref: nil, components: f.components, strict: true), (r["ok"] as? Bool) == true {
+                    if let old = f.report["ref"] as? String, let newRef = r["ref"] as? String { namesByRef[newRef] = namesByRef[old] }
+                    f.report = r
+                }
                 accepted = f.report; acceptedComponents = f.components
                 receipt["lint"] = f.lint; receipt["lintAttempt"] = f.attempt
             }
