@@ -94,10 +94,15 @@ import Foundation
         guard !clauses.isEmpty, let angleRE = try? NSRegularExpression(pattern: anglePattern),
               let compRE = try? NSRegularExpression(pattern: comparisonPattern) else { return false }
         var joint: String? = nil
+        // The leading pose verb ("Step 1 bends the left arm to 60") holds for the clauses after it too.
+        var leadVerb: String? = nil
         for raw in clauses {
             // A leading view word ("in step", "beat") and pose verb ("raises", "shows").
             var c = raw.replacingOccurrences(of: #"^(?:(?:in|at)\s+)?(?:the\s+)?(?:beats?|steps?)\b\s*"#, with: "", options: .regularExpression)
-            c = c.replacingOccurrences(of: #"^(?:shows\s+)?(?:raises|bends|sets|poses|lifts)\s+"#, with: "", options: .regularExpression)
+            if let r = c.range(of: #"^(?:shows\s+)?(raises|bends|sets|poses|lifts)\s+"#, options: .regularExpression) {
+                leadVerb = c[r].contains("bends") ? "bent" : "raised"
+                c.removeSubrange(r)
+            }
             let cn = c as NSString
             let all = NSRange(location: 0, length: cn.length)
             func g(_ m: NSTextCheckingResult, _ k: Int) -> String? { m.range(at: k).location == NSNotFound ? nil : cn.substring(with: m.range(at: k)) }
@@ -120,7 +125,7 @@ import Foundation
                 guard let side = g(m, 1), let number = g(m, 5) else { return false }
                 // ("to/at/by" or a degree word: "and the right shoulder 15 degrees" is the clause before's verb.)
                 guard g(m, 4) != nil || g(m, 6) != nil else { return false }
-                guard let key = g(m, 2).map({ jointKey($0, verb: g(m, 3)) }) ?? joint else { return false }
+                guard let key = g(m, 2).map({ jointKey($0, verb: g(m, 3) ?? leadVerb) }) ?? joint else { return false }
                 joint = key
                 guard let value = values[side + key], let n = Double(number.replacingOccurrences(of: "\u{2212}", with: "-")), value == n else { return false }
             } else {

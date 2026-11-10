@@ -1712,6 +1712,11 @@ final class MartyLoopTests: XCTestCase {
                 .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 2, result: &r)
             XCTAssertEqual(r["answerLint"] != nil, flagged, line)
         }
+        // Round 19: a leading "bends" is the elbow; a qualifier anywhere in a long parenthesis.
+        XCTAssertFalse(PoseClaims.holds("Step bends the left arm to 60 degrees", in: ["leftshoulder": 60, "leftelbow": 0]))
+        XCTAssertTrue(PoseClaims.holds("Step bends the left arm to 60 degrees and the right to 30", in: ["leftshoulder": 0, "leftelbow": 60, "rightelbow": 30]))
+        XCTAssertFalse(QuoteCheck.found("Power output is 10 kW", in: "<p>Power output is 10 kW (see the specification sheet for the electric version of this model; both motors combined).</p>"))
+        XCTAssertTrue(QuoteCheck.found("Power output is 10 kW", in: "<p>Power output is 10 kW (see the specification sheet for the electric version of this model).</p>"))
         // Round 18: a bent arm is its elbow; a qualifier inside any parenthesis; a leading view phrase.
         let bentRight = ["leftshoulder": 60.0, "rightshoulder": 15, "leftelbow": 0, "rightelbow": 90]
         XCTAssertFalse(PoseClaims.holds("The left arm is bent more than the right", in: bentRight))
