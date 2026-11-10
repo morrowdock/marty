@@ -1028,11 +1028,23 @@ extension MartyLoop {
         // A posed view is evidence only by its pose values (the numbers in its pose): not its view number ("step 4"),
         // its part names ("pilot4") nor its own say text.
         let posedPoses = posed.map(Self.poseOfView)
-        let posedEvidence = posedPoses.map { Self.poseNumbers($0).joined(separator: " ") }.filter { !$0.isEmpty }
+        // Each posed value by the key it sets, lower case ("leftshoulder": ["60"]; an anchor rot, "pilot.rightShoulder",
+        // by its last name).
+        var posedValues: [String: [String]] = [:]
+        func collect(_ v: Any) {
+            if let o = v as? [String: Any] {
+                for (k, x) in o {
+                    let name = String(k.split(separator: ".").last ?? Substring(k)).lowercased()
+                    if x is NSNumber || x is [Any] { posedValues[name, default: []] += Self.poseNumbers(x) }
+                    collect(x)
+                }
+            }
+        }
+        posedPoses.compactMap { $0 }.forEach(collect)
         // A limb comparison is sourced only by a pose whose left and right limb values differ.
         let uneven = posedPoses.reduce(into: Set<String>()) { $0.formUnion(Self.unevenLimbs($1)) }
         // (Its target is the other posed limb: "than the other", "than the right arm"; not "than the safety limit".)
-        let poseComparison = #"(?i)\b(?:(?:raised|lowered|tilted|bent|angled)\s+(?:much\s+|far\s+)?(?:more|less|further|higher|lower)|higher|lower|further)\s+than\s+(?:the\s+|its\s+|his\s+|her\s+)?(?:other(?:\s+(?:one|arm|leg|shoulder|limb|hip|knee|elbow))?|(?:left|right)(?:\s+(?:one|arm|leg|shoulder|limb|hip|knee|elbow))?)\b"#
+        let poseComparison = #"(?i)\b(?:(?:raised|lowered|tilted|bent|angled)\s+(?:much\s+|far\s+)?(?:more|less|further|higher|lower)|higher|lower|further)\s+than\s+(?:the\s+|its\s+|his\s+|her\s+)?(?:other(?:\s+(?:one|arm|leg|shoulder|limb|hip|knee|elbow))?|(?:left|right)(?:\s+(?:one|arm|leg|shoulder|limb|hip|knee|elbow))?)(?:\s+(?:does|is|was))?(?=\s*(?:$|[.,;:!?)]|and\b|but\b|while\b|so\b|as\b|in\b|at\b|on\b))"#
         func problems(_ raw: String) -> (comparative: [String], unsourced: [String]) {
             let text = withoutViewRefs(raw)
             // The posed views are evidence: their angles, and a comparison of the posed parts ("one arm is raised more
@@ -1089,8 +1101,23 @@ extension MartyLoop {
                     // at 15" or "the ramp is tilted 15 degrees" is not.
                     let clause = before.replacingOccurrences(of: #"(?s)^.*(?:[,;:]|\band\b|\bbut\b|\bwhile\b|\bwhereas\b|\bso\b|\bor\b)"#, with: "", options: .regularExpression)
                     if clause.range(of: #"\b(arm|arms|shoulder|shoulders|elbow|elbows|hand|hands|leg|legs|hip|hips|knee|knees|limb|limbs|left|right)\b"#, options: .regularExpression) == nil { return true }
+                    // And it must be the posed value of that side's joint: the side and the joint named last in its
+                    // clause, else earlier in the sentence ("raises the left shoulder to 60 and the right to 15").
+                    // "The left shoulder is raised 15 degrees" with leftShoulder 60 is no posed value; nor is an elbow
+                    // angle when only the shoulders are posed.
+                    func last(_ re: String, _ t: String) -> String? {
+                        guard let x = try? NSRegularExpression(pattern: re) else { return nil }
+                        let tn = t as NSString
+                        return x.matches(in: t, range: NSRange(location: 0, length: tn.length)).last.map { tn.substring(with: $0.range(at: 1)) }
+                    }
+                    let sideRE = #"\b(left|right)\b"#, jointRE = #"\b(shoulder|elbow|arm|forearm)s?\b"#
+                    guard let side = last(sideRE, clause) ?? last(sideRE, before),
+                          let joint = last(jointRE, clause) ?? last(jointRE, before) else { return true }
+                    let key = side + ["arm": "shoulder", "forearm": "elbow"][joint, default: joint]
+                    let number = ns.substring(with: m.range)
+                    if !(posedValues[key] ?? []).contains(where: { Double($0) == Double(number) }) { return true }
                 }
-                return !Self.unsourcedSentences(sentence, sources: sources + posedEvidence).isEmpty
+                return false
             }
             return (c, (unsourced + d).filter { !c.contains($0) })
         }

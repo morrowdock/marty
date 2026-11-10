@@ -1661,6 +1661,21 @@ final class MartyLoopTests: XCTestCase {
             XCTAssertEqual(r["answerLint"] != nil, flagged, line)
         }
         XCTAssertNil(QuoteCheck.unstatedWord(value: "27 kg", claim: "All\u{2011}up weight", quotes: ["The total loaded weight is 27 kg"]))
+        // Round 12: clarifying openers with a qualifier inside; a pose angle must be that side's joint value; the
+        // comparison target is the whole limb phrase.
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (i.e. peak output).</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (also its peak output).</p>"))
+        XCTAssertTrue(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (i.e. enough for a car).</p>"))
+        for (line, flagged) in [("The left shoulder is raised 15 degrees and the right shoulder is raised 60 degrees.", true),
+                                ("The left elbow is bent 60 degrees.", true),
+                                ("One arm is raised more than the other model allows.", true),
+                                ("The left shoulder is raised 60 degrees and the right shoulder 15 degrees.", false),
+                                ("One arm is raised more than the other.", false)] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: [line, "The pilot is shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: shoulders, views: 1, result: &r)
+            XCTAssertEqual(r["answerLint"] != nil, flagged, line)
+        }
         var stuck: [String: Any] = [:]
         _ = try MartyLoop(model: ScriptedAdapter(replies: ["It weighs 99 kg.", "It still weighs 99 kg."]), out: tempOut(), options: .init())
             .writeAnswer(system: "s", user: "u", sources: [], result: &stuck)
