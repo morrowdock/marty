@@ -1876,6 +1876,8 @@ final class MartyLoopTests: XCTestCase {
             XCTAssertNotNil(r["answerLint"], line)
         }
         XCTAssertEqual(PoseClaims.facts(twoViews)[2]?["leftshoulder"], 15)
+        // An anchor pose keeps its joint's name.
+        XCTAssertEqual(PoseClaims.facts(["step 1 poses {\"pilot.leftShoulder\":{\"rot\":[0,1,0,60]},\"pilot.rightShoulder\":{\"rot\":[0,1,0,15]}}"])[1]?["leftshoulder"], 60)
         XCTAssertEqual(PoseClaims.namedViews("Steps 2-4 and beat 6 show it"), [2, 3, 4, 6])
         var stuck: [String: Any] = [:]
         _ = try MartyLoop(model: ScriptedAdapter(replies: ["It weighs 99 kg.", "It still weighs 99 kg."]), out: tempOut(), options: .init())
