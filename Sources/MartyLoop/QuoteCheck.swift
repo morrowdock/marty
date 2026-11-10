@@ -882,6 +882,27 @@ public enum QuoteCheck {
     /// (an operator, a symbol, another number: "≥ 10", "10 ± 2", "6.674 30", "5′ 11″") unless a hard boundary is
     /// between them, and one that starts with a sign may not follow a word with a digit ("2e - 3"); a part that ends
     /// with a number or a unit after one may not be followed by such a word, nor by "to" and a number (a range).
+    /// Whether the clause from `start` (to a comma-like or sentence boundary, at most 12 words) qualifies the quantity
+    /// before it: a continuation, a bound, a rate, "only", "per", "every", "each", "up to", "at least/most", or a number
+    /// set as a duration or rate ("for 30 seconds", "30 seconds", "in two minutes"). A figure of something else is
+    /// no qualifier ("its tank holds 10 litres", "2024 testing confirmed this", "the arms hold two").
+    static func clauseQualifies(_ p: [Token], from start: Int) -> Bool {
+        var k = start
+        while k < p.count, k <= start + 12 {
+            let x = p[k].text
+            if continuations.contains(x) || (postBounds.contains(x) && !["or", "plus"].contains(x)) || isRateWord(x)
+                || ["only", "per", "every", "each", "least", "most"].contains(x) || (x == "up" && k + 1 < p.count && p[k + 1].text == "to") { return true }
+            if p[k].hasDigit || numberWords[x] != nil {
+                let before = k > start ? p[k - 1].text : ""
+                let after = k + 1 < p.count ? p[k + 1].text : ""
+                if ["for", "in", "during", "over", "within", "under", "after", "lasting", "about", "around"].contains(before) || timeUnits.contains(after) { return true }
+            }
+            if p[k].closedAfter || p[k].terminal { break }
+            k += 1
+        }
+        return false
+    }
+
     static func match(_ quote: String, in page: String, html: Bool = true) -> (tokens: [Token], ranges: [Range<Int>])? {
         // In a quote, an ellipsis and any bracketed insertion ("[...]", "[…]", "[s]", "[the suit]") are gaps.
         let gap = "\u{1}"
@@ -984,21 +1005,11 @@ public enum QuoteCheck {
             // peak output"; what follows them is checked.)
             var ni = e + 1
             var ended = p[e].terminal
-            // After a dash, a qualifier phrase goes on with the quantity ("- for only 30 seconds", "- its peak output",
-            // "- per minute"); anything else is a new clause and ends it ("- the arms hold two", "- 2024 testing …").
+            // After a dash, the clause is read as after a comma (below): a qualifier goes on with the quantity
+            // ("- for only 30 seconds", "- its peak output", "— which is available for only 30 seconds"); a clause
+            // without one ends it ("- the arms hold two", "— 2024 testing confirmed this").
             if !ended, p[e].dashAfter, !completedEnd, numericEnd(w) || countEnd, e + 1 < p.count {
-                var k = e + 1
-                while k < p.count, k <= e + 3 {
-                    let x = p[k].text
-                    if Self.continuations.contains(x) || (Self.postBounds.contains(x) && !["or", "plus"].contains(x)) || Self.isRateWord(x)
-                        || ["only", "per", "every", "each", "up", "least", "most"].contains(x) { return false }
-                    if ["for", "in", "during", "over", "within", "under", "at", "after"].contains(x), k + 1 < p.count,
-                       p[(k + 1)...].prefix(2).contains(where: { $0.hasDigit || Self.numberWords[$0.text] != nil || Self.timeUnits.contains($0.text) || $0.text == "only" }) {
-                        return false
-                    }
-                    if p[k].closedAfter || p[k].terminal { break }
-                    k += 1
-                }
+                if Self.clauseQualifies(p, from: e + 1) { return false }
                 ended = true
             }
             // (Only the aside's closing word may end the sentence: "(see Fig. A)", "(Acme Inc. datasheet)" do not.)
@@ -1032,23 +1043,8 @@ public enum QuoteCheck {
                 if withUnit, !Self.proseAfterQuantity.contains(next.text), !plainProse { return false }
                 // A clause after a comma or an aside is read to its end for a qualifier ("10 kW, which is its peak
                 // output", "…, which is only available for 30 seconds"; not "27 kg, making it easy to carry").
-                // (A counted quantity too, "100 engines, which is its annual output"; a new clause with its own subject
-                // ends the reading, "27 kg, and its tank holds 10 litres".)
-                if afterBreak, withUnit || w[last].hasDigit || countEnd {
-                    var k = ni
-                    while k < p.count, k <= ni + 12 {
-                        let x = p[k].text
-                        // (A determiner and a plain noun after it, "and its tank holds"; "but it can sustain this" refers back.)
-                        if ["and", "but", "while", "whereas"].contains(x), k + 2 < p.count,
-                           ["its", "the", "a", "an", "their", "his", "her", "each"].contains(p[k + 1].text),
-                           p[k + 2].text.allSatisfy(\.isLetter), !Self.continuations.contains(p[k + 2].text), !Self.isRateWord(p[k + 2].text) { break }
-                        if Self.continuations.contains(x) || (Self.postBounds.contains(x) && !["or", "plus"].contains(x)) || Self.isRateWord(x)
-                            || Self.timeUnits.contains(x) || x.first?.isNumber == true || Self.numberWords[x] != nil
-                            || ["only", "per", "every", "each", "up", "least", "most"].contains(x) { return false }
-                        if p[k].closedAfter || p[k].terminal { break }
-                        k += 1
-                    }
-                }
+                // (A counted quantity too, "100 engines, which is its annual output".)
+                if afterBreak, withUnit || w[last].hasDigit || countEnd, Self.clauseQualifies(p, from: ni) { return false }
                 // A prose word before a qualifier goes on too ("10 kW at peak output", "10 kW at full throttle").
                 // ("in total", "in all" only restate the sum.)
                 // (Articles and possessives between are skipped: "at its peak output", "at the peak output".)
