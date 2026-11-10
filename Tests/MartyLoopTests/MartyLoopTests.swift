@@ -1713,7 +1713,7 @@ final class MartyLoopTests: XCTestCase {
             XCTAssertEqual(r["answerLint"] != nil, flagged, line)
         }
         // Round 32: modified and quantified durations.
-        for tail in ["for just a minute", "for a few seconds", "for several seconds"] {
+        for tail in ["for just a minute", "for a few seconds", "for several seconds", "for less than a second", "for a fraction of a second"] {
             XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, but it can maintain this output \(tail).</p>"), tail)
         }
         XCTAssertTrue(QuoteCheck.found("The device has 5 engines", in: "<p>The device has 5 engines, and a second engine pod.</p>"))

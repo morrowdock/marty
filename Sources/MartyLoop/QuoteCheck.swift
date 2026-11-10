@@ -905,7 +905,8 @@ public enum QuoteCheck {
             if timeUnits.contains(x), k > start {
                 let lead = p[max(start, k - 3)..<k].map(\.text)
                 let counted = lead.contains { ["a", "an", "half", "few", "several", "couple", "some", "many"].contains($0) || numberWords[$0] != nil }
-                let durational = lead.contains { ["for", "in", "within", "over", "under", "during", "after", "lasting", "about", "just", "only"].contains($0) }
+                // ("for less than a second", "for a fraction of a second": the duration word may be up to six back.)
+                let durational = p[max(start, k - 6)..<k].contains { ["for", "in", "within", "over", "under", "during", "after", "lasting", "about", "just", "only", "than", "fraction"].contains($0.text) }
                 if counted && (x != "second" || durational) { return true }
             }
             if p[k].terminal { break }
