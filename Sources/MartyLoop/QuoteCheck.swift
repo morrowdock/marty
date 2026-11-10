@@ -840,7 +840,10 @@ public enum QuoteCheck {
                 continue
             }
             if raw == "-", let before = out.last, before.text.allSatisfy({ $0.isLetter }), n + 1 < raws.count,
-               raws[n + 1].first?.isLetter == true, !raws[n + 1].contains(where: { $0.isNumber }) { close(); continue }
+               raws[n + 1].first?.isLetter == true, !raws[n + 1].contains(where: { $0.isNumber }) {
+                // (A spaced hyphen is a dash: a new clause, "5 engines - the arms hold two".)
+                close(); out[out.count - 1].terminal = true; continue
+            }
             var t = String(raw), after = false
             var stop = false
             func trimEnd() { while let c = t.last, ".,;:!?".contains(c) { t.removeLast(); after = true; if ".!?".contains(c) { stop = true } } }
@@ -1009,10 +1012,14 @@ public enum QuoteCheck {
                 if withUnit, !Self.proseAfterQuantity.contains(next.text), !plainProse { return false }
                 // A clause after a comma or an aside is read to its end for a qualifier ("10 kW, which is its peak
                 // output", "…, which is only available for 30 seconds"; not "27 kg, making it easy to carry").
-                if afterBreak, withUnit || w[last].hasDigit {
+                // (A counted quantity too, "100 engines, which is its annual output"; a new clause with its own subject
+                // ends the reading, "27 kg, and its tank holds 10 litres".)
+                if afterBreak, withUnit || w[last].hasDigit || countEnd {
                     var k = ni
                     while k < p.count, k <= ni + 12 {
                         let x = p[k].text
+                        if ["and", "but", "while", "whereas"].contains(x), k + 1 < p.count,
+                           ["its", "the", "a", "an", "their", "it", "this", "these", "those", "his", "her", "each"].contains(p[k + 1].text) { break }
                         if Self.continuations.contains(x) || (Self.postBounds.contains(x) && !["or", "plus"].contains(x)) || Self.isRateWord(x)
                             || Self.timeUnits.contains(x) || x.first?.isNumber == true || Self.numberWords[x] != nil
                             || ["only", "per", "every", "each", "up", "least", "most"].contains(x) { return false }

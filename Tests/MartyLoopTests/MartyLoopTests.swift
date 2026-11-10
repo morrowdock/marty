@@ -1712,6 +1712,9 @@ final class MartyLoopTests: XCTestCase {
                 .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 2, result: &r)
             XCTAssertEqual(r["answerLint"] != nil, flagged, line)
         }
+        // Round 27: counted quantities read the clause too; a new clause ends it.
+        XCTAssertFalse(QuoteCheck.found("The plant produces 100 engines", in: "<p>The plant produces 100 engines, which is its annual output.</p>"))
+        XCTAssertTrue(QuoteCheck.found("The suit weighs 27 kg", in: "<p>The suit weighs 27 kg, and its tank holds 10 litres.</p>"))
         // Round 26: a clause after a comma is read for a qualifier.
         XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, which is its peak output.</p>"))
         XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, which is only available for 30 seconds.</p>"))
