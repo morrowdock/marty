@@ -1712,6 +1712,11 @@ final class MartyLoopTests: XCTestCase {
                 .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 2, result: &r)
             XCTAssertEqual(r["answerLint"] != nil, flagged, line)
         }
+        // Round 28: a clause that refers back is read; a dash's first phrase.
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, but it can sustain this for only 30 seconds.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW - for only 30 seconds.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW - its peak output.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW \u{2014} for only 30 seconds.</p>"))
         // Round 27: counted quantities read the clause too; a new clause ends it.
         XCTAssertFalse(QuoteCheck.found("The plant produces 100 engines", in: "<p>The plant produces 100 engines, which is its annual output.</p>"))
         XCTAssertTrue(QuoteCheck.found("The suit weighs 27 kg", in: "<p>The suit weighs 27 kg, and its tank holds 10 litres.</p>"))

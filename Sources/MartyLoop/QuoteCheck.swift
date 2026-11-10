@@ -757,6 +757,9 @@ public enum QuoteCheck {
         /// A sentence or block ends after it (".", "!", "?", a new block, the page end): a quantity ends there. A
         /// comma or colon does not end a quantity ("10 kW, its peak output").
         var terminal = false
+        /// A dash follows it (an em dash or a spaced hyphen): what follows may qualify the quantity ("10 kW - for only
+        /// 30 seconds") or start a new clause ("5 engines - the arms hold two"); the end check reads its first phrase.
+        var dashAfter = false
         var hasLetter: Bool { text.contains { $0.isLetter } }
         var hasDigit: Bool { text.contains { $0.isNumber } }
     }
@@ -775,7 +778,7 @@ public enum QuoteCheck {
             if wasInAside { asideDepth = max(0, asideDepth + parens(raw)) }
             if raw == "\u{2}" { close(); if !out.isEmpty { out[out.count - 1].terminal = true }; continue }
             // (An em dash starts a new clause: it ends a quantity, "144 kgf — 2024 testing confirmed this".)
-            if raw == "\u{2014}" { close(); if !out.isEmpty { out[out.count - 1].terminal = true }; continue }
+            if raw == "\u{2014}" { close(); if !out.isEmpty { out[out.count - 1].dashAfter = true }; continue }
             // An opening parenthesis starts an aside, a hard boundary before it ("1,050 horsepower (incidentally …"),
             // unless the aside qualifies the quantity: a rate, unit, bound, magnitude or number ("10 litres (per minute)",
             // "10 kW (maximum)") goes on with it.
@@ -842,7 +845,7 @@ public enum QuoteCheck {
             if raw == "-", let before = out.last, before.text.allSatisfy({ $0.isLetter }), n + 1 < raws.count,
                raws[n + 1].first?.isLetter == true, !raws[n + 1].contains(where: { $0.isNumber }) {
                 // (A spaced hyphen is a dash: a new clause, "5 engines - the arms hold two".)
-                close(); out[out.count - 1].terminal = true; continue
+                close(); out[out.count - 1].dashAfter = true; continue
             }
             var t = String(raw), after = false
             var stop = false
@@ -981,6 +984,23 @@ public enum QuoteCheck {
             // peak output"; what follows them is checked.)
             var ni = e + 1
             var ended = p[e].terminal
+            // After a dash, a qualifier phrase goes on with the quantity ("- for only 30 seconds", "- its peak output",
+            // "- per minute"); anything else is a new clause and ends it ("- the arms hold two", "- 2024 testing …").
+            if !ended, p[e].dashAfter, !completedEnd, numericEnd(w) || countEnd, e + 1 < p.count {
+                var k = e + 1
+                while k < p.count, k <= e + 3 {
+                    let x = p[k].text
+                    if Self.continuations.contains(x) || (Self.postBounds.contains(x) && !["or", "plus"].contains(x)) || Self.isRateWord(x)
+                        || ["only", "per", "every", "each", "up", "least", "most"].contains(x) { return false }
+                    if ["for", "in", "during", "over", "within", "under", "at", "after"].contains(x), k + 1 < p.count,
+                       p[(k + 1)...].prefix(2).contains(where: { $0.hasDigit || Self.numberWords[$0.text] != nil || Self.timeUnits.contains($0.text) || $0.text == "only" }) {
+                        return false
+                    }
+                    if p[k].closedAfter || p[k].terminal { break }
+                    k += 1
+                }
+                ended = true
+            }
             // (Only the aside's closing word may end the sentence: "(see Fig. A)", "(Acme Inc. datasheet)" do not.)
             while ni < p.count, p[ni].inAside { ni += 1 }
             if ni > e + 1, p[ni - 1].terminal { ended = true }
@@ -1018,8 +1038,10 @@ public enum QuoteCheck {
                     var k = ni
                     while k < p.count, k <= ni + 12 {
                         let x = p[k].text
-                        if ["and", "but", "while", "whereas"].contains(x), k + 1 < p.count,
-                           ["its", "the", "a", "an", "their", "it", "this", "these", "those", "his", "her", "each"].contains(p[k + 1].text) { break }
+                        // (A determiner and a plain noun after it, "and its tank holds"; "but it can sustain this" refers back.)
+                        if ["and", "but", "while", "whereas"].contains(x), k + 2 < p.count,
+                           ["its", "the", "a", "an", "their", "his", "her", "each"].contains(p[k + 1].text),
+                           p[k + 2].text.allSatisfy(\.isLetter), !Self.continuations.contains(p[k + 2].text), !Self.isRateWord(p[k + 2].text) { break }
                         if Self.continuations.contains(x) || (Self.postBounds.contains(x) && !["or", "plus"].contains(x)) || Self.isRateWord(x)
                             || Self.timeUnits.contains(x) || x.first?.isNumber == true || Self.numberWords[x] != nil
                             || ["only", "per", "every", "each", "up", "least", "most"].contains(x) { return false }
