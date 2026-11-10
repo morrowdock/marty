@@ -471,7 +471,7 @@ public enum QuoteCheck {
     /// (Only openers that never clarify the quantity; "(i.e. …)", "(note: …)" or "(which …)" may qualify it.)
     /// (No side or position word: "(left engine)" qualifies a quantity.)
     static let asideOpeners: Set<String> = ["incidentally", "see", "pictured", "photo", "image",
-        "source", "sources", "citation", "via", "cf", "fig", "figure", "video", "archived", "updated", "translated",
+        "source", "sources", "citation", "via", "cf", "video", "archived", "updated", "translated",
         "emphasis", "sic", "pdf", "link", "opens", "external", "read", "click", "watch"]
 
     /// Further prose words that may follow a quantity at the end of a quote ("1,050hp other than for take-off").
@@ -768,7 +768,21 @@ public enum QuoteCheck {
                 // Only an opener that never qualifies the quantity before it makes an aside ("(incidentally, …)", "(see
                 // …)", "(pictured)"); any other parenthesis may qualify it ("(pulsed output)", "(i.e. peak output)",
                 // "(note: maximum output)") and stays attached.
-                let aside = Self.asideOpeners.contains(inner) || (inner == "for" && second == "example")
+                // (A qualifier word anywhere inside keeps any parenthesis attached: "(source data for both motors
+                // combined)", "(see the peak rating)".)
+                var qualifierInside = false
+                var k = n
+                while k < raws.count, k <= n + 10 {
+                    let x = String(raws[k]).trimmingCharacters(in: CharacterSet(charactersIn: "()[].,;:!?"))
+                    if (k > n && x.first?.isNumber == true) || numberWords[x] != nil || continuations.contains(x) || isRateWord(x)
+                        || timeUnits.contains(x) || ["per", "every", "each", "both", "all", "apiece", "combined", "together", "only", "up"].contains(x) {
+                        qualifierInside = true; break
+                    }
+                    if k > n, raws[k].contains(")") || raws[k].contains("]") { break }
+                    if k == n, raws[k].dropFirst().contains(")") { break }
+                    k += 1
+                }
+                let aside = !qualifierInside && (Self.asideOpeners.contains(inner) || (inner == "for" && second == "example"))
                 if !qualifies, !qualifiesTwo, !duration, aside { close() } else { attached = true }
             }
             // A hyphen between two words ("five-engine", "suit - with") is punctuation: next to a number it stays

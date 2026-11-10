@@ -69,7 +69,11 @@ import Foundation
         return named.allSatisfy { v in facts[v].map { holds(sentence, in: $0) } ?? false }
     }
 
-    static func jointKey(_ word: String) -> String { ["arm": "shoulder", "forearm": "elbow"][word, default: word] }
+    /// The posed joint a limb word names: an arm is its shoulder ("raised"), but a bent arm is its elbow.
+    static func jointKey(_ word: String, verb: String? = nil) -> String {
+        if verb == "bent", word == "arm" || word == "forearm" { return "elbow" }
+        return ["arm": "shoulder", "forearm": "elbow"][word, default: word]
+    }
 
     /// The clause grammar of a pose sentence. Each clause (split at commas and at "and", "so", "while") is exactly one of:
     /// an angle, "[the] left|right [shoulder|arm|elbow|forearm] [is] [raised|bent|set|...] [to|at|by] N [degrees]" (with
@@ -82,7 +86,9 @@ import Foundation
     static let comparisonPattern = #"^(?:the\s+)?(left|right|one)\s+(arm|shoulder|elbow|forearm)\s+is\s+(raised|lowered|bent)\s+(?:much\s+|far\s+)?(more|less|higher|lower|further)\s+than\s+(?:the\s+)?(other|left|right)(?:\s+(?:one|arm|shoulder|elbow|forearm))?$"#
 
     static func holds(_ sentence: String, in values: [String: Double]) -> Bool {
+        // (A leading view phrase, "In step 1, …", is no clause: the views it names are checked by the caller.)
         let lower = sentence.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: " .!?"))
+            .replacingOccurrences(of: #"^(?:(?:in|at)\s+)?(?:the\s+)?(?:beats?|steps?)(?:\s+(?:and|to|through)\s*)?\s*,\s*"#, with: "", options: .regularExpression)
         let clauses = lower.replacingOccurrences(of: #"\s*[,;]\s*(?:(?:and|so|while)\s+)?|\s+(?:and|so|while)\s+"#, with: "\u{1}", options: .regularExpression)
             .components(separatedBy: "\u{1}").map { $0.trimmingCharacters(in: .whitespaces) }
         guard !clauses.isEmpty, let angleRE = try? NSRegularExpression(pattern: anglePattern),
@@ -97,7 +103,7 @@ import Foundation
             func g(_ m: NSTextCheckingResult, _ k: Int) -> String? { m.range(at: k).location == NSNotFound ? nil : cn.substring(with: m.range(at: k)) }
             if let m = compRE.firstMatch(in: c, range: all) {
                 guard let subject = g(m, 1), let j = g(m, 2), let verb = g(m, 3), let word = g(m, 4), let target = g(m, 5) else { return false }
-                let key = jointKey(j)
+                let key = jointKey(j, verb: verb)
                 joint = key
                 guard let l = values["left" + key], let r = values["right" + key] else { return false }
                 if subject == "one" {
@@ -114,7 +120,7 @@ import Foundation
                 guard let side = g(m, 1), let number = g(m, 5) else { return false }
                 // ("to/at/by" or a degree word: "and the right shoulder 15 degrees" is the clause before's verb.)
                 guard g(m, 4) != nil || g(m, 6) != nil else { return false }
-                guard let key = g(m, 2).map(jointKey) ?? joint else { return false }
+                guard let key = g(m, 2).map({ jointKey($0, verb: g(m, 3)) }) ?? joint else { return false }
                 joint = key
                 guard let value = values[side + key], let n = Double(number.replacingOccurrences(of: "\u{2212}", with: "-")), value == n else { return false }
             } else {

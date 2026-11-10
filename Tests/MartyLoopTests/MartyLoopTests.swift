@@ -1712,6 +1712,18 @@ final class MartyLoopTests: XCTestCase {
                 .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 2, result: &r)
             XCTAssertEqual(r["answerLint"] != nil, flagged, line)
         }
+        // Round 18: a bent arm is its elbow; a qualifier inside any parenthesis; a leading view phrase.
+        let bentRight = ["leftshoulder": 60.0, "rightshoulder": 15, "leftelbow": 0, "rightelbow": 90]
+        XCTAssertFalse(PoseClaims.holds("The left arm is bent more than the right", in: bentRight))
+        XCTAssertTrue(PoseClaims.holds("The right arm is bent more than the left", in: bentRight))
+        XCTAssertFalse(QuoteCheck.found("Power output is 10 kW", in: "<p>Power output is 10 kW (figure for both motors combined).</p>"))
+        XCTAssertFalse(QuoteCheck.found("Power output is 10 kW", in: "<p>Power output is 10 kW (see the combined rating).</p>"))
+        do {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: ["In step 1, the left shoulder is raised 60 degrees.", "x"]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: shoulders, views: 1, result: &r)
+            XCTAssertNil(r["answerLint"], "\(r)")
+        }
         // Round 17: a side in parentheses qualifies; the strict pose clause grammar.
         XCTAssertFalse(QuoteCheck.found("The measured thrust was 100 N", in: "<p>The measured thrust was 100 N (left engine) and 120 N (right engine).</p>"))
         for (posedLines, line) in [(elbows, "The left arm is raised more than the right, and both elbows are bent."),
