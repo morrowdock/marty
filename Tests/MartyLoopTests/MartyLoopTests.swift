@@ -1514,6 +1514,13 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual((MartyLoop.withDeclaredNames(withModelNames, ["A320"]) as? [String: Any])?["names"] as? [String], ["A320"])
         XCTAssertNil((MartyLoop.withDeclaredNames(withModelNames, []) as? [String: Any])?["names"])
         XCTAssertNil((MartyLoop.withDeclaredNames(["v": 1, "kind": "assembly"], ["A320"]) as? [String: Any])?["names"])
+        // An editorial insertion declares nothing; a model-written solid list is removed.
+        let inserted = FactTable(needed: true, rows: [FactTable.Row(id: "F1", claim: "Z6 shaft behaviour", value: "runs steadily", unit: "", label: .claim,
+                                                                    appliesTo: "", sources: [src("The [Z6] shaft runs steadily under load.")])], downgrades: [])
+        XCTAssertEqual(MartyLoop.declaredNames(inserted), [])
+        let solidNamed: [String: Any] = ["v": 1, "kind": "explainer", "names": ["Z9"], "solid": ["v": 2, "names": ["Z6"], "parts": []]]
+        let cleaned = try XCTUnwrap(MartyLoop.withDeclaredNames(solidNamed, []) as? [String: Any])
+        XCTAssertNil(cleaned["names"]); XCTAssertNil((cleaned["solid"] as? [String: Any])?["names"])
         // The guide and the hints teach the names and the arrow tail.
         XCTAssertNotNil(MartyPrompts.hint(for: "names.number.1"))
         XCTAssertTrue(MartyPrompts.hint(for: "annotation.arrow.hidden.aT")?.contains("tail") == true)

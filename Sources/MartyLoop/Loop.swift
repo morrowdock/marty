@@ -218,7 +218,8 @@ public final class MartyLoop {
         }
         var out: [String] = []
         for row in table.rows where !row.unconfirmed && (row.label == .verified || row.label == .claim) {
-            let quoted = Set(row.sources.filter { $0.check == "quote found" }.flatMap { tokens($0.quote) })
+            // (The page's own words only: an editorial insertion, "The [Z6] shaft", confirms no name.)
+            let quoted = Set(row.sources.filter { $0.check == "quote found" }.flatMap { tokens(QuoteCheck.withoutInsertions($0.quote)) })
             for t in tokens(row.claim + " " + row.value + " " + row.appliesTo)
             where t.count >= 2 && t.count <= 24 && t.first?.isLetter == true && t.contains(where: \.isNumber)
                 && t.allSatisfy({ $0.isASCII || $0.isLetter || $0.isNumber }) && quoted.contains(t) && !out.contains(t) {
@@ -234,6 +235,10 @@ public final class MartyLoop {
         guard var d = document as? [String: Any],
               d["kind"] as? String == "explainer" || (d["v"] as? Int) == 2 else { return document }
         if names.isEmpty { d.removeValue(forKey: "names") } else { d["names"] = names }
+        // (An explainer's names cover its solid: a list the model wrote in the solid is removed too.)
+        if d["kind"] as? String == "explainer", var solid = d["solid"] as? [String: Any], solid["names"] != nil {
+            solid.removeValue(forKey: "names"); d["solid"] = solid
+        }
         return d
     }
 
@@ -489,6 +494,9 @@ public final class MartyLoop {
         // its components and attempt. One lint repair at most.
         var fallback: (report: [String: Any], components: [Any], lint: [String], attempt: Int, document: Any?)? = nil
         var lintRepairUsed = false
+        // The declared names of each checked document (by its ref), and the names and refused names of this attempt.
+        var namesByRef: [String: [String]] = [:]
+        var attemptNames: (names: [String], dropped: [String]) = ([], [])
         // When the model could not be reached for the plan, stop: more calls would only fail or wait again.
         if planAdapterFailed { attempts.append(["ok": false, "reason": "adapter"]) }
         for attempt in stride(from: 0, through: planAdapterFailed ? -1 : options.repairs, by: 1) {
@@ -513,14 +521,15 @@ public final class MartyLoop {
                 catch let e as ToolError { report = ["ok": false, "reason": e.reason] }
                 // A name the engine refuses (a quantity such as "Mach2", not a name) is dropped and the check run again.
                 var nameDrops: [String] = []
-                while let k = Self.refusedNameIndex(report["reason"] as? String), (1...names.count).contains(k), let cur = document {
+                while let k = Self.refusedNameIndex(report["reason"] as? String), k >= 1, k <= names.count, let cur = document {
                     nameDrops.append(names.remove(at: k - 1))
                     let next = Self.withDeclaredNames(cur, names)
                     guard let r2 = try? engine.check(document: next, ref: nil, components: components, strict: true) else { break }
                     document = next; report = r2
                 }
-                if !names.isEmpty { receipt["names"] = names }
-                if !nameDrops.isEmpty { receipt["namesDropped"] = nameDrops }
+                // (Per attempt; the receipt's `names` are the accepted document's.)
+                if let ref = report["ref"] as? String { namesByRef[ref] = names }
+                attemptNames = (names, nameDrops)
                 // The engine's checked anchor suggestions are applied by Marty and checked again (at most 3 rounds)
                 // before the model is asked: each was verified on a copy, so only the issues left go to the model.
                 var round = 0
@@ -540,6 +549,8 @@ public final class MartyLoop {
                 : "(Marty applied the engine's checked anchor and arrow suggestions for " + autoFixed.map { "`\($0)`" }.joined(separator: ", ")
                     + "; this is the document after them.)\n" + MartyJSON.string(["document": document ?? NSNull(), "components": components])
             var outcome = Self.outcome(report)
+            if !attemptNames.dropped.isEmpty { outcome["namesDropped"] = attemptNames.dropped }
+            attemptNames = ([], [])
             if !trimmedNow.isEmpty { outcome["trimmed"] = trimmedNow }
             if !autoFixed.isEmpty { outcome["autoFixed"] = autoFixed }
             note(i, outcome)
@@ -613,6 +624,7 @@ public final class MartyLoop {
         }
         receipt["attempts"] = attempts
         receipt["accepted"] = accepted != nil
+        if let ref = accepted?["ref"] as? String, let n = namesByRef[ref], !n.isEmpty { receipt["names"] = n }
 
         if let report = accepted, let ref = report["ref"] as? String {
             receipt["final"] = Self.summary(report).merging(["ref": ref, "triangles": report["triangles"] ?? 0, "steps": report["steps"] ?? [Any]()]) { a, _ in a }

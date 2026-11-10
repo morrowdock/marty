@@ -342,8 +342,11 @@ the MCP server uses), so a run needs no MCP client.
    letter and holds a digit, "A320", "F-35"; at most 24); a list the model wrote
    is replaced. Only such a name may be typed in a text with its digit. A name
    the engine refuses (`names.number.<n>`, a quantity such as "Mach2";
-   `names.token.<n>`, `names.text.<n>`) is dropped and the check runs again. The
-   receipt has `names` and `namesDropped`.
+   `names.token.<n>`, `names.text.<n>`) is dropped and the check runs again. Only
+   the page's own words of a found quote count (an editorial insertion, "[Z6]",
+   declares nothing), and a names list the model wrote in an explainer's solid is
+   removed. The receipt has `names` (the accepted document's) and each attempt
+   its `namesDropped`.
 4. **Repair.** A refused document goes back to the model with the exact reason,
    the part, and, for common reasons, a one-line fact that restates the engine
    rule (for example the centre-distance formula). A caption or claim refusal
