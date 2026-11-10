@@ -536,18 +536,25 @@ public enum QuoteCheck {
         let topicWords: Set<String> = ["share", "shares", "split", "proportion", "fraction", "percentage", "percent", "main"]
         let asserted = words(value) + words(claim).filter { !topicWords.contains($0) }
         for w in asserted where shareWords.contains(w) && !quoted.contains(singular(w)) { return w }
+        // A value with a one-letter or coded identifier ("Jet A", "Jet A-1", "RP-1", "F-35") must be quoted as that
+        // phrase, before any number check: "Jet A" is no "jet", and "RP-1" is no "1".
+        if value.range(of: #"(?<![A-Za-z])[A-Za-z]{1,6}[-\x{2010}\x{2011}]?\d+[A-Za-z]*|(?<=\s)[A-Z](?![A-Za-z])"#, options: .regularExpression) != nil {
+            let phrase = value.lowercased().split { !($0.isLetter || $0.isNumber) }.joined(separator: " ")
+            let said = quotes.map { withoutInsertions($0).precomposedStringWithCompatibilityMapping.lowercased().split { !($0.isLetter || $0.isNumber) }.joined(separator: " ") }
+            // (Or, in one quote, its letter parts as words and its numbers stated: "Mk4" as "Mk IV".)
+            let letterParts = value.lowercased().components(separatedBy: CharacterSet.letters.inverted).filter { !$0.isEmpty }
+            let numbers = statedNumbers(value, inOrder: true)
+            let byParts = quotes.contains { q in
+                let qWords = Set(withoutInsertions(q).precomposedStringWithCompatibilityMapping.lowercased().split { !$0.isLetter }.map(String.init))
+                let qNumbers = Set(statedNumbers(withoutInsertions(q)))
+                return letterParts.allSatisfy(qWords.contains) && numbers.allSatisfy(qNumbers.contains)
+            }
+            if !said.contains(where: { (" " + $0 + " ").contains(" " + phrase + " ") }), !byParts { return value }
+        }
         guard statedNumbers(value, inOrder: true).isEmpty else { return nil }
         // (Only function words are left out: a short term or acronym, "LPG", "gas", "Jet A", must be stated too.)
         let filler: Set<String> = ["with", "from", "that", "this", "than", "their", "there", "which", "about", "into", "over", "each",
             "the", "a", "an", "and", "or", "of", "in", "on", "at", "to", "for", "by", "as", "is", "are", "was", "were", "its", "it", "be", "but", "not"]
-        // A value with a one-letter or coded identifier ("Jet A", "Jet A-1", "RP-1") must be quoted as that phrase:
-        // without it, "Jet A" would be only "jet".
-        let valueTokens = value.split { !($0.isLetter || $0.isNumber) }.map(String.init)
-        if valueTokens.contains(where: { ($0.count == 1 && $0.first?.isUppercase == true) || ($0.contains(where: \.isNumber) && $0.contains(where: \.isLetter)) }) {
-            let phrase = valueTokens.joined(separator: " ").lowercased()
-            let said = quotes.map { withoutInsertions($0).precomposedStringWithCompatibilityMapping.lowercased().split { !($0.isLetter || $0.isNumber) }.joined(separator: " ") }
-            if !said.contains(where: { (" " + $0 + " ").contains(" " + phrase + " ") }) { return value }
-        }
         let content = words(value).filter { !filler.contains($0) }
         // The value's first word that the claim label does not already name must be quoted ("kerosene-based
         // aviation fuel" for "Fuel type" needs "kerosene"; "diesel fuel" shares only the category word).
@@ -965,7 +972,9 @@ public enum QuoteCheck {
             // peak output"; what follows them is checked.)
             var ni = e + 1
             var ended = p[e].terminal
-            while ni < p.count, p[ni].inAside { if p[ni].terminal { ended = true }; ni += 1 }
+            // (Only the aside's closing word may end the sentence: "(see Fig. A)", "(Acme Inc. datasheet)" do not.)
+            while ni < p.count, p[ni].inAside { ni += 1 }
+            if ni > e + 1, p[ni - 1].terminal { ended = true }
             if !completedEnd, ni < p.count, !ended, numericEnd(w) || countEnd {
                 let next = p[ni]
                 // A dash goes on with a number only when a number follows it ("10 - 20"); before a word it is
