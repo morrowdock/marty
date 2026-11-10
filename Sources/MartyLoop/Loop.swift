@@ -1072,6 +1072,19 @@ extension MartyLoop {
                 let restWords = Set(rest.lowercased().split { !$0.isLetter }.map(String.init))
                 guard aboutPose, !performance, restWords.isDisjoint(with: QuoteCheck.shareWords),
                       rest.range(of: Self.comparativeWords, options: .regularExpression) == nil else { return true }
+                // Each number must be a pose angle: followed by a degree word or sign, or a bare number set by a pose
+                // verb ("raises the left shoulder to 60 and the right to 15"); "carries 60 pounds" is none.
+                let poseVerb = lower.range(of: #"\b(rais\w*|lower\w*|tilt\w*|bend\w*|bent|angl\w*|rotat\w*|turn\w*|swing\w*|swung|pos\w*|set|sets)\b"#, options: .regularExpression) != nil
+                let ns = lower as NSString
+                guard let numRE = try? NSRegularExpression(pattern: #"\d+(?:\.\d+)?"#) else { return true }
+                for m in numRE.matches(in: lower, range: NSRange(location: 0, length: ns.length)) {
+                    let after = ns.substring(from: m.range.location + m.range.length)
+                    let before = ns.substring(to: m.range.location)
+                    let angle = after.range(of: #"^\s*(?:\x{00B0}|degrees?\b|deg\b)"#, options: .regularExpression) != nil
+                    let bare = poseVerb && before.range(of: #"\b(?:to|at|by)\s+$"#, options: .regularExpression) != nil
+                        && after.range(of: #"^\s*(?:$|[.,;:!?)]|and\b|or\b|while\b|so\b|but\b)"#, options: .regularExpression) != nil
+                    if !angle && !bare { return true }
+                }
                 return !Self.unsourcedSentences(sentence, sources: sources + posedEvidence).isEmpty
             }
             return (c, (unsourced + d).filter { !c.contains($0) })

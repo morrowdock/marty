@@ -467,6 +467,12 @@ public enum QuoteCheck {
     static let rateWords: Set<String> = ["once", "twice", "thrice", "daily", "hourly", "weekly", "monthly", "yearly", "annually", "annual",
         "nightly", "quarterly", "biweekly", "fortnightly", "apiece", "semiannually", "biannually"]
 
+    /// Words that open an aside in parentheses: no qualifier of a quantity before it.
+    static let asideOpeners: Set<String> = ["incidentally", "see", "e.g", "eg", "i.e", "ie", "example", "pictured", "photo", "image",
+        "left", "right", "top", "bottom", "source", "sources", "citation", "note", "notes", "via", "cf", "fig", "figure", "video",
+        "archived", "updated", "translated", "emphasis", "sic", "pdf", "link", "opens", "external", "who", "whose", "what", "how", "why",
+        "a", "an", "we", "i", "you", "they", "he", "she", "it's", "that's", "which", "also", "more", "read", "click", "watch"]
+
     /// Further prose words that may follow a quantity at the end of a quote ("1,050hp other than for take-off").
     static let proseWords: Set<String> = ["other", "otherwise", "would", "will", "can", "could", "should", "must", "does", "did", "also",
         "then", "there", "where", "because", "since", "although", "though", "unless", "whereas", "instead", "rather", "even", "just",
@@ -496,12 +502,14 @@ public enum QuoteCheck {
     /// so numbers keep their notation: "10³" is no "103".)
     static func withoutInsertions(_ quote: String) -> String {
         // Each character that compatibility-maps to a bracket or an ellipsis is folded to it ("［", "﹇", "…"); no other.
-        var folded = ""
-        for c in quote {
-            let m = String(c).precomposedStringWithCompatibilityMapping
-            folded += m == "[" || m == "]" || m == "..." ? m : String(c)
+        // (Per Unicode scalar: a combining mark or variation selector after a bracket is no part of it.)
+        var folded = String.UnicodeScalarView()
+        for u in quote.unicodeScalars {
+            let m = String(u).precomposedStringWithCompatibilityMapping
+            if m == "[" || m == "]" || m == "..." { folded.append(contentsOf: m.unicodeScalars) } else { folded.append(u) }
         }
-        return folded
+        let foldedText = String(folded)
+        return foldedText
             .replacingOccurrences(of: #"\[[^\]]{0,40}\]"#, with: " ", options: .regularExpression)
             .replacingOccurrences(of: "...", with: " ")
     }
@@ -517,7 +525,7 @@ public enum QuoteCheck {
         // ("all-up weight" is a compound, no share; an editorial insertion "[most of]" in a quote is no page text.)
         // ("%" and "per cent" are "percent".)
         func words(_ t: String) -> [String] {
-            t.lowercased().replacingOccurrences(of: "all[-\u{2011}](?=[a-z])", with: "all", options: .regularExpression)
+            t.precomposedStringWithCompatibilityMapping.lowercased().replacingOccurrences(of: "all[-\u{2011}](?=[a-z])", with: "all", options: .regularExpression)
                 .replacingOccurrences(of: "%", with: " percent ").replacingOccurrences(of: #"\bper\s+cent\b"#, with: "percent", options: .regularExpression)
                 .split { !$0.isLetter }.map(String.init)
         }
@@ -750,7 +758,10 @@ public enum QuoteCheck {
                         k += 1
                     }
                 }
-                if !qualifies, !qualifiesTwo, !duration { close() }
+                // Only a recognized aside is a boundary ("(for example, …)", "(incidentally …)", "(see …)"); any other
+                // parenthesis may qualify the quantity before it, "10 kW (pulsed output)", and stays attached.
+                let aside = proseAfterQuantity.contains(inner) || proseWords.contains(inner) || Self.asideOpeners.contains(inner)
+                if !qualifies, !qualifiesTwo, !duration, aside { close() }
             }
             // A hyphen between two words ("five-engine", "suit - with") is punctuation: next to a number it stays
             // a word of its own (a sign or a range).

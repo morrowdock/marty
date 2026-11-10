@@ -1635,6 +1635,18 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(QuoteCheck.unstatedWord(value: "most of the lifting force", claim: "Rear unit lift", quotes: ["The rear unit provides \u{FE47}most of\u{FE48} the lifting force"]), "most")
         XCTAssertTrue(QuoteCheck.statedNumbers(QuoteCheck.withoutInsertions("The backpack holds \u{FE47}5\u{FE48} jet engines")).isEmpty)
         XCTAssertNil(QuoteCheck.unstatedWord(value: "40 percent", claim: "Arm jets thrust share", quotes: ["The arm jets provide 40% of the thrust"]))
+        // Round 10: pose numbers only as pose angles; unknown parentheses stay attached; brackets per scalar;
+        // compatibility forms in quoted words.
+        for line in ["The raised arm carries 60 pounds.", "The raised arm produces 60 watts."] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: [line, "The pilot is shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: shoulders, views: 1, result: &r)
+            XCTAssertNotNil(r["answerLint"], line)
+        }
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (pulsed output).</p>"))
+        XCTAssertTrue(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (see the table below).</p>"))
+        XCTAssertEqual(QuoteCheck.unstatedWord(value: "most of the lifting force", claim: "Rear unit lift", quotes: ["The rear unit provides \u{FF3B}\u{FE0F}most of\u{FF3D} the lifting force"]), "most")
+        XCTAssertNil(QuoteCheck.unstatedWord(value: "paraffin", claim: "Fuel", quotes: ["The engine runs on para\u{FB03}n fuel"]))
         var stuck: [String: Any] = [:]
         _ = try MartyLoop(model: ScriptedAdapter(replies: ["It weighs 99 kg.", "It still weighs 99 kg."]), out: tempOut(), options: .init())
             .writeAnswer(system: "s", user: "u", sources: [], result: &stuck)
