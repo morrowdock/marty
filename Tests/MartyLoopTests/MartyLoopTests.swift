@@ -1507,6 +1507,9 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue((plain["reason"] as? String ?? "").hasPrefix("text.number"), "\(plain["reason"] ?? "")")
         let named = try engine.check(document: MartyLoop.withDeclaredNames(doc, ["A320"]), ref: nil, components: [], strict: true)
         XCTAssertEqual(named["ok"] as? Bool, true, "\(named["reason"] ?? "")")
+        // The accepted document keeps its names (the receipt reads them from it).
+        let namedRef = try XCTUnwrap(named["ref"] as? String)
+        XCTAssertTrue(engine.canonicalDocument(ref: namedRef)?.contains("\"names\"") == true)
         let quantity = try engine.check(document: MartyLoop.withDeclaredNames(doc, ["A320", "Mach2"]), ref: nil, components: [], strict: true)
         XCTAssertEqual(MartyLoop.refusedNameIndex(quantity["reason"] as? String), 2, "\(quantity["reason"] ?? "")")
         // A list the model wrote is replaced; no names removes it; a v1 document is left alone.
@@ -1521,6 +1524,16 @@ final class MartyLoopTests: XCTestCase {
         let solidNamed: [String: Any] = ["v": 1, "kind": "explainer", "names": ["Z9"], "solid": ["v": 2, "names": ["Z6"], "parts": []]]
         let cleaned = try XCTUnwrap(MartyLoop.withDeclaredNames(solidNamed, []) as? [String: Any])
         XCTAssertNil(cleaned["names"]); XCTAssertNil((cleaned["solid"] as? [String: Any])?["names"])
+        // A document sent as a JSON string gets Marty's names too: a model-written list is replaced.
+        do {
+            var stringDoc = doc; stringDoc["names"] = ["Z6"]
+            let reply = MartyJSON.string(["document": MartyJSON.string(stringDoc)])
+            let model = ScriptedAdapter(replies: [#"{"components": [], "primitives": ["shaft"]}"#, reply, reply, reply, reply])
+            var options = MartyLoop.Options(); options.render = false
+            let r = try MartyLoop(model: model, out: tempOut(), options: options).run(question: "q")
+            let first = try XCTUnwrap((r["attempts"] as? [[String: Any]])?.first)
+            XCTAssertNotEqual(first["ok"] as? Bool, true, "\(first)")
+        }
         // The guide and the hints teach the names and the arrow tail.
         XCTAssertNotNil(MartyPrompts.hint(for: "names.number.1"))
         XCTAssertTrue(MartyPrompts.hint(for: "annotation.arrow.hidden.aT")?.contains("tail") == true)

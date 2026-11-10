@@ -507,6 +507,10 @@ public final class MartyLoop {
             var trimmedNow: [String] = []
             var autoFixed: [String] = []
             if let reply { document = reply["document"] ?? (reply["kind"] != nil ? reply as Any : nil) }
+            // (A document sent as a JSON string is decoded first, so Marty's names, trims and fact check apply to it.)
+            if let text = document as? String, let decoded = try? JSONSerialization.jsonObject(with: Data(text.utf8)), decoded is [String: Any] {
+                document = decoded
+            }
             let components = reply?["components"] as? [Any] ?? []
             var report: [String: Any]
             if components.count > MartyLimits.componentsPerRequest {
@@ -624,7 +628,11 @@ public final class MartyLoop {
         }
         receipt["attempts"] = attempts
         receipt["accepted"] = accepted != nil
-        if let ref = accepted?["ref"] as? String, let n = namesByRef[ref], !n.isEmpty { receipt["names"] = n }
+        // (From the accepted document itself, after any automatic change; else as checked.)
+        if let ref = accepted?["ref"] as? String {
+            let canonical = engine.canonicalDocument(ref: ref).flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) } as? [String: Any]
+            if let n = (canonical?["names"] as? [String]) ?? namesByRef[ref], !n.isEmpty { receipt["names"] = n }
+        }
 
         if let report = accepted, let ref = report["ref"] as? String {
             receipt["final"] = Self.summary(report).merging(["ref": ref, "triangles": report["triangles"] ?? 0, "steps": report["steps"] ?? [Any]()]) { a, _ in a }
