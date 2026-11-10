@@ -1470,6 +1470,380 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertEqual(rows.rows[3].sources[0].check, "quote too short to check")
     }
 
+    /// Round 2j: a share claim never passes as a lint fallback; a found quote must state the claim; three true quotes
+    /// with numbers are found; the answer lint knows the posed views; the push names its arrows; steps are steps.
+    func testRound2jHonesty() throws {
+        // The lint fallback: a share sentence is removed (another sentence is left) or the document is refused.
+        func run(_ say: String, _ repairSay: String) throws -> [String: Any] {
+            let plan = #"{"inScope": true, "subject": "shaft", "beats": ["a shaft"], "components": ["shaftWithBearing", "housingBase"], "primitives": [], "honesty": ""}"#
+            func doc(_ s: String) -> String {
+                #"{"document": "# + MartyExamples.formatExample.replacingOccurrences(of: "Two bearings hold a shaft in line on a base.", with: s) + "}"
+            }
+            let model = ScriptedAdapter(replies: [plan, doc(say), doc(repairSay)])
+            let out = tempOut()
+            defer { try? FileManager.default.removeItem(at: out) }
+            return try MartyLoop(model: model, out: out, options: .init()).run(question: "How is a shaft held?")
+        }
+        let removed = try run("Two bearings hold a shaft in line. The lower bearing carries most of the load.",
+                              "Two bearings hold a shaft in line. Engadget claims the lower bearing carries most of the load.")
+        XCTAssertEqual(removed["accepted"] as? Bool, true, "\(removed["attempts"] ?? "")")
+        XCTAssertEqual((removed["lintRemoved"] as? [String])?.first, "Engadget claims the lower bearing carries most of the load")
+        let saidAfter = MartyLoop.withoutShareSentences(["steps": [["say": "Two bearings hold a shaft in line. Engadget claims the lower bearing carries most of the load."]]]).document
+        XCTAssertEqual((((saidAfter as? [String: Any])?["steps"] as? [[String: Any]])?.first)?["say"] as? String, "Two bearings hold a shaft in line.")
+        let refused = try run("The lower bearing carries most of the load.", "Engadget claims the lower bearing carries most of the load.")
+        XCTAssertEqual(refused["accepted"] as? Bool, false)
+        XCTAssertNotNil(refused["lintRefused"])
+
+        // Three true quotes with numbers (the round's false misses).
+        XCTAssertTrue(QuoteCheck.found("Dry weight: 27kg", in: "<p><strong>Dry weight:</strong> 27kg</p><p><strong>Flight time:</strong> 5-10 minutes</p>"))
+        XCTAssertTrue(QuoteCheck.found("running the engines at 1,050hp", in: "<p>You would not want to be running the engines at 1,050hp other than for take-off.</p>"))
+        XCTAssertTrue(QuoteCheck.found("does boast a gut-punching 1,050 horsepower",
+                                       in: "<p>But, it does boast a gut-punching 1,050 horsepower (incidentally, that&rsquo;s more than a car).</p>"))
+
+        // A found quote must state the claim.
+        var support = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [
+            ["id": "F1", "claim": "The rear backpack jet does most of the lifting", "value": "Backpack lifts, arm jets steer; reporter counted 3 jets", "label": "CLAIM",
+             "sources": [["url": "https://a.org/10", "publisher": "A", "date": "2021", "quote": "spread uniformly across the three jets"]]],
+            ["id": "F2", "claim": "Fuel", "value": "kerosene", "label": "CLAIM", "sources": [["url": "https://a.org/10", "publisher": "A", "date": "2021", "quote": "it runs on Jet A1 or diesel fuel"]]],
+            ["id": "F3", "claim": "Fuel", "value": "diesel", "label": "CLAIM", "sources": [["url": "https://a.org/10", "publisher": "A", "date": "2021", "quote": "it runs on Jet A1 or diesel fuel"]]]]])))
+        support.checkQuotes(fetcher: TestPages(pages: ["https://a.org/10": "<p>Thrust is spread uniformly across the three jets, and it runs on Jet A1 or diesel fuel.</p>"], fallback: nil))
+        XCTAssertTrue(support.rows[0].unconfirmed, "\(support.downgrades)")
+        XCTAssertTrue(support.downgrades.contains { $0.contains("do not state \"most\"") }, "\(support.downgrades)")
+        XCTAssertTrue(support.rows[1].unconfirmed); XCTAssertFalse(support.rows[2].unconfirmed)
+
+        // The answer lint: pose angles and a comparison of the posed parts are sourced; what stays flagged is recorded.
+        let posed = ["beat 4 poses {\"pilot\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15}}}"]
+        var clean: [String: Any] = [:]
+        _ = try MartyLoop(model: ScriptedAdapter(replies: ["Beat 4 raises the left shoulder to 60 and the right to 15, so one arm is raised more than the other."]),
+                          out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 4, result: &clean)
+        XCTAssertNil(clean["answerLint"], "\(clean)")
+        var share: [String: Any] = [:]
+        _ = try MartyLoop(model: ScriptedAdapter(replies: ["The arm supports carry most of the load.", "The arm supports carry a share of the load, about as shown."]),
+                          out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 4, result: &share)
+        XCTAssertNotNil(share["answerLint"], "a share claim near an arm is still checked")
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres daily.</p>"))
+        XCTAssertFalse(QuoteCheck.found("1050 horsepower.", in: "<p>It makes 1050 horsepower.</p>"), "punctuation is no context")
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres (per minute).</p>"))
+        XCTAssertFalse(QuoteCheck.found("The engine makes 10 kW", in: "<p>The engine makes 10 kW (maximum) at full speed.</p>"))
+        for aside in ["(a minute)", "(an hour)", "(and up)", "(at most)", "(or more)", "(up to 12)", "at most", "up to 12", "twice a minute", "(once per minute)", "quarterly"] {
+            XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres \(aside) when it runs.</p>"), aside)
+        }
+        var short = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": ["LPG", "gas", "Jet A", "diesel"].enumerated().map { n, v in
+            ["id": "F\(n + 1)", "claim": "Fuel", "value": v, "label": "CLAIM", "sources": [["url": "https://a.org/12", "publisher": "A", "date": "2021", "quote": "The engine runs on diesel fuel"]]] as [String: Any]
+        }])))
+        short.checkQuotes(fetcher: TestPages(pages: ["https://a.org/12": "<p>The engine runs on diesel fuel.</p>"], fallback: nil))
+        XCTAssertEqual(short.rows.map(\.unconfirmed), [true, true, true, false])
+        XCTAssertTrue(QuoteCheck.found("does boast a gut-punching 1,050 horsepower", in: "<p>It does boast a gut-punching 1,050 horsepower (incidentally, more than a car).</p>"))
+        var inferred = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [["id": "F1", "claim": "Fuel type", "value": "kerosene", "label": "PLAUSIBLE", "sources": [] as [Any]]]])))
+        inferred.checkQuotes(fetcher: TestPages(pages: [:], fallback: nil))
+        XCTAssertFalse(inferred.rows[0].unconfirmed, "a class inference has no quote to state its words")
+        var allRow = try XCTUnwrap(FactTable.parse(MartyJSON.string(["rows": [
+            ["id": "F1", "claim": "Rear unit supplies all of the lift", "value": "lift and stabilization", "label": "CLAIM",
+             "sources": [["url": "https://a.org/11", "publisher": "A", "date": "2021", "quote": "The rear unit supplies lift and stabilization"]]]]])))
+        allRow.checkQuotes(fetcher: TestPages(pages: ["https://a.org/11": "<p>The rear unit supplies lift and stabilization.</p>"], fallback: nil))
+        XCTAssertTrue(allRow.rows[0].unconfirmed)
+        // A share hidden behind 12 other lint findings is still found.
+        var crowded = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(MartyExamples.formatExample.utf8)) as? [String: Any])
+        var steps = try XCTUnwrap(crowded["steps"] as? [[String: Any]])
+        steps[0]["say"] = "Two bearings hold a shaft. The lower bearing carries most of the load."
+        crowded["steps"] = steps
+        XCTAssertEqual(MartyLoop.shareFindings(crowded), ["The lower bearing carries most of the load"])
+        for share in ["The lower bearing carries half the load", "The lower bearing carries a third of the load", "It carries two thirds of the weight"] {
+            XCTAssertEqual(MartyLoop.unsupportedComparatives(share + ".", sources: []), [share], share)
+        }
+        let afterTrim = MartyLoop.withoutShareSentences(["steps": [["say": "The lower bearing carries half the load. The base carries most of the load."]]]).document
+        // Both sentences are unsupported shares: nothing is cut, both stay found, so the fallback is refused.
+        XCTAssertEqual(MartyLoop.shareFindings(afterTrim).count, 2)
+        var fuel: [String: Any] = [:]
+        _ = try MartyLoop(model: ScriptedAdapter(replies: ["With one arm raised, the engines use more than twice the fuel.", "With one arm raised, the engines use about the same fuel."]),
+                          out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 4, result: &fuel)
+        XCTAssertNotNil(fuel["answerLint"], "a performance comparison next to a pose is still checked")
+        for line in ["One arm is raised more than the other and provides two thirds of the support.", "One arm is raised more than the other and does a third of the work."] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: [line, "One arm is raised more than the other."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: posed, views: 4, result: &r)
+            XCTAssertNotNil(r["answerLint"], line)
+        }
+        for share in ["The lower bearing carries two-thirds of the load", "The lower bearing carries three-quarters of the load"] {
+            XCTAssertEqual(MartyLoop.unsupportedComparatives(share + ".", sources: []), [share], share)
+        }
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (for 30 seconds) before cooling down.</p>"))
+        XCTAssertTrue(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (for example, in a test rig).</p>"))
+        XCTAssertEqual(QuoteCheck.unstatedWord(value: "most of the lifting force", claim: "Rear unit lift", quotes: ["The rear unit provides [most of] the lifting force"]), "most")
+        XCTAssertNil(QuoteCheck.unstatedWord(value: "27 kg", claim: "All-up weight", quotes: ["The total loaded weight is 27 kg"]))
+        // Round 6: modified durations, prefixed rate words, insertions in numeric evidence, view numbers as evidence.
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (for just 30 seconds).</p>"))
+        for rate in ["bimonthly", "semiweekly", "semi-annually", "biennially"] {
+            XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres \(rate).</p>"), rate)
+        }
+        XCTAssertTrue(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres through the hose.</p>"))
+        XCTAssertTrue(QuoteCheck.statedNumbers(QuoteCheck.withoutInsertions("The backpack holds [5] jet engines for lift")).isEmpty)
+        do {
+            var r: [String: Any] = [:]
+            let stepPosed = ["step 4 poses {\"pilot\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15}}} (\"The rear jet gives most of the thrust.\")"]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: ["The rear jet supplies more than 4 times the thrust.", "The rear jet is shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: stepPosed, views: 4, result: &r)
+            XCTAssertNotNil(r["answerLint"], "a view number or the view's own say is no evidence")
+        }
+        // Round 7: number words and qualifiers after a quantity, part names as evidence, full-width insertions,
+        // fifths, and the limb exemption only for uneven posed limbs.
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres three times a day.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (lasting 30 seconds).</p>"))
+        XCTAssertTrue(QuoteCheck.statedNumbers(QuoteCheck.withoutInsertions("The backpack holds \u{FF3B}5\u{FF3D} jet engines for lift")).isEmpty)
+        XCTAssertEqual(QuoteCheck.unstatedWord(value: "two fifths", claim: "Arm jets thrust share", quotes: ["A share of the thrust comes from two arm jets"]), "fifths")
+        XCTAssertEqual(MartyLoop.poseNumbers(MartyLoop.poseOfView("step 1 poses {\"pilot4\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15}}}")), ["60", "15"])
+        for (pose, uneven) in [("{\"door\":{\"rot\":[0,30,0]}}", false), ("{\"pilot\":{\"with\":{\"leftShoulder\":15,\"rightShoulder\":15}}}", false),
+                               ("{\"pilot\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15}}}", true)] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: ["One arm is raised more than the other.", "The arms are shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: ["step 1 poses " + pose], views: 1, result: &r)
+            XCTAssertEqual(r["answerLint"] == nil, uneven, pose)
+        }
+        do {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: ["The rear jet supplies more than 4 times the thrust.", "The rear jet is shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: ["step 1 poses {\"pilot4\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15}}}"], views: 1, result: &r)
+            XCTAssertNotNil(r["answerLint"], "a part name is no evidence")
+        }
+        // Round 8: numbers keep their notation in insertion removal, parenthesized number words and qualifiers,
+        // the limb kind must be the uneven one, and "%" is "percent".
+        XCTAssertTrue(QuoteCheck.withoutInsertions("The tank capacity is 10\u{00B3} litres").contains("10\u{00B3}"))
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres (three times a day).</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (rated).</p>"))
+        XCTAssertNil(QuoteCheck.unstatedWord(value: "40 percent", claim: "Arm jet contribution", quotes: ["The arm jets provide 40% of the thrust"]))
+        do {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: ["One leg is raised more than the other.", "The legs are shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: ["step 1 poses {\"pilot\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15}}}"], views: 1, result: &r)
+            XCTAssertNotNil(r["answerLint"], "uneven arms do not source a leg comparison")
+        }
+        // Round 9: pose numbers source only pose sentences; unknown words after a quantity; compatibility brackets;
+        // a claim label's topic word.
+        let shoulders = ["step 1 poses {\"pilot\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15}}}"]
+        for (line, flagged) in [("The rear jet supplies more than 60 percent of the thrust.", true), ("The engines weigh 60 kg.", true),
+                                ("The left shoulder is raised 60 degrees.", false)] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: [line, "The pilot is shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: shoulders, views: 1, result: &r)
+            XCTAssertEqual(r["answerLint"] != nil, flagged, line)
+        }
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW pulsed output.</p>"))
+        XCTAssertEqual(QuoteCheck.unstatedWord(value: "most of the lifting force", claim: "Rear unit lift", quotes: ["The rear unit provides \u{FE47}most of\u{FE48} the lifting force"]), "most")
+        XCTAssertTrue(QuoteCheck.statedNumbers(QuoteCheck.withoutInsertions("The backpack holds \u{FE47}5\u{FE48} jet engines")).isEmpty)
+        XCTAssertNil(QuoteCheck.unstatedWord(value: "40 percent", claim: "Arm jets thrust share", quotes: ["The arm jets provide 40% of the thrust"]))
+        // Round 10: pose numbers only as pose angles; unknown parentheses stay attached; brackets per scalar;
+        // compatibility forms in quoted words.
+        for line in ["The raised arm carries 60 pounds.", "The raised arm produces 60 watts."] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: [line, "The pilot is shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: shoulders, views: 1, result: &r)
+            XCTAssertNotNil(r["answerLint"], line)
+        }
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (pulsed output).</p>"))
+        XCTAssertTrue(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (see the table below).</p>"))
+        XCTAssertEqual(QuoteCheck.unstatedWord(value: "most of the lifting force", claim: "Rear unit lift", quotes: ["The rear unit provides \u{FF3B}\u{FE0F}most of\u{FF3D} the lifting force"]), "most")
+        XCTAssertNil(QuoteCheck.unstatedWord(value: "paraffin", claim: "Fuel", quotes: ["The engine runs on para\u{FB03}n fuel"]))
+        // Round 11: qualifiers inside a parenthesis, modifiers before a rate, the pose comparison's target, a bare
+        // number's own clause, a non-breaking hyphen.
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (a peak rating).</p>"))
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres just twice a day.</p>"))
+        for (line, flagged) in [("One arm is raised more than the safety limit.", true),
+                                ("The left shoulder is raised 60 degrees and the price is set at 15.", true),
+                                ("The left shoulder is raised 60 degrees and the ramp is tilted 15 degrees.", true),
+                                ("Beat raises the left shoulder to 60 and the right to 15.", false)] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: [line, "The pilot is shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: shoulders, views: 1, result: &r)
+            XCTAssertEqual(r["answerLint"] != nil, flagged, line)
+        }
+        XCTAssertNil(QuoteCheck.unstatedWord(value: "27 kg", claim: "All\u{2011}up weight", quotes: ["The total loaded weight is 27 kg"]))
+        // Round 12: clarifying openers with a qualifier inside; a pose angle must be that side's joint value; the
+        // comparison target is the whole limb phrase.
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (i.e. peak output).</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (also its peak output).</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (note: maximum output).</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (i.e. pulsed output).</p>"))
+        for (line, flagged) in [("The left shoulder is raised 15 degrees and the right shoulder is raised 60 degrees.", true),
+                                ("The left elbow is bent 60 degrees.", true),
+                                ("One arm is raised more than the other model allows.", true),
+                                ("The left shoulder is raised 60 degrees and the right shoulder 15 degrees.", false),
+                                ("One arm is raised more than the other.", false)] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: [line, "The pilot is shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: shoulders, views: 1, result: &r)
+            XCTAssertEqual(r["answerLint"] != nil, flagged, line)
+        }
+        // Round 13: the comparison's sides, joint and direction, and the view a sentence names.
+        for (line, flagged) in [("The right arm is raised more than the left arm.", true),
+                                ("The left elbow is bent more than the right elbow.", true),
+                                ("The left arm is raised more than the right.", false),
+                                ("The right arm is raised less than the left one.", false)] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: [line, "The pilot is shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: shoulders, views: 1, result: &r)
+            XCTAssertEqual(r["answerLint"] != nil, flagged, line)
+        }
+        let twoViews = ["step 1 poses {\"pilot\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15}}}",
+                        "step 2 poses {\"pilot\":{\"with\":{\"leftShoulder\":15,\"rightShoulder\":60}}}"]
+        for (line, flagged) in [("Step 1 raises the left shoulder to 15 and the right shoulder to 60.", true),
+                                ("Step 2 raises the left shoulder to 15 and the right shoulder to 60.", false),
+                                ("Steps 1 and 2 raise the left arm more than the right.", true)] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: [line, "The pilot is shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: twoViews, views: 2, result: &r)
+            XCTAssertEqual(r["answerLint"] != nil, flagged, line)
+        }
+        // Round 14: attached parentheses after a quantity, every comparison, repeated sentences, signed angles.
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (which is its peak output).</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (it can sustain this for only 30 seconds).</p>"))
+        XCTAssertTrue(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (pictured above).</p>"))
+        let elbows = ["step 1 poses {\"pilot\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15,\"leftElbow\":0,\"rightElbow\":0}}}"]
+        for (posedLines, line, flagged) in [
+            (elbows, "The left arm is raised more than the right and the left elbow is bent more than the right elbow.", true),
+            (["step 1 poses {\"pilot\":{\"with\":{\"leftShoulder\":15,\"rightShoulder\":60}}}", "step 2 poses {\"pilot\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15}}}"],
+             "In step 1, the left arm is raised more than the right. In step 2, the left arm is raised more than the right.", true),
+            (shoulders, "The left shoulder is angled at -60 degrees.", true),
+            (shoulders, "The left shoulder is angled at 60 degrees.", false)] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: [line, "The pilot is shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 2, result: &r)
+            XCTAssertEqual(r["answerLint"] != nil, flagged, line)
+        }
+        // Round 34: qualitative durations and duty cycles.
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW according to the manufacturer, for short periods.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW according to the manufacturer, at a 10% duty cycle.</p>"))
+        // Round 32: modified and quantified durations.
+        for tail in ["for just a minute", "for a few seconds", "for several seconds", "for less than a second", "for a fraction of a second"] {
+            XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, but it can maintain this output \(tail).</p>"), tail)
+        }
+        XCTAssertTrue(QuoteCheck.found("The device has 5 engines", in: "<p>The device has 5 engines, and a second engine pod.</p>"))
+        // Round 31: through a comma-set attribution; attached and article durations.
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, according to the manufacturer, but only for 30 seconds.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, but it can maintain this output for 30s.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, but it can maintain this output for a minute.</p>"))
+        // Round 30: an attribution lead-in reads on; a year is no duration.
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW according to the manufacturer, but only for 30 seconds.</p>"))
+        XCTAssertTrue(QuoteCheck.found("The suit weighs 27 kg", in: "<p>The suit weighs 27 kg, first flown in 2024.</p>"))
+        // Round 29: a dash clause and a repeated subject are read to the clause end.
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW \u{2014} which is available for only 30 seconds.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, but its output lasts only 30 seconds.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, but the motor can hold it for 30 seconds.</p>"))
+        // Round 28: a clause that refers back is read; a dash's first phrase.
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, but it can sustain this for only 30 seconds.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW - for only 30 seconds.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW - its peak output.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW \u{2014} for only 30 seconds.</p>"))
+        // Round 27: counted quantities read the clause too; a new clause ends it.
+        XCTAssertFalse(QuoteCheck.found("The plant produces 100 engines", in: "<p>The plant produces 100 engines, which is its annual output.</p>"))
+        XCTAssertTrue(QuoteCheck.found("The suit weighs 27 kg", in: "<p>The suit weighs 27 kg, and its tank holds 10 litres.</p>"))
+        // Round 26: a clause after a comma is read for a qualifier.
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, which is its peak output.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, which is only available for 30 seconds.</p>"))
+        // Round 25: the identifier fallback needs the letters next to the numeral; a clause after a comma.
+        XCTAssertEqual(QuoteCheck.unstatedWord(value: "Jet A", claim: "Fuel type", quotes: ["The engine burns Jet B fuel at a rate of 60 litres per hour."]), "Jet A")
+        XCTAssertEqual(QuoteCheck.unstatedWord(value: "RP-1", claim: "Fuel type", quotes: ["RP-2 is a highly refined kerosene with less than 1 ppm sulfur."]), "RP-1")
+        XCTAssertNil(QuoteCheck.unstatedWord(value: "Mk4", claim: "Version", quotes: ["the current Mk IV suit is lighter"]))
+        XCTAssertTrue(QuoteCheck.found("The suit weighs 27 kg", in: "<p>The suit weighs 27 kg, making it easy to carry.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, its peak output.</p>"))
+        // Round 24: a coded identifier before the number check; abbreviations inside an aside.
+        XCTAssertEqual(QuoteCheck.unstatedWord(value: "RP-1", claim: "Fuel type", quotes: ["The engine burns Jet A-1 aviation fuel"]), "RP-1")
+        XCTAssertNil(QuoteCheck.unstatedWord(value: "RP-1", claim: "Fuel type", quotes: ["The engine burns RP-1 kerosene"]))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (see Fig. A) at peak output.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (source: Acme Inc. datasheet) at peak output.</p>"))
+        XCTAssertTrue(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (see Fig. A). It is small.</p>"))
+        // Round 23: coded identifiers as phrases; only a sentence end ends a quantity; "by" is a change.
+        XCTAssertEqual(QuoteCheck.unstatedWord(value: "Jet A", claim: "Fuel type", quotes: ["The engine burns Jet B fuel during cold-weather operations"]), "Jet A")
+        XCTAssertNil(QuoteCheck.unstatedWord(value: "Jet A", claim: "Fuel type", quotes: ["The engine burns Jet A-1 fuel"]))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (see chart), its peak output.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (source: Acme Inc.) at peak output.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, its peak output.</p>"))
+        XCTAssertFalse(PoseClaims.holds("Step raises the left arm by 60 degrees", in: ["leftshoulder": 60]))
+        // Round 22: articles before a qualifier; punctuation inside an aside; every distinguishing value word.
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW at its peak output.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW at the peak output.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres (for example, through the outlet) per minute.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (pictured, right) at peak output.</p>"))
+        XCTAssertEqual(QuoteCheck.unstatedWord(value: "liquid hydrogen", claim: "Fuel type", quotes: ["The engine uses liquid methane as fuel"]), "hydrogen")
+        XCTAssertEqual(QuoteCheck.unstatedWord(value: "aviation kerosene", claim: "Fuel type", quotes: ["The engine runs on aviation gasoline"]), "kerosene")
+        XCTAssertNil(QuoteCheck.unstatedWord(value: "kerosene-based aviation fuel", claim: "Fuel type", quotes: ["It burns kerosene, an aviation fuel"]))
+        // Round 21: the limb word is resolved again per verb; asides are skipped at a quantity's end; the value's
+        // distinguishing word.
+        XCTAssertFalse(PoseClaims.holds("The left arm is bent to 60 degrees and the right is raised to 15 degrees",
+                                        in: ["leftelbow": 60, "rightelbow": 15, "leftshoulder": 0, "rightshoulder": 0]))
+        XCTAssertTrue(PoseClaims.holds("The left arm is bent to 60 degrees and the right is raised to 15 degrees",
+                                       in: ["leftelbow": 60, "rightelbow": 0, "leftshoulder": 0, "rightshoulder": 15]))
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres (see diagram) per minute.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (pictured above) at peak output.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW at peak output.</p>"))
+        XCTAssertTrue(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (pictured above). It is small.</p>"))
+        XCTAssertEqual(QuoteCheck.unstatedWord(value: "kerosene-based aviation fuel", claim: "Fuel type", quotes: ["The engine runs on diesel fuel"]), "kerosene")
+        // Round 20: an elliptical clause keeps the verb before it; nested parentheses.
+        XCTAssertFalse(PoseClaims.holds("The left arm is bent to 60 degrees and the right arm to 15 degrees",
+                                        in: ["leftelbow": 60, "rightelbow": 0, "leftshoulder": 0, "rightshoulder": 15]))
+        XCTAssertTrue(PoseClaims.holds("The left arm is bent to 60 degrees and the right arm to 0 degrees",
+                                       in: ["leftelbow": 60, "rightelbow": 0, "leftshoulder": 0, "rightshoulder": 15]))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (see the datasheet (PDF) for the peak rating).</p>"))
+        XCTAssertTrue(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (see the datasheet (PDF) for details).</p>"))
+        // Round 19: a leading "bends" is the elbow; a qualifier anywhere in a long parenthesis.
+        XCTAssertFalse(PoseClaims.holds("Step bends the left arm to 60 degrees", in: ["leftshoulder": 60, "leftelbow": 0]))
+        XCTAssertTrue(PoseClaims.holds("Step bends the left arm to 60 degrees and the right to 30", in: ["leftshoulder": 0, "leftelbow": 60, "rightelbow": 30]))
+        XCTAssertFalse(QuoteCheck.found("Power output is 10 kW", in: "<p>Power output is 10 kW (see the specification sheet for the electric version of this model; both motors combined).</p>"))
+        XCTAssertTrue(QuoteCheck.found("Power output is 10 kW", in: "<p>Power output is 10 kW (see the specification sheet for the electric version of this model).</p>"))
+        // Round 18: a bent arm is its elbow; a qualifier inside any parenthesis; a leading view phrase.
+        let bentRight = ["leftshoulder": 60.0, "rightshoulder": 15, "leftelbow": 0, "rightelbow": 90]
+        XCTAssertFalse(PoseClaims.holds("The left arm is bent more than the right", in: bentRight))
+        XCTAssertTrue(PoseClaims.holds("The right arm is bent more than the left", in: bentRight))
+        XCTAssertFalse(QuoteCheck.found("Power output is 10 kW", in: "<p>Power output is 10 kW (figure for both motors combined).</p>"))
+        XCTAssertFalse(QuoteCheck.found("Power output is 10 kW", in: "<p>Power output is 10 kW (see the combined rating).</p>"))
+        do {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: ["In step 1, the left shoulder is raised 60 degrees.", "x"]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: shoulders, views: 1, result: &r)
+            XCTAssertNil(r["answerLint"], "\(r)")
+        }
+        // Round 17: a side in parentheses qualifies; the strict pose clause grammar.
+        XCTAssertFalse(QuoteCheck.found("The measured thrust was 100 N", in: "<p>The measured thrust was 100 N (left engine) and 120 N (right engine).</p>"))
+        for (posedLines, line) in [(elbows, "The left arm is raised more than the right, and both elbows are bent."),
+                                   (shoulders, "The left arm is raised 60 degrees above horizontal.")] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: [line, "The pilot is shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 1, result: &r)
+            XCTAssertNotNil(r["answerLint"], line)
+        }
+        XCTAssertTrue(PoseClaims.holds("Beat raises the left shoulder to 60 and the right to 15, so one arm is raised more than the other", in: ["leftshoulder": 60, "rightshoulder": 15]))
+        XCTAssertFalse(PoseClaims.holds("Beat raises the left shoulder to 60 and the right to 15, so one arm is raised more than the other", in: ["leftshoulder": 60, "rightshoulder": 60]))
+        // Round 16: a modal after a quantity may limit it.
+        XCTAssertFalse(QuoteCheck.found("An output of 10 kW", in: "<p>An output of 10 kW can be sustained for only 30 seconds.</p>"))
+        // Round 15: negated comparisons and shared angles are not exempt.
+        let mixed = ["step 1 poses {\"pilot\":{\"with\":{\"leftShoulder\":15,\"rightShoulder\":60}}}"]
+        for (posedLines, line) in [(shoulders, "The left arm is not raised more than the right."),
+                                   (mixed, "The left and right shoulders are raised 60 degrees."),
+                                   (mixed, "Both the left and right arms are raised to 60 degrees."),
+                                   (shoulders, "The left shoulder is raised to 60 degrees, and the right shoulder is too.")] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: [line, "The pilot is shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 1, result: &r)
+            XCTAssertNotNil(r["answerLint"], line)
+        }
+        XCTAssertEqual(PoseClaims.facts(twoViews)[2]?["leftshoulder"], 15)
+        XCTAssertEqual(PoseClaims.namedViews("Steps 2-4 and beat 6 show it"), [2, 3, 4, 6])
+        var stuck: [String: Any] = [:]
+        _ = try MartyLoop(model: ScriptedAdapter(replies: ["It weighs 99 kg.", "It still weighs 99 kg."]), out: tempOut(), options: .init())
+            .writeAnswer(system: "s", user: "u", sources: [], result: &stuck)
+        XCTAssertEqual((stuck["answerLint"] as? [String: Any])?["remaining"] as? [String], ["It still weighs 99 kg"])
+
+        // The push names its arrows; an assembly's views are steps; prompts.
+        let one = PoseText.Push(side: 0.9, depth: 0, sideAbs: 0.9, outward: 0, arrows: 1, mannequin: true)
+        XCTAssertTrue(one.summary.contains("the one shown thrust arrow gives (that arrow only"), one.summary)
+        XCTAssertTrue(MartyPrompts.answerUser(followUp: "q", before: "{}", after: nil, posed: ["step 5 poses {}"], viewWord: "step").contains("say \"step N shows this\""))
+        XCTAssertTrue(MartyPrompts.researchSystem(maxSearches: 10).contains("snippet gives a figure, fetch the page that holds it"))
+        XCTAssertTrue(MartyPrompts.authorSystem(parts: "x", example: "{}", explainer: nil).contains("(example, not confirmed <brand> hardware)\" in its text"))
+        XCTAssertTrue(MartyPrompts.authorSystem(parts: "x", example: "{}", explainer: MartyExamples.explainerExample).contains("\"<publisher> <year>\""))
+    }
+
     func testAnchorIssuesInRepairs() throws {
         let hidden = MartyExamples.formatExample.replacingOccurrences(of: #""offset":[0,-6,40]"#, with: #""offset":[0,0,60]"#)
         XCTAssertNotEqual(hidden, MartyExamples.formatExample)

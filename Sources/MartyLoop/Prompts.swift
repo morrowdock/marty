@@ -6,7 +6,7 @@ import MartyEngine
 /// author step sees a short format guide plus `explain` entries for the parts the plan chose. The receipt records the
 /// size and SHA-256 of every prompt, so a change in context is always measured.
 public enum MartyPrompts {
-    public static let version = "marty-prompts/22"
+    public static let version = "marty-prompts/23"
 
     static let role = """
         You are Marty, a teacher who explains how things work with checked 3D models. A deterministic engine \
@@ -80,7 +80,7 @@ public enum MartyPrompts {
           (strict check: joint.idle.<id>). A turn axis runs through the part's own origin along its joint vector and
           must pass through the part's own shape (frame.axis.off.<id>): put the shape on the axis (the shape entry's own
           "at"), or mark a part that turns about an outside axis on purpose with "offAxis": true.
-        - Text may not hold <, >, :// or control characters (write "less than").
+        - Text may not hold <, >, :// or control characters.
         - Step: {"say": "<= 240 chars, one or two short sentences", "highlight": [ids], "explode": 0..1,
           "camera": "<preset>", "orbit": degrees, "spin": input turns, "check": [claims]}. At most 16 steps.
           Cameras: \(MartyEngine.cameraPresets.joined(separator: ", ")) only.
@@ -146,7 +146,7 @@ public enum MartyPrompts {
           of, more than) needs a row or a {fact}, or a hedge. Never derive a performance figure from the simple model.
         - Name the product version and years the model shows (title or first step), from the table. Anchor each inside
           label on the named inner part, not on the casing or body. An inside whose real parts are not public is
-          labelled "<class>-style <kind> (example)" with "Not confirmed <brand> hardware".
+          labelled "<class>-style <kind> (example, not confirmed <brand> hardware)" in its text.
         - Show each named unit in a view facing it (back unit: a back camera) and all in one whole-figure view.
           Force: "lbf", "kgf".
         - Physics words: a hover is a balance (the upward parts of the thrusts balance the weight of person, device and
@@ -168,7 +168,7 @@ public enum MartyPrompts {
          "title" and "steps"... }, "beats": [...]}. No board text item (it shows on every beat).
         - Keep the table small (at most 4 rows; 12 characters a cell; numbers with absolute value below 1000000) and
           fill it in the first beat that needs it: {"op": "set", "id": "t", "key": "cells", "value": [["Item", "Value",
-          "Source"], ["<name>", <number>, "<publisher>"]]} in that beat's "ops" (a board keeps one item).
+          "Source"], ["<name>", <number>, "<publisher> <year>"]]} in its "ops" (no bare row id).
         - beats (1 to 16) replace steps: {"say": "<= 200 chars", "highlight": [ids, also "t.r1" for row 1; the header
           is row 0], "view":
           {"camera", "spin", "explode", "orbit", "section", "ghost", "focus", "annotate", "pose", "hide", "show"},
@@ -222,7 +222,10 @@ public enum MartyPrompts {
         pages, not only its home page) and write its current model name as a row; keep looking for the inventor's \
         own account of how thrust or load is shared, and for published thrust figures in the aviation or engineering \
         press. A ratio (such as thrust to weight) only as a source states it, never computed from two rows. Each \
-        quote at least 16 characters.
+        quote at least 16 characters. When a search result's snippet gives a figure, fetch the page that holds it and \
+        quote that page. For a count of engines or parts, prefer the maker's own page or an engineering source over a \
+        hands-on report. Search by name for the inventor's own account of how the load is shared between the parts, \
+        and for the thrust figure reported by the aviation press.
         As soon as you confirm a fact, write it on its own line as: ROW {the row object}. When you are done, reply \
         with the whole JSON object below.
         Labels: VERIFIED when at least 2 independent sources (different publishers, not copies of one article) state it; \
@@ -542,7 +545,7 @@ public enum MartyPrompts {
 
     public static func answerUser(followUp: String, before: String, after: String?, patch: String? = nil, ratiosChanged: Bool = false,
                                   refused: String? = nil, engineSawAPatch: Bool = true, movedForceArrows: [String] = [], given: [String] = [],
-                                  table: String? = nil, push: String? = nil, posed: [String] = []) -> String {
+                                  table: String? = nil, push: String? = nil, posed: [String] = [], viewWord: String = "beat") -> String {
         var s = "Learner asks: \(followUp)\n\nEngine report before:\n\(before)\n\n"
         if refused == nil, let table { s += "\(table)\n\n" }
         if refused == nil, !given.isEmpty {
@@ -556,7 +559,7 @@ public enum MartyPrompts {
         }
         if !posed.isEmpty {
             s += "Views of the model that already pose parts (the engine poses them):\n" + posed.map { "- \($0)" }.joined(separator: "\n")
-                + "\nIf one of them shows what the learner asks, say \"beat N shows this\" (or step N); never say the model does not show it.\n\n"
+                + "\nIf one of them shows what the learner asks, say \"\(viewWord) N shows this\" (this lesson's views are \(viewWord)s); never say the model does not show it.\n\n"
         }
         guard let after else { return s + "No model change.\n" }
         if let patch { s += "The change you made (sizes you set may be stated):\n\(patch)\n\n" }
