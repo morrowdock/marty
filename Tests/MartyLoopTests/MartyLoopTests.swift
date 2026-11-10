@@ -1712,6 +1712,12 @@ final class MartyLoopTests: XCTestCase {
                 .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 2, result: &r)
             XCTAssertEqual(r["answerLint"] != nil, flagged, line)
         }
+        // Round 25: the identifier fallback needs the letters next to the numeral; a clause after a comma.
+        XCTAssertEqual(QuoteCheck.unstatedWord(value: "Jet A", claim: "Fuel type", quotes: ["The engine burns Jet B fuel at a rate of 60 litres per hour."]), "Jet A")
+        XCTAssertEqual(QuoteCheck.unstatedWord(value: "RP-1", claim: "Fuel type", quotes: ["RP-2 is a highly refined kerosene with less than 1 ppm sulfur."]), "RP-1")
+        XCTAssertNil(QuoteCheck.unstatedWord(value: "Mk4", claim: "Version", quotes: ["the current Mk IV suit is lighter"]))
+        XCTAssertTrue(QuoteCheck.found("The suit weighs 27 kg", in: "<p>The suit weighs 27 kg, making it easy to carry.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, its peak output.</p>"))
         // Round 24: a coded identifier before the number check; abbreviations inside an aside.
         XCTAssertEqual(QuoteCheck.unstatedWord(value: "RP-1", claim: "Fuel type", quotes: ["The engine burns Jet A-1 aviation fuel"]), "RP-1")
         XCTAssertNil(QuoteCheck.unstatedWord(value: "RP-1", claim: "Fuel type", quotes: ["The engine burns RP-1 kerosene"]))

@@ -541,13 +541,19 @@ public enum QuoteCheck {
         if value.range(of: #"(?<![A-Za-z])[A-Za-z]{1,6}[-\x{2010}\x{2011}]?\d+[A-Za-z]*|(?<=\s)[A-Z](?![A-Za-z])"#, options: .regularExpression) != nil {
             let phrase = value.lowercased().split { !($0.isLetter || $0.isNumber) }.joined(separator: " ")
             let said = quotes.map { withoutInsertions($0).precomposedStringWithCompatibilityMapping.lowercased().split { !($0.isLetter || $0.isNumber) }.joined(separator: " ") }
-            // (Or, in one quote, its letter parts as words and its numbers stated: "Mk4" as "Mk IV".)
-            let letterParts = value.lowercased().components(separatedBy: CharacterSet.letters.inverted).filter { !$0.isEmpty }
-            let numbers = statedNumbers(value, inOrder: true)
-            let byParts = quotes.contains { q in
-                let qWords = Set(withoutInsertions(q).precomposedStringWithCompatibilityMapping.lowercased().split { !$0.isLetter }.map(String.init))
-                let qNumbers = Set(statedNumbers(withoutInsertions(q)))
-                return letterParts.allSatisfy(qWords.contains) && numbers.allSatisfy(qNumbers.contains)
+            // (Or, for one letters-and-number identifier, its letters directly followed by its number in Roman numerals:
+            // "Mk4" as "Mk IV". Never for a one-letter identifier, "Jet A".)
+            var byParts = false
+            let romans = ["i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 8, "ix": 9, "x": 10, "xi": 11, "xii": 12]
+            let idRE = #"^([A-Za-z]{1,6})[-\x{2010}\x{2011}]?(\d{1,2})$"#
+            let trimmed = value.trimmingCharacters(in: .whitespaces)
+            if let r = trimmed.range(of: idRE, options: .regularExpression), r == trimmed.startIndex..<trimmed.endIndex,
+               let digitStart = trimmed.firstIndex(where: \.isNumber), let n = Int(trimmed[digitStart...]) {
+                let letters = trimmed[..<digitStart].lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "-\u{2010}\u{2011}"))
+                byParts = said.contains { q in
+                    let w = q.split(separator: " ").map(String.init)
+                    return w.indices.dropLast().contains { w[$0] == letters && romans[w[$0 + 1]] == n }
+                }
             }
             if !said.contains(where: { (" " + $0 + " ").contains(" " + phrase + " ") }), !byParts { return value }
         }
@@ -994,7 +1000,12 @@ public enum QuoteCheck {
                 // (An ordinary word of four letters or more is prose too, "1,050hp other than …"; a unit, time,
                 // magnitude, bound or rate word, or a short symbol-like word, may go on with the quantity.)
                 // (Only known prose words: an unknown word may qualify the quantity, "10 kW pulsed output".)
+                // (After a comma or an aside, a clause opener is prose: "27 kg, making it easy to carry"; the words after
+                // it are still checked for a qualifier.)
+                let afterBreak = p[e].closedAfter || ni > e + 1
                 let plainProse = Self.proseWords.contains(next.text)
+                    || (afterBreak && next.text.count > 4 && next.text.hasSuffix("ing") && !Self.continuations.contains(next.text))
+                    || (afterBreak && ["which", "making", "meaning", "allowing", "enough", "so", "while", "where", "when", "whereas"].contains(next.text))
                 if withUnit, !Self.proseAfterQuantity.contains(next.text), !plainProse { return false }
                 // A prose word before a qualifier goes on too ("10 kW at peak output", "10 kW at full throttle").
                 // ("in total", "in all" only restate the sum.)
