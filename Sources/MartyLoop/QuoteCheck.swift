@@ -469,7 +469,8 @@ public enum QuoteCheck {
 
     /// Words that open an aside in parentheses: no qualifier of a quantity before it.
     /// (Only openers that never clarify the quantity; "(i.e. …)", "(note: …)" or "(which …)" may qualify it.)
-    static let asideOpeners: Set<String> = ["incidentally", "see", "pictured", "photo", "image", "left", "right", "top", "bottom",
+    /// (No side or position word: "(left engine)" qualifies a quantity.)
+    static let asideOpeners: Set<String> = ["incidentally", "see", "pictured", "photo", "image",
         "source", "sources", "citation", "via", "cf", "fig", "figure", "video", "archived", "updated", "translated",
         "emphasis", "sic", "pdf", "link", "opens", "external", "read", "click", "watch"]
 

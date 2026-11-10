@@ -1712,6 +1712,17 @@ final class MartyLoopTests: XCTestCase {
                 .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 2, result: &r)
             XCTAssertEqual(r["answerLint"] != nil, flagged, line)
         }
+        // Round 17: a side in parentheses qualifies; the strict pose clause grammar.
+        XCTAssertFalse(QuoteCheck.found("The measured thrust was 100 N", in: "<p>The measured thrust was 100 N (left engine) and 120 N (right engine).</p>"))
+        for (posedLines, line) in [(elbows, "The left arm is raised more than the right, and both elbows are bent."),
+                                   (shoulders, "The left arm is raised 60 degrees above horizontal.")] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: [line, "The pilot is shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 1, result: &r)
+            XCTAssertNotNil(r["answerLint"], line)
+        }
+        XCTAssertTrue(PoseClaims.holds("Beat raises the left shoulder to 60 and the right to 15, so one arm is raised more than the other", in: ["leftshoulder": 60, "rightshoulder": 15]))
+        XCTAssertFalse(PoseClaims.holds("Beat raises the left shoulder to 60 and the right to 15, so one arm is raised more than the other", in: ["leftshoulder": 60, "rightshoulder": 60]))
         // Round 16: a modal after a quantity may limit it.
         XCTAssertFalse(QuoteCheck.found("An output of 10 kW", in: "<p>An output of 10 kW can be sustained for only 30 seconds.</p>"))
         // Round 15: negated comparisons and shared angles are not exempt.

@@ -69,85 +69,58 @@ import Foundation
         return named.allSatisfy { v in facts[v].map { holds(sentence, in: $0) } ?? false }
     }
 
-    static let sideRE = #"\b(left|right)\b"#
-    static let jointRE = #"\b(shoulder|elbow|arm|forearm)s?\b"#
-    static let separators = #"(?s)^.*(?:[,;:]|\band\b|\bbut\b|\bwhile\b|\bwhereas\b|\bso\b|\bor\b)"#
-
-    static func last(_ re: String, _ t: String) -> String? {
-        guard let x = try? NSRegularExpression(pattern: re) else { return nil }
-        let tn = t as NSString
-        return x.matches(in: t, range: NSRange(location: 0, length: tn.length)).last.map { tn.substring(with: $0.range(at: 1)) }
-    }
-
     static func jointKey(_ word: String) -> String { ["arm": "shoulder", "forearm": "elbow"][word, default: word] }
 
+    /// The clause grammar of a pose sentence. Each clause (split at commas and at "and", "so", "while") is exactly one of:
+    /// an angle, "[the] left|right [shoulder|arm|elbow|forearm] [is] [raised|bent|set|...] [to|at|by] N [degrees]" (with
+    /// "to/at/by" or a degree word; the joint may come from the clause before, "and the
+    /// right to 15"); or a comparison, "[the] left|right|one <joint> is raised|lowered|bent [much|far] more|less|higher|
+    /// lower|further than [the] other|left|right [one|<joint>]". A view word and a pose verb may lead ("Step raises
+    /// the left shoulder to 60"). Anything more (a reference frame, "above horizontal"; another limb, "both elbows
+    /// are bent"; a negation) is no pose clause, so the sentence is not exempt.
+    static let anglePattern = #"^(?:the\s+)?(left|right)(?:\s+(shoulder|arm|elbow|forearm))?(?:\s+(?:is|sits))?(?:\s+(raised|bent|set|posed|lifted|angled))?(?:\s+(to|at|by))?\s+([-\x{2212}]?\d+(?:\.\d+)?)(?:\s*(degrees?|deg|\x{00B0}))?$"#
+    static let comparisonPattern = #"^(?:the\s+)?(left|right|one)\s+(arm|shoulder|elbow|forearm)\s+is\s+(raised|lowered|bent)\s+(?:much\s+|far\s+)?(more|less|higher|lower|further)\s+than\s+(?:the\s+)?(other|left|right)(?:\s+(?:one|arm|shoulder|elbow|forearm))?$"#
+
     static func holds(_ sentence: String, in values: [String: Double]) -> Bool {
-        let lower = sentence.lowercased()
-        let ns = lower as NSString
-        var claims = 0
-        // Each comparison: the subject's side and joint (before it, in its clause) against the target's side.
-        guard let re = try? NSRegularExpression(pattern: comparison) else { return false }
-        for m in re.matches(in: lower, range: NSRange(location: 0, length: ns.length)) {
-            claims += 1
-            let subject = ns.substring(to: m.range.location).replacingOccurrences(of: separators, with: "", options: .regularExpression)
-            let phrase = ns.substring(with: m.range)
-            func group(_ k: Int) -> String? { m.range(at: k).location == NSNotFound ? nil : ns.substring(with: m.range(at: k)) }
-            guard let jointWord = last(jointRE, subject) ?? last(jointRE, phrase), let target = group(4) else { return false }
-            let joint = jointKey(jointWord)
-            guard let l = values["left" + joint], let r = values["right" + joint] else { return false }
-            let side = last(sideRE, subject)
-            if let side {
-                let other = side == "left" ? "right" : "left"
-                guard target == "other" || target == other else { return false }
-                let word = group(2) ?? group(3) ?? ""
-                var sign: Double = ["more", "higher", "further"].contains(word) ? 1 : -1
-                if group(1) == "lowered" { sign = -sign }
-                let (a, b) = side == "left" ? (l, r) : (r, l)
-                guard (a - b) * sign > 0 else { return false }
+        let lower = sentence.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: " .!?"))
+        let clauses = lower.replacingOccurrences(of: #"\s*[,;]\s*(?:(?:and|so|while)\s+)?|\s+(?:and|so|while)\s+"#, with: "\u{1}", options: .regularExpression)
+            .components(separatedBy: "\u{1}").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard !clauses.isEmpty, let angleRE = try? NSRegularExpression(pattern: anglePattern),
+              let compRE = try? NSRegularExpression(pattern: comparisonPattern) else { return false }
+        var joint: String? = nil
+        for raw in clauses {
+            // A leading view word ("in step", "beat") and pose verb ("raises", "shows").
+            var c = raw.replacingOccurrences(of: #"^(?:(?:in|at)\s+)?(?:the\s+)?(?:beats?|steps?)\b\s*"#, with: "", options: .regularExpression)
+            c = c.replacingOccurrences(of: #"^(?:shows\s+)?(?:raises|bends|sets|poses|lifts)\s+"#, with: "", options: .regularExpression)
+            let cn = c as NSString
+            let all = NSRange(location: 0, length: cn.length)
+            func g(_ m: NSTextCheckingResult, _ k: Int) -> String? { m.range(at: k).location == NSNotFound ? nil : cn.substring(with: m.range(at: k)) }
+            if let m = compRE.firstMatch(in: c, range: all) {
+                guard let subject = g(m, 1), let j = g(m, 2), let verb = g(m, 3), let word = g(m, 4), let target = g(m, 5) else { return false }
+                let key = jointKey(j)
+                joint = key
+                guard let l = values["left" + key], let r = values["right" + key] else { return false }
+                if subject == "one" {
+                    guard target == "other", l != r else { return false }
+                } else {
+                    let other = subject == "left" ? "right" : "left"
+                    guard target == "other" || target == other else { return false }
+                    var sign: Double = ["more", "higher", "further"].contains(word) ? 1 : -1
+                    if verb == "lowered" { sign = -sign }
+                    let (a, b) = subject == "left" ? (l, r) : (r, l)
+                    guard (a - b) * sign > 0 else { return false }
+                }
+            } else if let m = angleRE.firstMatch(in: c, range: all) {
+                guard let side = g(m, 1), let number = g(m, 5) else { return false }
+                // ("to/at/by" or a degree word: "and the right shoulder 15 degrees" is the clause before's verb.)
+                guard g(m, 4) != nil || g(m, 6) != nil else { return false }
+                guard let key = g(m, 2).map(jointKey) ?? joint else { return false }
+                joint = key
+                guard let value = values[side + key], let n = Double(number.replacingOccurrences(of: "\u{2212}", with: "-")), value == n else { return false }
             } else {
-                // "One arm is raised more than the other": the two sides differ.
-                guard target == "other", l != r else { return false }
-            }
-        }
-        // Each number: an angle (a degree word or sign after it, or a bare number set by a pose verb) of the side and
-        // joint named last in its clause, else earlier in the sentence, equal to that posed value.
-        let poseVerb = lower.range(of: #"\b(rais\w*|lower\w*|tilt\w*|bend\w*|bent|angl\w*|rotat\w*|turn\w*|swing\w*|swung|pos\w*|set|sets)\b"#, options: .regularExpression) != nil
-        // (A signed number is one: "-60" is no "60"; the minus sign U+2212 too.)
-        guard let numRE = try? NSRegularExpression(pattern: #"(?<![\w.])[-\x{2212}]?\d+(?:\.\d+)?"#) else { return false }
-        var previousEnd = 0
-        for m in numRE.matches(in: lower, range: NSRange(location: 0, length: ns.length)) {
-            claims += 1
-            let after = ns.substring(from: m.range.location + m.range.length)
-            let before = ns.substring(to: m.range.location)
-            // A number whose own subject (the text since the number before it) names both sides, or both or each, is
-            // shared ("the left and right shoulders are raised 60 degrees"): no single posed value, so not exempt.
-            let own = ns.substring(with: NSRange(location: previousEnd, length: m.range.location - previousEnd))
-            previousEnd = m.range.location + m.range.length
-            if (own.range(of: #"\bleft\b"#, options: .regularExpression) != nil && own.range(of: #"\bright\b"#, options: .regularExpression) != nil)
-                || own.range(of: #"\b(both|each|all)\b"#, options: .regularExpression) != nil { return false }
-            let angle = after.range(of: #"^\s*(?:\x{00B0}|degrees?\b|deg\b)"#, options: .regularExpression) != nil
-            let bare = poseVerb && before.range(of: #"\b(?:to|at|by)\s+$"#, options: .regularExpression) != nil
-                && after.range(of: #"^\s*(?:$|[.,;:!?)]|and\b|or\b|while\b|so\b|but\b)"#, options: .regularExpression) != nil
-            guard angle || bare else { return false }
-            let clause = before.replacingOccurrences(of: separators, with: "", options: .regularExpression)
-            guard clause.range(of: #"\b(arm|arms|shoulder|shoulders|elbow|elbows|forearm|forearms|limb|limbs|left|right)\b"#, options: .regularExpression) != nil,
-                  let side = last(sideRE, clause) ?? last(sideRE, before),
-                  let joint = last(jointRE, clause) ?? last(jointRE, before),
-                  let value = values[side + jointKey(joint)],
-                  let n = Double(ns.substring(with: m.range).replacingOccurrences(of: "\u{2212}", with: "-")), value == n
-            else { return false }
-        }
-        // A clause after the last number that names a limb or side again, or reuses the value ("and the right
-        // shoulder is too", "as well", "the same"), gives it to another limb unchecked: not exempt.
-        // (A comparison clause there is checked above.)
-        if let lastEnd = numRE.matches(in: lower, range: NSRange(location: 0, length: ns.length)).last.map({ $0.range.location + $0.range.length }) {
-            let tail = ns.substring(from: lastEnd).replacingOccurrences(of: #"^\s*(?:\x{00B0}|degrees?\b|deg\b)"#, with: "", options: .regularExpression)
-            let clauses = tail.replacingOccurrences(of: #"[,;:]|\band\b|\bbut\b|\bso\b|\bwhile\b|\bwhereas\b"#, with: "\u{1}", options: .regularExpression)
-                .components(separatedBy: "\u{1}").filter { $0.range(of: comparison, options: .regularExpression) == nil }
-            if clauses.contains(where: { $0.range(of: #"\b(left|right|other|arm|arms|shoulder|shoulders|elbow|elbows|forearm|forearms|limb|limbs|too|also|likewise|same|both|each)\b|\bas well\b"#, options: .regularExpression) != nil }) {
                 return false
             }
         }
-        return claims > 0
+        return true
     }
 }

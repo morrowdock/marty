@@ -504,8 +504,10 @@ the MCP server uses), so a run needs no MCP client.
    names ("the left shoulder is raised 60 degrees"), and a comparison of the two
    sides ("the left arm is raised more than the right", "one arm is raised more
    than the other") must hold for that joint, in the views the sentence names
-   (each of them) or in one posed view when it names none; posed numbers source
-   nothing else, and `answerLint.remaining` records any sentence
+   (each of them) or in one posed view when it names none; every clause of such
+   a sentence must be exactly one such angle or comparison (a reference frame,
+   "above horizontal", another limb, "both elbows are bent", or a negation is
+   checked as usual); posed numbers source nothing else, and `answerLint.remaining` records any sentence
    that keeps it from clearing; the engine's push summary names how many shown
    thrust arrows it comes from ("the one shown thrust arrow gives (that arrow
    only, not every engine)"); a beat or
