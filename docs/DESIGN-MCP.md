@@ -1,7 +1,7 @@
 # Design note: the Marty MCP tool set
 
 Status: implemented in `marty-mcp` 0.2.0. Engine pin: MartyGraphics `main` at
-`dfc521a83c8fdefc1f918a6d1bd1065e7e3a89b2` (PR #20 lessons, PR #21 open vocabulary 1: facts,
+`38f3863d5ed27c94fccf44b5f117a43938b79455` (PR #20 lessons, PR #21 open vocabulary 1: facts,
 placeholders, truth tiers, frame lints, strict profile, PR #30: the report and render plan as
 library API, PR #31: annotations: labels, arrows, measured dimensions, and PR #32: explainer
 documents, and PR #34: per-step framing with `focus`, and the `mannequin` and

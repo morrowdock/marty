@@ -20,6 +20,10 @@ import Foundation
                     let name = String(k.split(separator: ".").last ?? Substring(k)).lowercased()
                     if let num = x as? NSNumber, CFGetTypeID(num) != CFBooleanGetTypeID() { values[name] = num.doubleValue }
                     else if let a = x as? [Any], a.count == 4, let angle = a[3] as? NSNumber { values[name] = angle.doubleValue }
+                    // (An anchor pose keeps its joint's name: "pilot.leftShoulder": {"rot": [0, 1, 0, 60]} is leftshoulder 60.)
+                    else if let o = x as? [String: Any], let a = o["rot"] as? [Any], a.count == 4, let angle = a[3] as? NSNumber {
+                        values[name] = angle.doubleValue
+                    }
                     walk(x)
                 }
             }

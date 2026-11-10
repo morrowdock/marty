@@ -6,7 +6,7 @@ import MartyEngine
 /// author step sees a short format guide plus `explain` entries for the parts the plan chose. The receipt records the
 /// size and SHA-256 of every prompt, so a change in context is always measured.
 public enum MartyPrompts {
-    public static let version = "marty-prompts/23"
+    public static let version = "marty-prompts/24"
 
     static let role = """
         You are Marty, a teacher who explains how things work with checked 3D models. A deterministic engine \
@@ -67,25 +67,25 @@ public enum MartyPrompts {
         - Component use: {"id": "stage", "use": "<component id>", "with": {param: value}, "at": [...], "rot": [...],
           "set": {"<inner id>": {fields}}}. Inner parts are "<id>.<inner id>"; anchors such as "stage.input" work in steps.
         - Frames: millimetres, +Z is up. A child's "at" and "rot" are in its parent's frame: never repeat the parent's
-          position in a child. Gears, shafts, plates and profiles are built along their local +Z; to lay one down, turn
+          position. Gears, shafts, plates and profiles are built along local +Z; to lay one down, turn
           the part ("rot": [0, 1, 0, 90] takes local +Z to world +X) and keep "joint": {"revolute": [0, 0, 1]}.
         - Exactly one part has "drive": {"input": ...} for each independent motion; other gear joints are solved by
           "gearMesh" constraints: {"gearMesh": {"a": "<gear>", "b": "<gear>", "carrier": "<carrier, for planets>"}}.
           Meshing gears share one module. Centre distance: module × (z1 + z2) / 2 for two external gears,
           module × (zRing − zPlanet) / 2 for a planet in a ring. {"fixed": "<part>"} holds a joint still.
-        - A meshed gear gets its speed only from an input drive, its meshes, a fixed constraint or a turning parent: never
+        - A meshed gear gets its speed only from an input drive, meshes, a fixed constraint or a turning parent: never
           give it a follow or crank drive. A compound gear (two gears on one shaft) is a child with no joint and no drive
           of the gear it turns with.
         - Every joint must move: give it a drive (input, follow or crank), a gearMesh or a fixed constraint, or remove it
-          (strict check: joint.idle.<id>). A turn axis runs through the part's own origin along its joint vector and
-          must pass through the part's own shape (frame.axis.off.<id>): put the shape on the axis (the shape entry's own
+          (joint.idle.<id>). A turn axis runs through the part's own origin along its joint vector and
+          must pass through its own shape (frame.axis.off.<id>): put the shape on the axis (the shape entry's own
           "at"), or mark a part that turns about an outside axis on purpose with "offAxis": true.
         - Text may not hold <, >, :// or control characters.
         - Step: {"say": "<= 240 chars, one or two short sentences", "highlight": [ids], "explode": 0..1,
           "camera": "<preset>", "orbit": degrees, "spin": input turns, "check": [claims]}. At most 16 steps.
           Cameras: \(MartyEngine.cameraPresets.joined(separator: ", ")) only.
         - Numbers in a step's say come ONLY from engine facts: write {fact} or {fact|mod} and the engine fills it.
-          Any number character in a say is refused, also ½, ² or ₂ (text.number.step.<n>). Facts: <part>.teeth, <part>.module, <part>.speed
+          Any number character in a say is refused, also ½, ² or ₂ (text.number.step.<n>); a confirmed row's model name ("A320") is no number. Facts: <part>.teeth, <part>.module, <part>.speed
           (turns per input turn, signed, relative to its parent), <part>.worldSpeed, <part>.travel (stroke of a sliding
           part), <part>.crankRadius and <part>.rodLength (both on the part with the crankSlider drive, the piston), count.<repeated part>, <instance>.ratio; component parts and
           anchors work ({unit.output.speed}, {unit.part.teeth}). Modifiers: frac (exact fraction, "2/7") and inv (1/x)
@@ -396,7 +396,7 @@ public enum MartyPrompts {
             ("text.placeholder", "A placeholder names no fact, or its form is wrong. Use a fact name the engine solved, as {name} or {name|mod}."),
             ("text.sign", "The abs modifier needs a claim in the same step that proves the sign: {\"value\": \"<fact>\", \"lt\": 0} or \"gt\": 0."),
             ("text.rounding", "That value would print as 0: use {name|frac} or {name|inv}."),
-            ("text.number.beat", "That beat's say has a typed number. Use a {fact} placeholder, or mark the beat \"unchecked\": \"<why>\"."),
+            ("text.number.beat", "That beat's say has a typed number. Use a {fact} placeholder, or mark the beat \"unchecked\": \"<why>\". A model name with a digit (\"A320\") may be typed only exactly as a confirmed research row writes it."),
             ("text.number.item", "A 2D item shows a typed number without a note: add \"notes\": {\"<item id>\": {\"basis\": \"<source>\"}} (or {\"unchecked\": \"<why>\"}), or show an engine fact with a placeholder."),
             ("notes.unused", "A note names no 2D item of the board: key each note by an item id, for example the table's id."),
             ("beat.highlight.ref", "A highlight id names nothing at that beat: use a part id, a 2D item id, or a table row \"t.r<k>\" (the header is row 0)."),
@@ -407,7 +407,9 @@ public enum MartyPrompts {
             ("check.fact", "A claim names no fact. Use a fact name the engine solved."),
             ("annotation.anchor.off", "A label dot or pointer tip is not on the part it names, or another part is nearer to it: put it on that part's surface (an offset in the part's own frame), using the engine's fix below."),
             ("annotation.anchor.hidden", "A label dot or pointer tip is hidden, ghosted, off screen or covered by another part in a view that shows it: apply the engine's checked suggestion below, or one of the alternatives it lists for that dot (only those: a part a label or pointer sits on must not be ghosted)."),
-            ("annotation.arrow.hidden", "An arrow (force, flow, motion or pointer) is mostly hidden or off screen in a view that shows it: apply the engine's checked move below (it keeps the arrow's direction and length in every view), or one of the alternatives it lists for that arrow (only those: a part a label or pointer sits on must not be ghosted)."),
+            ("annotation.arrow.hidden", "An arrow (force, flow, motion or pointer) is mostly hidden or off screen in a view that shows it: apply the engine's checked move below (it keeps the arrow's direction and length in every view), or one of the alternatives it lists for that arrow (only those: a part a label or pointer sits on must not be ghosted). No move (tail): every move would take a force or flow arrow's tail off its part, so leave the arrow out of that view's annotate list or show it in a view where its part is in sight."),
+            ("annotation.arrow.dropped", "(A warning, not a refusal.) A force or flow arrow whose part is hidden from a view's camera is left out of that view's still and legend: show it in a view where its part is in sight, or move the camera there."),
+            ("names.number", "Marty sets \"names\" itself, from the model and version names a confirmed research row states: do not write \"names\"; a name no row confirms is a typed number, so leave it out of the text."),
             ("annotation.arrow.untested", "The engine's arrow test ran out of budget: show fewer arrows in that view, or hide parts that view does not need and no label or arrow sits on."),
             ("view.camera", "A beat view's \"camera\" must be one of the presets, exactly: \(MartyEngine.cameraPresets.joined(separator: ", ")) (for a back view: \"back\", \"backLeft\" or \"backRight\")."),
             ("step.camera", "A step's \"camera\" must be one of the presets, exactly: \(MartyEngine.cameraPresets.joined(separator: ", ")) (for a back view: \"back\", \"backLeft\" or \"backRight\")."),

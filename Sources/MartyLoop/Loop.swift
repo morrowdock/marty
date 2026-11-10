@@ -208,6 +208,46 @@ public final class MartyLoop {
         return out
     }
 
+    /// The model or version names ("Mk4", "A320", "F-35") that a confirmed research row states: each a token (a run of
+    /// letters, digits and "-", as rule N1 reads it) of the row's claim, value or scope that starts with a letter, holds
+    /// a digit, is 2 to 24 characters, and is exactly in a found quote of that row. At most 24, in table order. The
+    /// engine checks each (a quantity such as "Mach2" is refused as `names.number`), and Marty drops a refused one.
+    static func declaredNames(_ table: FactTable) -> [String] {
+        func tokens(_ t: String) -> [String] {
+            t.split { !($0.isLetter || $0.isNumber || $0 == "-") }.map { String($0).trimmingCharacters(in: CharacterSet(charactersIn: "-")) }
+        }
+        var out: [String] = []
+        for row in table.rows where !row.unconfirmed && (row.label == .verified || row.label == .claim) {
+            // (The page's own words only: an editorial insertion, "The [Z6] shaft", confirms no name.)
+            let quoted = Set(row.sources.filter { $0.check == "quote found" }.flatMap { tokens(QuoteCheck.withoutInsertions($0.quote)) })
+            for t in tokens(row.claim + " " + row.value + " " + row.appliesTo)
+            where t.count >= 2 && t.count <= 24 && t.first?.isLetter == true && t.contains(where: \.isNumber)
+                && t.allSatisfy({ $0.isASCII || $0.isLetter || $0.isNumber }) && quoted.contains(t) && !out.contains(t) {
+                out.append(t)
+            }
+        }
+        return Array(out.prefix(24))
+    }
+
+    /// The document with `names` set to the declared names (Marty's, from the confirmed rows; a list the model wrote is
+    /// replaced), for a v2 assembly or an explainer; unchanged otherwise.
+    static func withDeclaredNames(_ document: Any, _ names: [String]) -> Any {
+        guard var d = document as? [String: Any],
+              d["kind"] as? String == "explainer" || (d["v"] as? Int) == 2 else { return document }
+        if names.isEmpty { d.removeValue(forKey: "names") } else { d["names"] = names }
+        // (An explainer's names cover its solid: a list the model wrote in the solid is removed too.)
+        if d["kind"] as? String == "explainer", var solid = d["solid"] as? [String: Any], solid["names"] != nil {
+            solid.removeValue(forKey: "names"); d["solid"] = solid
+        }
+        return d
+    }
+
+    /// The 1-based index of the declared name a `names.number.<n>`, `names.token.<n>` or `names.text.<n>` refusal names.
+    static func refusedNameIndex(_ reason: String?) -> Int? {
+        guard let r = reason, r.hasPrefix("names.number.") || r.hasPrefix("names.token.") || r.hasPrefix("names.text.") else { return nil }
+        return r.split(separator: ".").last.flatMap { Int($0) }
+    }
+
     /// Sentences that deny a motion the model shows ("the model does not show steering", "the arms are held still").
     static let denials = #"(?i)\b(?:does not|doesn't|do not|don't|cannot|can't|can not|is not|isn't|not)\s+(?:\w+\s+){0,2}(?:show|shown|depict|depicted|model|modelled|modeled|animate|animated)\b|\bnot a (?:steering|turning|moving|tilting)\b|\bheld still\b|\bonly (?:shows|models) the hover\b|\bshows the hover, not\b"#
     /// Motion words: a denial counts only when it is about a motion ("does not show steering"), not about scale,
@@ -454,6 +494,9 @@ public final class MartyLoop {
         // its components and attempt. One lint repair at most.
         var fallback: (report: [String: Any], components: [Any], lint: [String], attempt: Int, document: Any?)? = nil
         var lintRepairUsed = false
+        // The declared names of each checked document (by its ref), and the names and refused names of this attempt.
+        var namesByRef: [String: [String]] = [:]
+        var attemptNames: (names: [String], dropped: [String]) = ([], [])
         // When the model could not be reached for the plan, stop: more calls would only fail or wait again.
         if planAdapterFailed { attempts.append(["ok": false, "reason": "adapter"]) }
         for attempt in stride(from: 0, through: planAdapterFailed ? -1 : options.repairs, by: 1) {
@@ -464,16 +507,38 @@ public final class MartyLoop {
             var trimmedNow: [String] = []
             var autoFixed: [String] = []
             if let reply { document = reply["document"] ?? (reply["kind"] != nil ? reply as Any : nil) }
+            // (A document sent as a JSON string is decoded first, so Marty's names, trims and fact check apply to it.)
+            if let text = document as? String, let decoded = try? JSONSerialization.jsonObject(with: Data(text.utf8)), decoded is [String: Any] {
+                document = decoded
+            }
             let components = reply?["components"] as? [Any] ?? []
             var report: [String: Any]
             if components.count > MartyLimits.componentsPerRequest {
                 report = ["ok": false, "reason": "components.count", "part": NSNull()]
             } else if let doc0 = document {
                 // Over-long texts are cut at a word before the check (recorded); then strict, as the engine recommends.
-                let (doc1, cut) = TextBudget.trimmed(Self.exactTableNumbers(doc0))
+                // The declared names are Marty's: the model and version names the confirmed research rows state.
+                var names = Self.declaredNames(facts)
+                let (doc1, cut) = TextBudget.trimmed(Self.withDeclaredNames(Self.exactTableNumbers(doc0), names))
                 document = doc1; trimmedNow = cut
                 do { report = try engine.check(document: doc1, ref: nil, components: components, strict: true) }
                 catch let e as ToolError { report = ["ok": false, "reason": e.reason] }
+                // A name the engine refuses (a quantity such as "Mach2", not a name) is dropped and the check run again.
+                var nameDrops: [String] = []
+                // (At most three such rechecks; after that every name is dropped and the check runs once more, so the
+                // engine's document cache is not filled by name rechecks.)
+                var nameRechecks = 0
+                while let k = Self.refusedNameIndex(report["reason"] as? String), k >= 1, k <= names.count, let cur = document {
+                    nameRechecks += 1
+                    if nameRechecks > 3 { nameDrops += names; names = [] } else { nameDrops.append(names.remove(at: k - 1)) }
+                    let next = Self.withDeclaredNames(cur, names)
+                    guard let r2 = try? engine.check(document: next, ref: nil, components: components, strict: true) else { break }
+                    document = next; report = r2
+                    if names.isEmpty { break }
+                }
+                // (Per attempt; the receipt's `names` are the accepted document's.)
+                if let ref = report["ref"] as? String { namesByRef[ref] = (document as? [String: Any])?["names"] as? [String] ?? [] }
+                attemptNames = (names, nameDrops)
                 // The engine's checked anchor suggestions are applied by Marty and checked again (at most 3 rounds)
                 // before the model is asked: each was verified on a copy, so only the issues left go to the model.
                 var round = 0
@@ -484,6 +549,7 @@ public final class MartyLoop {
                     guard let r2 = try? engine.check(document: fixed, ref: nil, components: components, strict: true) else { break }
                     document = fixed; report = r2; autoFixed += applied
                 }
+                if let ref = report["ref"] as? String { namesByRef[ref] = (document as? [String: Any])?["names"] as? [String] ?? [] }
             } else {
                 report = ["ok": false, "reason": "json", "part": NSNull()]
             }
@@ -493,6 +559,8 @@ public final class MartyLoop {
                 : "(Marty applied the engine's checked anchor and arrow suggestions for " + autoFixed.map { "`\($0)`" }.joined(separator: ", ")
                     + "; this is the document after them.)\n" + MartyJSON.string(["document": document ?? NSNull(), "components": components])
             var outcome = Self.outcome(report)
+            if !attemptNames.dropped.isEmpty { outcome["namesDropped"] = attemptNames.dropped }
+            attemptNames = ([], [])
             if !trimmedNow.isEmpty { outcome["trimmed"] = trimmedNow }
             if !autoFixed.isEmpty { outcome["autoFixed"] = autoFixed }
             note(i, outcome)
@@ -560,12 +628,25 @@ public final class MartyLoop {
                 }
             }
             if fallback != nil {
+                // (A fallback whose document left the engine's cache is checked again, so render and follow-up find it.)
+                if let ref = f.report["ref"] as? String, engine.canonicalDocument(ref: ref) == nil, let doc = f.document,
+                   let r = try? engine.check(document: doc, ref: nil, components: f.components, strict: true), (r["ok"] as? Bool) == true {
+                    if let old = f.report["ref"] as? String, let newRef = r["ref"] as? String { namesByRef[newRef] = namesByRef[old] }
+                    f.report = r
+                }
                 accepted = f.report; acceptedComponents = f.components
                 receipt["lint"] = f.lint; receipt["lintAttempt"] = f.attempt
             }
         }
         receipt["attempts"] = attempts
         receipt["accepted"] = accepted != nil
+        // (From the accepted document itself, after any automatic change; else as checked.)
+        if let ref = accepted?["ref"] as? String {
+            let canonical = engine.canonicalDocument(ref: ref).flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) } as? [String: Any]
+            // (A canonical document without names declares none, as a v1 assembly.)
+            let n = canonical.map { $0["names"] as? [String] ?? [] } ?? namesByRef[ref] ?? []
+            if !n.isEmpty { receipt["names"] = n }
+        }
 
         if let report = accepted, let ref = report["ref"] as? String {
             receipt["final"] = Self.summary(report).merging(["ref": ref, "triangles": report["triangles"] ?? 0, "steps": report["steps"] ?? [Any]()]) { a, _ in a }
@@ -871,7 +952,8 @@ extension MartyLoop {
                 user += "\n\n\"document\" must be the whole changed explainer object, or null. Reply again."
                 continue
             }
-            let (trimmedDoc, explainerCut) = TextBudget.trimmed(Self.exactTableNumbers(changed0))
+            // (The declared names stay Marty's: the accepted document's, whatever the changed explainer lists.)
+            let (trimmedDoc, explainerCut) = TextBudget.trimmed(Self.withDeclaredNames(Self.exactTableNumbers(changed0), base["names"] as? [String] ?? []))
             var changed = trimmedDoc as? [String: Any] ?? changed0
             var r: [String: Any]
             var autoFixed: [String] = []
