@@ -771,17 +771,19 @@ public enum QuoteCheck {
                 // (A qualifier word anywhere inside keeps any parenthesis attached: "(source data for both motors
                 // combined)", "(see the peak rating)".)
                 // (To its closing parenthesis; one that does not close within 40 words stays attached.)
+                // (Nested parentheses are counted: "(see the datasheet (PDF) for the peak rating)" ends at its own close.)
                 var qualifierInside = true
+                var depth = 0
                 var k = n
                 while k < raws.count, k <= n + 40 {
+                    depth += raws[k].filter { $0 == "(" || $0 == "[" }.count
                     let x = String(raws[k]).trimmingCharacters(in: CharacterSet(charactersIn: "()[].,;:!?"))
                     if (k > n && x.first?.isNumber == true) || numberWords[x] != nil || continuations.contains(x) || isRateWord(x)
                         || timeUnits.contains(x) || ["per", "every", "each", "both", "all", "apiece", "combined", "together", "only", "up"].contains(x) {
                         break
                     }
-                    if (k > n && (raws[k].contains(")") || raws[k].contains("]"))) || (k == n && raws[k].dropFirst().contains(")")) {
-                        qualifierInside = false; break
-                    }
+                    depth -= raws[k].filter { $0 == ")" || $0 == "]" }.count
+                    if depth <= 0 { qualifierInside = false; break }
                     k += 1
                 }
                 let aside = !qualifierInside && (Self.asideOpeners.contains(inner) || (inner == "for" && second == "example"))

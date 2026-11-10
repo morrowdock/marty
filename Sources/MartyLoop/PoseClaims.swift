@@ -110,6 +110,7 @@ import Foundation
                 guard let subject = g(m, 1), let j = g(m, 2), let verb = g(m, 3), let word = g(m, 4), let target = g(m, 5) else { return false }
                 let key = jointKey(j, verb: verb)
                 joint = key
+                leadVerb = verb == "bent" ? "bent" : "raised"
                 guard let l = values["left" + key], let r = values["right" + key] else { return false }
                 if subject == "one" {
                     guard target == "other", l != r else { return false }
@@ -125,7 +126,9 @@ import Foundation
                 guard let side = g(m, 1), let number = g(m, 5) else { return false }
                 // ("to/at/by" or a degree word: "and the right shoulder 15 degrees" is the clause before's verb.)
                 guard g(m, 4) != nil || g(m, 6) != nil else { return false }
-                guard let key = g(m, 2).map({ jointKey($0, verb: g(m, 3) ?? leadVerb) }) ?? joint else { return false }
+                // (The clause's own verb, else the one before it: "bent to 60 and the right arm to 15" is bent too.)
+                if let v = g(m, 3) { leadVerb = v == "bent" ? "bent" : "raised" }
+                guard let key = g(m, 2).map({ jointKey($0, verb: leadVerb) }) ?? joint else { return false }
                 joint = key
                 guard let value = values[side + key], let n = Double(number.replacingOccurrences(of: "\u{2212}", with: "-")), value == n else { return false }
             } else {

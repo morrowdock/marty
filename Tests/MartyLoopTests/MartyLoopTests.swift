@@ -1712,6 +1712,13 @@ final class MartyLoopTests: XCTestCase {
                 .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 2, result: &r)
             XCTAssertEqual(r["answerLint"] != nil, flagged, line)
         }
+        // Round 20: an elliptical clause keeps the verb before it; nested parentheses.
+        XCTAssertFalse(PoseClaims.holds("The left arm is bent to 60 degrees and the right arm to 15 degrees",
+                                        in: ["leftelbow": 60, "rightelbow": 0, "leftshoulder": 0, "rightshoulder": 15]))
+        XCTAssertTrue(PoseClaims.holds("The left arm is bent to 60 degrees and the right arm to 0 degrees",
+                                       in: ["leftelbow": 60, "rightelbow": 0, "leftshoulder": 0, "rightshoulder": 15]))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (see the datasheet (PDF) for the peak rating).</p>"))
+        XCTAssertTrue(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (see the datasheet (PDF) for details).</p>"))
         // Round 19: a leading "bends" is the elbow; a qualifier anywhere in a long parenthesis.
         XCTAssertFalse(PoseClaims.holds("Step bends the left arm to 60 degrees", in: ["leftshoulder": 60, "leftelbow": 0]))
         XCTAssertTrue(PoseClaims.holds("Step bends the left arm to 60 degrees and the right to 30", in: ["leftshoulder": 0, "leftelbow": 60, "rightelbow": 30]))
