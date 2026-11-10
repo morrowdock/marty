@@ -83,8 +83,9 @@ import Foundation
         let lower = sentence.lowercased()
         let ns = lower as NSString
         var claims = 0
-        // A comparison: the subject's side and joint (before it, in its clause) against the target's side.
-        if let re = try? NSRegularExpression(pattern: comparison), let m = re.firstMatch(in: lower, range: NSRange(location: 0, length: ns.length)) {
+        // Each comparison: the subject's side and joint (before it, in its clause) against the target's side.
+        guard let re = try? NSRegularExpression(pattern: comparison) else { return false }
+        for m in re.matches(in: lower, range: NSRange(location: 0, length: ns.length)) {
             claims += 1
             let subject = ns.substring(to: m.range.location).replacingOccurrences(of: separators, with: "", options: .regularExpression)
             let phrase = ns.substring(with: m.range)
@@ -109,7 +110,8 @@ import Foundation
         // Each number: an angle (a degree word or sign after it, or a bare number set by a pose verb) of the side and
         // joint named last in its clause, else earlier in the sentence, equal to that posed value.
         let poseVerb = lower.range(of: #"\b(rais\w*|lower\w*|tilt\w*|bend\w*|bent|angl\w*|rotat\w*|turn\w*|swing\w*|swung|pos\w*|set|sets)\b"#, options: .regularExpression) != nil
-        guard let numRE = try? NSRegularExpression(pattern: #"\d+(?:\.\d+)?"#) else { return false }
+        // (A signed number is one: "-60" is no "60"; the minus sign U+2212 too.)
+        guard let numRE = try? NSRegularExpression(pattern: #"(?<![\w.])[-\x{2212}]?\d+(?:\.\d+)?"#) else { return false }
         for m in numRE.matches(in: lower, range: NSRange(location: 0, length: ns.length)) {
             claims += 1
             let after = ns.substring(from: m.range.location + m.range.length)
@@ -122,7 +124,8 @@ import Foundation
             guard clause.range(of: #"\b(arm|arms|shoulder|shoulders|elbow|elbows|forearm|forearms|limb|limbs|left|right)\b"#, options: .regularExpression) != nil,
                   let side = last(sideRE, clause) ?? last(sideRE, before),
                   let joint = last(jointRE, clause) ?? last(jointRE, before),
-                  let value = values[side + jointKey(joint)], let n = Double(ns.substring(with: m.range)), value == n
+                  let value = values[side + jointKey(joint)],
+                  let n = Double(ns.substring(with: m.range).replacingOccurrences(of: "\u{2212}", with: "-")), value == n
             else { return false }
         }
         return claims > 0

@@ -1013,8 +1013,15 @@ extension MartyLoop {
             let text = withoutViewRefs(raw)
             // The views each sentence names, from the text before its view numbers were taken out (a sentence that
             // names a view not found here is checked as it is).
+            // (Two sentences that read the same without their view numbers are checked in the views of both.)
             var viewsOf: [String: [Int]] = [:]
-            for s in Self.sentences(raw) { viewsOf[withoutViewRefs(s)] = PoseClaims.namedViews(s) }
+            for s in Self.sentences(raw) {
+                let key = withoutViewRefs(s), named = PoseClaims.namedViews(s)
+                if let seen = viewsOf[key] {
+                    // One that names no view is checked in every posed view.
+                    viewsOf[key] = seen.isEmpty || named.isEmpty ? Array(poseFacts.keys) : Array(Set(seen + named)).sorted()
+                } else { viewsOf[key] = named }
+            }
             func poseHolds(_ sentence: String) -> Bool {
                 guard !poseFacts.isEmpty, PoseClaims.isPoseSentence(sentence), let views = viewsOf[sentence] else { return false }
                 return PoseClaims.holds(sentence, views: views, facts: poseFacts)

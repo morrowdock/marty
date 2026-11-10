@@ -718,6 +718,9 @@ public enum QuoteCheck {
         var text: String
         var closedBefore: Bool
         var closedAfter: Bool
+        /// The first word of a parenthesis that is no aside ("(which is its peak output)"): a quantity before it does
+        /// not end there.
+        var attachedParen = false
         var hasLetter: Bool { text.contains { $0.isLetter } }
         var hasDigit: Bool { text.contains { $0.isNumber } }
     }
@@ -728,6 +731,7 @@ public enum QuoteCheck {
         func close() { if !out.isEmpty { out[out.count - 1].closedAfter = true }; closed = true }
         let raws = normalized.split(separator: " ")
         for (n, raw) in raws.enumerated() {
+            var attached = false
             if raw == "\u{2}" || raw == "\u{2014}" { close(); continue }
             // An opening parenthesis starts an aside, a hard boundary before it ("1,050 horsepower (incidentally …"),
             // unless the aside qualifies the quantity: a rate, unit, bound, magnitude or number ("10 litres (per minute)",
@@ -762,8 +766,8 @@ public enum QuoteCheck {
                 // Only an opener that never qualifies the quantity before it makes an aside ("(incidentally, …)", "(see
                 // …)", "(pictured)"); any other parenthesis may qualify it ("(pulsed output)", "(i.e. peak output)",
                 // "(note: maximum output)") and stays attached.
-                let aside = Self.asideOpeners.contains(inner)
-                if !qualifies, !qualifiesTwo, !duration, aside { close() }
+                let aside = Self.asideOpeners.contains(inner) || (inner == "for" && second == "example")
+                if !qualifies, !qualifiesTwo, !duration, aside { close() } else { attached = true }
             }
             // A hyphen between two words ("five-engine", "suit - with") is punctuation: next to a number it stays
             // a word of its own (a sign or a range).
@@ -792,7 +796,7 @@ public enum QuoteCheck {
                 trimEnd()
             }
             if t.isEmpty || t == "..." { close(); continue }
-            out.append(Token(text: t, closedBefore: closed, closedAfter: after))
+            out.append(Token(text: t, closedBefore: closed, closedAfter: after, attachedParen: attached))
             closed = after
         }
         if !out.isEmpty { out[out.count - 1].closedAfter = true }
@@ -914,6 +918,8 @@ public enum QuoteCheck {
                 if unitEnd, quantityEnd(w, last) != nil, next.text == "per" || next.text.contains("^") || next.text.contains("/") { return false }
                 // After a number, "per" always goes on ("10 per minute", "10l per minute", "10% per month").
                 if next.text == "per" { return false }
+                // A parenthesis that is no aside goes on with the quantity before it ("10 kW (which is its peak)").
+                if next.attachedParen { return false }
                 // A quantity with a unit (attached, "10l", "10%", "5′11″", or a unit word after the number) is followed
                 // only by ordinary prose words: any other word may continue the unit, a rate or a product ("100 amp
                 // hours", "100 v a", "10 litres every fifteen minutes").

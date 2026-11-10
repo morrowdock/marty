@@ -1696,6 +1696,22 @@ final class MartyLoopTests: XCTestCase {
                 .writeAnswer(system: "s", user: "u", sources: [], posed: twoViews, views: 2, result: &r)
             XCTAssertEqual(r["answerLint"] != nil, flagged, line)
         }
+        // Round 14: attached parentheses after a quantity, every comparison, repeated sentences, signed angles.
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (which is its peak output).</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (it can sustain this for only 30 seconds).</p>"))
+        XCTAssertTrue(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (pictured above).</p>"))
+        let elbows = ["step 1 poses {\"pilot\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15,\"leftElbow\":0,\"rightElbow\":0}}}"]
+        for (posedLines, line, flagged) in [
+            (elbows, "The left arm is raised more than the right and the left elbow is bent more than the right elbow.", true),
+            (["step 1 poses {\"pilot\":{\"with\":{\"leftShoulder\":15,\"rightShoulder\":60}}}", "step 2 poses {\"pilot\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15}}}"],
+             "In step 1, the left arm is raised more than the right. In step 2, the left arm is raised more than the right.", true),
+            (shoulders, "The left shoulder is angled at -60 degrees.", true),
+            (shoulders, "The left shoulder is angled at 60 degrees.", false)] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: [line, "The pilot is shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 2, result: &r)
+            XCTAssertEqual(r["answerLint"] != nil, flagged, line)
+        }
         XCTAssertEqual(PoseClaims.facts(twoViews)[2]?["leftshoulder"], 15)
         XCTAssertEqual(PoseClaims.namedViews("Steps 2-4 and beat 6 show it"), [2, 3, 4, 6])
         var stuck: [String: Any] = [:]
