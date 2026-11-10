@@ -1621,6 +1621,20 @@ final class MartyLoopTests: XCTestCase {
                 .writeAnswer(system: "s", user: "u", sources: [], posed: ["step 1 poses {\"pilot\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15}}}"], views: 1, result: &r)
             XCTAssertNotNil(r["answerLint"], "uneven arms do not source a leg comparison")
         }
+        // Round 9: pose numbers source only pose sentences; unknown words after a quantity; compatibility brackets;
+        // a claim label's topic word.
+        let shoulders = ["step 1 poses {\"pilot\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15}}}"]
+        for (line, flagged) in [("The rear jet supplies more than 60 percent of the thrust.", true), ("The engines weigh 60 kg.", true),
+                                ("The left shoulder is raised 60 degrees.", false)] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: [line, "The pilot is shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: shoulders, views: 1, result: &r)
+            XCTAssertEqual(r["answerLint"] != nil, flagged, line)
+        }
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW pulsed output.</p>"))
+        XCTAssertEqual(QuoteCheck.unstatedWord(value: "most of the lifting force", claim: "Rear unit lift", quotes: ["The rear unit provides \u{FE47}most of\u{FE48} the lifting force"]), "most")
+        XCTAssertTrue(QuoteCheck.statedNumbers(QuoteCheck.withoutInsertions("The backpack holds \u{FE47}5\u{FE48} jet engines")).isEmpty)
+        XCTAssertNil(QuoteCheck.unstatedWord(value: "40 percent", claim: "Arm jets thrust share", quotes: ["The arm jets provide 40% of the thrust"]))
         var stuck: [String: Any] = [:]
         _ = try MartyLoop(model: ScriptedAdapter(replies: ["It weighs 99 kg.", "It still weighs 99 kg."]), out: tempOut(), options: .init())
             .writeAnswer(system: "s", user: "u", sources: [], result: &stuck)

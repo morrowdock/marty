@@ -1031,17 +1031,18 @@ extension MartyLoop {
         let posedEvidence = posedPoses.map { Self.poseNumbers($0).joined(separator: " ") }.filter { !$0.isEmpty }
         // A limb comparison is sourced only by a pose whose left and right limb values differ.
         let uneven = posedPoses.reduce(into: Set<String>()) { $0.formUnion(Self.unevenLimbs($1)) }
+        let poseComparison = #"(?i)\b(raised|lowered|tilted|bent|angled)\s+(?:much\s+|far\s+)?(?:more|less|further|higher|lower)\s+than(?:\s+the\s+other)?\b|\b(higher|lower|further)\s+than\s+the\s+other\b"#
         func problems(_ raw: String) -> (comparative: [String], unsourced: [String]) {
             let text = withoutViewRefs(raw)
             // The posed views are evidence: their angles, and a comparison of the posed parts ("one arm is raised more
             // than the other").
-            let c = Self.unsupportedComparatives(text, sources: sources + posedEvidence).filter { sentence in
+            // (Pose numbers are no general evidence: an angle of 60 sources no "60 percent of the thrust".)
+            let c = Self.unsupportedComparatives(text, sources: sources).filter { sentence in
                 // Only a comparison of a pose ("one arm is raised more than the other") is sourced by a posed view, and
                 // only when it makes no share claim ("the arm supports carry most of the load" is still checked).
                 // The comparison must itself be about the pose: "raised more than the other", "higher than the other".
                 // Every other comparison in the sentence must be absent: the pose comparison is cut out and the rest
                 // checked with the same share and comparison detector ("… and provides two thirds of the support").
-                let poseComparison = #"(?i)\b(raised|lowered|tilted|bent|angled)\s+(?:much\s+|far\s+)?(?:more|less|further|higher|lower)\s+than(?:\s+the\s+other)?\b|\b(higher|lower|further)\s+than\s+the\s+other\b"#
                 // The sentence's limbs must be the uneven ones: "one leg is raised more" needs uneven legs.
                 let lower = sentence.lowercased()
                 let arms = lower.range(of: #"\b(arm|arms|shoulder|shoulders|elbow|elbows|hand|hands)\b"#, options: .regularExpression) != nil
@@ -1060,7 +1061,20 @@ extension MartyLoop {
             }
             // Direction words that disagree with the posed step count with the unsourced sentences.
             let d = push.map { PoseText.disagreements(text, push: $0) } ?? []
-            return (c, (Self.unsourcedSentences(text, sources: sources + posedEvidence) + d).filter { !c.contains($0) })
+            // A sentence about the pose alone (a limb or an angle, no performance or share word) may take its numbers
+            // from the posed values: "the left shoulder is raised 60 degrees".
+            let unsourced = Self.unsourcedSentences(text, sources: sources).filter { sentence in
+                let lower = sentence.lowercased()
+                let aboutPose = lower.range(of: #"\b(arm|arms|shoulder|shoulders|elbow|elbows|hand|hands|leg|legs|hip|hips|knee|knees|limb|limbs|degrees?|angle|angled|tilt\w*|rotat\w*|raised|lowered)\b|\x{00B0}"#, options: .regularExpression) != nil
+                let performance = lower.range(of: #"\b(fuel|power|speed|weight|weighs?|mass|energy|force|load|lift|thrust|support|work|times|kg|kgf|lbf|newtons?|percent|bhp|hp|kw|litres?|liters?|mph|km|seconds?|minutes?|engines?|jets?|turbines?)\b|%"#, options: .regularExpression) != nil
+                // (A pose comparison, "one arm is raised more than the other", is the pose's own; any other is not.)
+                let rest = sentence.replacingOccurrences(of: poseComparison, with: " ", options: .regularExpression)
+                let restWords = Set(rest.lowercased().split { !$0.isLetter }.map(String.init))
+                guard aboutPose, !performance, restWords.isDisjoint(with: QuoteCheck.shareWords),
+                      rest.range(of: Self.comparativeWords, options: .regularExpression) == nil else { return true }
+                return !Self.unsourcedSentences(sentence, sources: sources + posedEvidence).isEmpty
+            }
+            return (c, (unsourced + d).filter { !c.contains($0) })
         }
         // An answer may not deny a motion that a posed view of the model shows: one repair with the posed views.
         // A denial counts when a motion action is in its own clause ("does not show steering"; not "the arm

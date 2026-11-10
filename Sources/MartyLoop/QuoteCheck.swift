@@ -467,6 +467,11 @@ public enum QuoteCheck {
     static let rateWords: Set<String> = ["once", "twice", "thrice", "daily", "hourly", "weekly", "monthly", "yearly", "annually", "annual",
         "nightly", "quarterly", "biweekly", "fortnightly", "apiece", "semiannually", "biannually"]
 
+    /// Further prose words that may follow a quantity at the end of a quote ("1,050hp other than for take-off").
+    static let proseWords: Set<String> = ["other", "otherwise", "would", "will", "can", "could", "should", "must", "does", "did", "also",
+        "then", "there", "where", "because", "since", "although", "though", "unless", "whereas", "instead", "rather", "even", "just",
+        "here", "now", "today", "again", "still", "already", "according"]
+
     /// Words after a quantity that qualify it (a duration, a condition, a peak or a total): never ordinary prose
     /// ("10 kW lasting 30 seconds", "10 kW peak", "10 litres three times a day").
     static let continuations: Set<String> = ["lasting", "during", "within", "after", "until", "throughout", "sustained", "continuous",
@@ -490,8 +495,13 @@ public enum QuoteCheck {
     /// (Recognized as the matcher does, full-width brackets "［5］" too; only the brackets and ellipses are folded,
     /// so numbers keep their notation: "10³" is no "103".)
     static func withoutInsertions(_ quote: String) -> String {
-        quote.replacingOccurrences(of: "\u{FF3B}", with: "[").replacingOccurrences(of: "\u{FF3D}", with: "]")
-            .replacingOccurrences(of: "\u{2026}", with: "...")
+        // Each character that compatibility-maps to a bracket or an ellipsis is folded to it ("［", "﹇", "…"); no other.
+        var folded = ""
+        for c in quote {
+            let m = String(c).precomposedStringWithCompatibilityMapping
+            folded += m == "[" || m == "]" || m == "..." ? m : String(c)
+        }
+        return folded
             .replacingOccurrences(of: #"\[[^\]]{0,40}\]"#, with: " ", options: .regularExpression)
             .replacingOccurrences(of: "...", with: " ")
     }
@@ -512,7 +522,11 @@ public enum QuoteCheck {
                 .split { !$0.isLetter }.map(String.init)
         }
         let quoted = Set(quotes.map(withoutInsertions).flatMap(words).map(singular))
-        for w in words(value + " " + claim) where shareWords.contains(w) && !quoted.contains(singular(w)) { return w }
+        // (A topic word of the claim label, "Arm jets thrust share", names what the row is about: only the value's
+        // share words, and the claim's qualifiers, must be quoted.)
+        let topicWords: Set<String> = ["share", "shares", "split", "proportion", "fraction", "percentage", "percent", "main"]
+        let asserted = words(value) + words(claim).filter { !topicWords.contains($0) }
+        for w in asserted where shareWords.contains(w) && !quoted.contains(singular(w)) { return w }
         guard statedNumbers(value, inOrder: true).isEmpty else { return nil }
         // (Only function words are left out: a short term or acronym, "LPG", "gas", "Jet A", must be stated too.)
         let filler: Set<String> = ["with", "from", "that", "this", "than", "their", "there", "which", "about", "into", "over", "each",
@@ -893,10 +907,8 @@ public enum QuoteCheck {
                 let withUnit = (w[last].hasDigit && w[last].text.contains { !$0.isNumber && !".,".contains($0) }) || (unitEnd && quantityEnd(w, last) != nil)
                 // (An ordinary word of four letters or more is prose too, "1,050hp other than …"; a unit, time,
                 // magnitude, bound or rate word, or a short symbol-like word, may go on with the quantity.)
-                let plainProse = next.text.count >= 4 && next.text.allSatisfy(\.isLetter) && !Self.isUnitWord(next.text)
-                    && !Self.timeUnits.contains(next.text) && !Self.magnitudes.contains(next.text) && !Self.postBounds.contains(next.text)
-                    && !Self.boundTails.contains(next.text) && !["every", "each", "plus", "times", "minus", "continuously"].contains(next.text)
-                    && !Self.isRateWord(next.text) && Self.numberWords[next.text] == nil && !Self.continuations.contains(next.text)
+                // (Only known prose words: an unknown word may qualify the quantity, "10 kW pulsed output".)
+                let plainProse = Self.proseWords.contains(next.text)
                 if withUnit, !Self.proseAfterQuantity.contains(next.text), !plainProse { return false }
                 // An allowed word that leads into another quantity or a time continues it ("10 cm by 20 cm",
                 // "10 litres in 30 seconds", "10 kg over 2 hours").
