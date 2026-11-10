@@ -887,8 +887,9 @@ public enum QuoteCheck {
     /// before a time unit ("for 30 seconds", "in two minutes"). A figure of something else is no qualifier ("its tank
     /// holds 10 litres", "2024 testing confirmed this", "the arms hold two", "in two pods").
     static func clauseQualifies(_ p: [Token], from start: Int) -> Bool {
+        // (Through commas to the sentence end: "10 kW, according to the manufacturer, but only for 30 seconds".)
         var k = start
-        while k < p.count, k <= start + 12 {
+        while k < p.count, k <= start + 24 {
             let x = p[k].text
             // ("in total", "in all" only restate the sum.)
             if ["total", "all"].contains(x), k > start, p[k - 1].text == "in" { k += 1; continue }
@@ -897,7 +898,11 @@ public enum QuoteCheck {
             // (A number before a time unit is a duration: "for 30 seconds", "in two minutes"; "in two pods", "in 2024"
             // are not.)
             if p[k].hasDigit || numberWords[x] != nil, k + 1 < p.count, timeUnits.contains(p[k + 1].text) { return true }
-            if p[k].closedAfter || p[k].terminal { break }
+            // (A time unit attached to its number, "for 30s", "2min"; an article time, "for a minute", "within an hour".)
+            if x.range(of: #"^\d+(?:\.\d+)?(?:s|sec|secs|seconds?|min|mins|minutes?|h|hr|hrs|hours?|ms|days?|wk|weeks?)$"#, options: .regularExpression) != nil { return true }
+            if ["a", "an", "half"].contains(x), k > start, ["for", "in", "within", "over", "under", "during", "after", "lasting", "about"].contains(p[k - 1].text),
+               k + 1 < p.count, timeUnits.contains(p[k + 1].text) { return true }
+            if p[k].terminal { break }
             k += 1
         }
         return false
@@ -1045,14 +1050,8 @@ public enum QuoteCheck {
                 // A clause after a comma or an aside is read to its end for a qualifier ("10 kW, which is its peak
                 // output", "…, which is only available for 30 seconds"; not "27 kg, making it easy to carry").
                 // (A counted quantity too, "100 engines, which is its annual output".)
-                // (Also after a prose word with no break: "10 kW according to the manufacturer, but only for 30 seconds"
-                // reads on past the comma.)
+                // (Also after a prose word with no break: the scan reads on through commas to the sentence end.)
                 if withUnit || w[last].hasDigit || countEnd, Self.clauseQualifies(p, from: ni) { return false }
-                if !afterBreak, withUnit || w[last].hasDigit || countEnd, Self.proseAfterQuantity.contains(next.text) || Self.proseWords.contains(next.text) {
-                    var k = ni
-                    while k < p.count, k <= ni + 12, !p[k].closedAfter, !p[k].terminal { k += 1 }
-                    if k < p.count, p[k].closedAfter, !p[k].terminal, k + 1 < p.count, Self.clauseQualifies(p, from: k + 1) { return false }
-                }
                 // A prose word before a qualifier goes on too ("10 kW at peak output", "10 kW at full throttle").
                 // ("in total", "in all" only restate the sum.)
                 // (Articles and possessives between are skipped: "at its peak output", "at the peak output".)
