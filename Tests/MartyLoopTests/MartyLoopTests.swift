@@ -1712,6 +1712,9 @@ final class MartyLoopTests: XCTestCase {
                 .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 2, result: &r)
             XCTAssertEqual(r["answerLint"] != nil, flagged, line)
         }
+        // Round 26: a clause after a comma is read for a qualifier.
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, which is its peak output.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, which is only available for 30 seconds.</p>"))
         // Round 25: the identifier fallback needs the letters next to the numeral; a clause after a comma.
         XCTAssertEqual(QuoteCheck.unstatedWord(value: "Jet A", claim: "Fuel type", quotes: ["The engine burns Jet B fuel at a rate of 60 litres per hour."]), "Jet A")
         XCTAssertEqual(QuoteCheck.unstatedWord(value: "RP-1", claim: "Fuel type", quotes: ["RP-2 is a highly refined kerosene with less than 1 ppm sulfur."]), "RP-1")

@@ -1007,6 +1007,19 @@ public enum QuoteCheck {
                     || (afterBreak && next.text.count > 4 && next.text.hasSuffix("ing") && !Self.continuations.contains(next.text))
                     || (afterBreak && ["which", "making", "meaning", "allowing", "enough", "so", "while", "where", "when", "whereas"].contains(next.text))
                 if withUnit, !Self.proseAfterQuantity.contains(next.text), !plainProse { return false }
+                // A clause after a comma or an aside is read to its end for a qualifier ("10 kW, which is its peak
+                // output", "…, which is only available for 30 seconds"; not "27 kg, making it easy to carry").
+                if afterBreak, withUnit || w[last].hasDigit {
+                    var k = ni
+                    while k < p.count, k <= ni + 12 {
+                        let x = p[k].text
+                        if Self.continuations.contains(x) || (Self.postBounds.contains(x) && !["or", "plus"].contains(x)) || Self.isRateWord(x)
+                            || Self.timeUnits.contains(x) || x.first?.isNumber == true || Self.numberWords[x] != nil
+                            || ["only", "per", "every", "each", "up", "least", "most"].contains(x) { return false }
+                        if p[k].closedAfter || p[k].terminal { break }
+                        k += 1
+                    }
+                }
                 // A prose word before a qualifier goes on too ("10 kW at peak output", "10 kW at full throttle").
                 // ("in total", "in all" only restate the sum.)
                 // (Articles and possessives between are skipped: "at its peak output", "at the peak output".)
