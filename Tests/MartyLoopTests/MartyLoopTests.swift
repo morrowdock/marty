@@ -1712,11 +1712,14 @@ final class MartyLoopTests: XCTestCase {
                 .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 2, result: &r)
             XCTAssertEqual(r["answerLint"] != nil, flagged, line)
         }
+        // Round 16: a modal after a quantity may limit it.
+        XCTAssertFalse(QuoteCheck.found("An output of 10 kW", in: "<p>An output of 10 kW can be sustained for only 30 seconds.</p>"))
         // Round 15: negated comparisons and shared angles are not exempt.
         let mixed = ["step 1 poses {\"pilot\":{\"with\":{\"leftShoulder\":15,\"rightShoulder\":60}}}"]
         for (posedLines, line) in [(shoulders, "The left arm is not raised more than the right."),
                                    (mixed, "The left and right shoulders are raised 60 degrees."),
-                                   (mixed, "Both the left and right arms are raised to 60 degrees.")] {
+                                   (mixed, "Both the left and right arms are raised to 60 degrees."),
+                                   (shoulders, "The left shoulder is raised to 60 degrees, and the right shoulder is too.")] {
             var r: [String: Any] = [:]
             _ = try MartyLoop(model: ScriptedAdapter(replies: [line, "The pilot is shown."]), out: tempOut(), options: .init())
                 .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 1, result: &r)

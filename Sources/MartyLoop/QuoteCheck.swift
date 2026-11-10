@@ -474,8 +474,9 @@ public enum QuoteCheck {
         "emphasis", "sic", "pdf", "link", "opens", "external", "read", "click", "watch"]
 
     /// Further prose words that may follow a quantity at the end of a quote ("1,050hp other than for take-off").
-    static let proseWords: Set<String> = ["other", "otherwise", "would", "will", "can", "could", "should", "must", "does", "did",
-        "then", "there", "where", "because", "since", "although", "though", "unless", "whereas", "according"]
+    /// (No modal or linking word: "can be sustained for only 30 seconds", "although only briefly", "where cooling
+    /// allows" may limit the quantity.)
+    static let proseWords: Set<String> = ["other", "otherwise", "according"]
 
     /// Words after a quantity that qualify it (a duration, a condition, a peak or a total): never ordinary prose
     /// ("10 kW lasting 30 seconds", "10 kW peak", "10 litres three times a day").

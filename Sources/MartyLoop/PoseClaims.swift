@@ -137,6 +137,17 @@ import Foundation
                   let n = Double(ns.substring(with: m.range).replacingOccurrences(of: "\u{2212}", with: "-")), value == n
             else { return false }
         }
+        // A clause after the last number that names a limb or side again, or reuses the value ("and the right
+        // shoulder is too", "as well", "the same"), gives it to another limb unchecked: not exempt.
+        // (A comparison clause there is checked above.)
+        if let lastEnd = numRE.matches(in: lower, range: NSRange(location: 0, length: ns.length)).last.map({ $0.range.location + $0.range.length }) {
+            let tail = ns.substring(from: lastEnd).replacingOccurrences(of: #"^\s*(?:\x{00B0}|degrees?\b|deg\b)"#, with: "", options: .regularExpression)
+            let clauses = tail.replacingOccurrences(of: #"[,;:]|\band\b|\bbut\b|\bso\b|\bwhile\b|\bwhereas\b"#, with: "\u{1}", options: .regularExpression)
+                .components(separatedBy: "\u{1}").filter { $0.range(of: comparison, options: .regularExpression) == nil }
+            if clauses.contains(where: { $0.range(of: #"\b(left|right|other|arm|arms|shoulder|shoulders|elbow|elbows|forearm|forearms|limb|limbs|too|also|likewise|same|both|each)\b|\bas well\b"#, options: .regularExpression) != nil }) {
+                return false
+            }
+        }
         return claims > 0
     }
 }
