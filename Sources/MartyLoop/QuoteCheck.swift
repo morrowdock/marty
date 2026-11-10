@@ -467,6 +467,12 @@ public enum QuoteCheck {
     static let rateWords: Set<String> = ["once", "twice", "thrice", "daily", "hourly", "weekly", "monthly", "yearly", "annually", "annual",
         "nightly", "quarterly", "biweekly", "fortnightly", "apiece", "semiannually", "biannually"]
 
+    /// Words after a quantity that qualify it (a duration, a condition, a peak or a total): never ordinary prose
+    /// ("10 kW lasting 30 seconds", "10 kW peak", "10 litres three times a day").
+    static let continuations: Set<String> = ["lasting", "during", "within", "after", "until", "throughout", "sustained", "continuous",
+        "peak", "maximum", "minimum", "nominal", "rated", "average", "typical", "total", "combined", "overall", "altogether", "burst",
+        "bursts", "momentarily", "briefly", "intermittently", "repeatedly", "initially", "afterwards", "thereafter", "before", "when", "while"]
+
     /// A frequency word, also with a prefix, hyphenated or not ("bimonthly", "semiweekly", "semi-annually",
     /// "biennial"); the bare prefix of a split hyphenated word ("semi") counts too.
     static func isRateWord(_ raw: String) -> Bool {
@@ -481,13 +487,16 @@ public enum QuoteCheck {
     }
 
     /// A quote without its editorial insertions ("[most of]", "[5]", "[...]"): only the page's own words are evidence.
+    /// (Recognized as the matcher does: after compatibility mapping, so full-width brackets "［5］" are insertions too.)
     static func withoutInsertions(_ quote: String) -> String {
-        quote.replacingOccurrences(of: #"\[[^\]]*\]"#, with: " ", options: .regularExpression)
+        quote.precomposedStringWithCompatibilityMapping
+            .replacingOccurrences(of: #"\[[^\]]{0,40}\]"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "...", with: " ")
     }
 
     /// Share and comparison words: a claim that uses one needs a quote that uses it too.
     static let shareWords: Set<String> = ["most", "majority", "half", "halves", "third", "thirds", "quarter", "quarters", "share", "shares",
-        "split", "mainly", "mostly", "chiefly", "primarily", "largely", "largest", "main", "bulk", "predominantly", "dominant", "equal",
+        "split", "fifth", "fifths", "sixth", "sixths", "eighth", "eighths", "tenth", "tenths", "percent", "percentage", "proportion", "fraction", "mainly", "mostly", "chiefly", "primarily", "largely", "largest", "main", "bulk", "predominantly", "dominant", "equal",
         "equally", "evenly", "uniformly", "all", "more", "less", "fewer", "twice", "double", "triple", "entire", "whole"]
 
     /// The claim word that none of the found quotes states, or nil: each share or comparison word of the value and
@@ -882,7 +891,7 @@ public enum QuoteCheck {
                 let plainProse = next.text.count >= 4 && next.text.allSatisfy(\.isLetter) && !Self.isUnitWord(next.text)
                     && !Self.timeUnits.contains(next.text) && !Self.magnitudes.contains(next.text) && !Self.postBounds.contains(next.text)
                     && !Self.boundTails.contains(next.text) && !["every", "each", "plus", "times", "minus", "continuously"].contains(next.text)
-                    && !Self.isRateWord(next.text)
+                    && !Self.isRateWord(next.text) && Self.numberWords[next.text] == nil && !Self.continuations.contains(next.text)
                 if withUnit, !Self.proseAfterQuantity.contains(next.text), !plainProse { return false }
                 // An allowed word that leads into another quantity or a time continues it ("10 cm by 20 cm",
                 // "10 litres in 30 seconds", "10 kg over 2 hours").

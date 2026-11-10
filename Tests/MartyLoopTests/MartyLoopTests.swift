@@ -1588,6 +1588,26 @@ final class MartyLoopTests: XCTestCase {
                 .writeAnswer(system: "s", user: "u", sources: [], posed: stepPosed, views: 4, result: &r)
             XCTAssertNotNil(r["answerLint"], "a view number or the view's own say is no evidence")
         }
+        // Round 7: number words and qualifiers after a quantity, part names as evidence, full-width insertions,
+        // fifths, and the limb exemption only for uneven posed limbs.
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres three times a day.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (lasting 30 seconds).</p>"))
+        XCTAssertTrue(QuoteCheck.statedNumbers(QuoteCheck.withoutInsertions("The backpack holds \u{FF3B}5\u{FF3D} jet engines for lift")).isEmpty)
+        XCTAssertEqual(QuoteCheck.unstatedWord(value: "two fifths", claim: "Arm jets thrust share", quotes: ["A share of the thrust comes from two arm jets"]), "fifths")
+        XCTAssertEqual(MartyLoop.poseNumbers(MartyLoop.poseOfView("step 1 poses {\"pilot4\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15}}}")), ["60", "15"])
+        for (pose, uneven) in [("{\"door\":{\"rot\":[0,30,0]}}", false), ("{\"pilot\":{\"with\":{\"leftShoulder\":15,\"rightShoulder\":15}}}", false),
+                               ("{\"pilot\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15}}}", true)] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: ["One arm is raised more than the other.", "The arms are shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: ["step 1 poses " + pose], views: 1, result: &r)
+            XCTAssertEqual(r["answerLint"] == nil, uneven, pose)
+        }
+        do {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: ["The rear jet supplies more than 4 times the thrust.", "The rear jet is shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: ["step 1 poses {\"pilot4\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15}}}"], views: 1, result: &r)
+            XCTAssertNotNil(r["answerLint"], "a part name is no evidence")
+        }
         var stuck: [String: Any] = [:]
         _ = try MartyLoop(model: ScriptedAdapter(replies: ["It weighs 99 kg.", "It still weighs 99 kg."]), out: tempOut(), options: .init())
             .writeAnswer(system: "s", user: "u", sources: [], result: &stuck)

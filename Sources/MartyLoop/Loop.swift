@@ -186,6 +186,46 @@ public final class MartyLoop {
         }
     }
 
+    /// The pose of a posed view line ("step 4 poses {…} (\"say\")"), parsed; nil when it does not parse.
+    static func poseOfView(_ line: String) -> Any? {
+        let body = line.replacingOccurrences(of: #"^(?:beat|step) \d+ poses "#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #" \(".*"\)$"#, with: "", options: .regularExpression)
+        return try? JSONSerialization.jsonObject(with: Data(body.utf8), options: [.fragmentsAllowed])
+    }
+
+    /// The numeric leaves of a pose (its values, never its keys or names).
+    static func poseNumbers(_ pose: Any?) -> [String] {
+        var out: [String] = []
+        func walk(_ v: Any) {
+            if let o = v as? [String: Any] { for k in o.keys.sorted() { walk(o[k]!) } }
+            else if let a = v as? [Any] { a.forEach(walk) }
+            else if let n = v as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() {
+                let d = n.doubleValue
+                out.append(d == d.rounded() && abs(d) < 1e15 ? String(Int(d)) : String(d))
+            }
+        }
+        if let p = pose { walk(p) }
+        return out
+    }
+
+    /// Whether a pose sets a left and a right limb ("leftShoulder", "rightShoulder") to different values.
+    static func hasUnevenLimbs(_ pose: Any?) -> Bool {
+        let limbs = ["shoulder", "arm", "elbow", "hip", "leg", "knee", "wrist", "ankle"]
+        func walk(_ v: Any) -> Bool {
+            if let o = v as? [String: Any] {
+                for (k, l) in o where k.lowercased().hasPrefix("left") {
+                    let suffix = String(k.dropFirst(4))
+                    guard limbs.contains(where: { suffix.lowercased().contains($0) }), let r = o["right" + suffix] else { continue }
+                    if poseNumbers(l) != poseNumbers(r) { return true }
+                }
+                return o.values.contains(where: walk)
+            }
+            if let a = v as? [Any] { return a.contains(where: walk) }
+            return false
+        }
+        return pose.map(walk) ?? false
+    }
+
     /// Sentences that deny a motion the model shows ("the model does not show steering", "the arms are held still").
     static let denials = #"(?i)\b(?:does not|doesn't|do not|don't|cannot|can't|can not|is not|isn't|not)\s+(?:\w+\s+){0,2}(?:show|shown|depict|depicted|model|modelled|modeled|animate|animated)\b|\bnot a (?:steering|turning|moving|tilting)\b|\bheld still\b|\bonly (?:shows|models) the hover\b|\bshows the hover, not\b"#
     /// Motion words: a denial counts only when it is about a motion ("does not show steering"), not about scale,
@@ -983,11 +1023,12 @@ extension MartyLoop {
             }
             return out
         }
-        // A posed view is evidence only by its pose values: not its view number ("step 4"), nor its own say text.
-        let posedEvidence = posed.map {
-            $0.replacingOccurrences(of: #"^(?:beat|step) \d+ poses "#, with: "", options: .regularExpression)
-                .replacingOccurrences(of: #" \(".*"\)$"#, with: "", options: [.regularExpression])
-        }
+        // A posed view is evidence only by its pose values (the numbers in its pose): not its view number ("step 4"),
+        // its part names ("pilot4") nor its own say text.
+        let posedPoses = posed.map(Self.poseOfView)
+        let posedEvidence = posedPoses.map { Self.poseNumbers($0).joined(separator: " ") }.filter { !$0.isEmpty }
+        // A limb comparison is sourced only by a pose whose left and right limb values differ.
+        let unevenLimbs = posedPoses.contains(where: Self.hasUnevenLimbs)
         func problems(_ raw: String) -> (comparative: [String], unsourced: [String]) {
             let text = withoutViewRefs(raw)
             // The posed views are evidence: their angles, and a comparison of the posed parts ("one arm is raised more
@@ -999,7 +1040,7 @@ extension MartyLoop {
                 // Every other comparison in the sentence must be absent: the pose comparison is cut out and the rest
                 // checked with the same share and comparison detector ("… and provides two thirds of the support").
                 let poseComparison = #"(?i)\b(raised|lowered|tilted|bent|angled)\s+(?:much\s+|far\s+)?(?:more|less|further|higher|lower)\s+than(?:\s+the\s+other)?\b|\b(higher|lower|further)\s+than\s+the\s+other\b"#
-                guard !posed.isEmpty,
+                guard unevenLimbs,
                       sentence.range(of: #"(?i)\b(arm|arms|shoulder|shoulders|leg|legs|limb|limbs)\b"#, options: .regularExpression) != nil,
                       sentence.range(of: poseComparison, options: .regularExpression) != nil
                 else { return true }
