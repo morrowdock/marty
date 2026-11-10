@@ -468,14 +468,10 @@ public enum QuoteCheck {
         "nightly", "quarterly", "biweekly", "fortnightly", "apiece", "semiannually", "biannually"]
 
     /// Words that open an aside in parentheses: no qualifier of a quantity before it.
-    /// (Only openers that never clarify the quantity: "(i.e. peak output)" and "(also its peak)" may qualify it, so
-    /// they count only with no qualifier inside, as prose words do.)
+    /// (Only openers that never clarify the quantity; "(i.e. …)", "(note: …)" or "(which …)" may qualify it.)
     static let asideOpeners: Set<String> = ["incidentally", "see", "pictured", "photo", "image", "left", "right", "top", "bottom",
-        "source", "sources", "citation", "note", "notes", "via", "cf", "fig", "figure", "video", "archived", "updated", "translated",
+        "source", "sources", "citation", "via", "cf", "fig", "figure", "video", "archived", "updated", "translated",
         "emphasis", "sic", "pdf", "link", "opens", "external", "read", "click", "watch"]
-    /// Openers of a clarifying parenthesis: an aside only with no qualifier inside.
-    static let clarifyingOpeners: Set<String> = ["e.g", "eg", "i.e", "ie", "example", "also", "who", "whose", "what", "how", "why",
-        "we", "i", "you", "they", "he", "she", "it's", "that's", "which", "namely", "specifically"]
 
     /// Further prose words that may follow a quantity at the end of a quote ("1,050hp other than for take-off").
     static let proseWords: Set<String> = ["other", "otherwise", "would", "will", "can", "could", "should", "must", "does", "did",
@@ -763,22 +759,10 @@ public enum QuoteCheck {
                 }
                 // Only a recognized aside is a boundary ("(for example, …)", "(incidentally …)", "(see …)"); any other
                 // parenthesis may qualify the quantity before it, "10 kW (pulsed output)", and stays attached.
-                // (A qualifier anywhere in the parenthesis keeps it attached: "(a peak rating)", "(that is, twice a day)".)
-                var qualifierInside = false
-                var k = n + 1
-                while k < raws.count, k <= n + 8 {
-                    let x = String(raws[k]).trimmingCharacters(in: CharacterSet(charactersIn: "()[].,;:!?"))
-                    if x.first?.isNumber == true || numberWords[x] != nil || continuations.contains(x) || isRateWord(x)
-                        || (postBounds.contains(x) && !["or", "plus"].contains(x)) || timeUnits.contains(x) || ["per", "every", "each", "times"].contains(x) {
-                        qualifierInside = true; break
-                    }
-                    if raws[k].contains(")") || raws[k].contains("]") { break }
-                    k += 1
-                }
-                // (An aside opener, "(incidentally, …)", "(see …)", is an aside whatever follows; a prose word opener only
-                // with no qualifier inside.)
+                // Only an opener that never qualifies the quantity before it makes an aside ("(incidentally, …)", "(see
+                // …)", "(pictured)"); any other parenthesis may qualify it ("(pulsed output)", "(i.e. peak output)",
+                // "(note: maximum output)") and stays attached.
                 let aside = Self.asideOpeners.contains(inner)
-                    || (!qualifierInside && (proseAfterQuantity.contains(inner) || proseWords.contains(inner) || Self.clarifyingOpeners.contains(inner)))
                 if !qualifies, !qualifiesTwo, !duration, aside { close() }
             }
             // A hyphen between two words ("five-engine", "suit - with") is punctuation: next to a number it stays

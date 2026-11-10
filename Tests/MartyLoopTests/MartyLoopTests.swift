@@ -1614,7 +1614,6 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres (three times a day).</p>"))
         XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (rated).</p>"))
         XCTAssertNil(QuoteCheck.unstatedWord(value: "40 percent", claim: "Arm jet contribution", quotes: ["The arm jets provide 40% of the thrust"]))
-        XCTAssertEqual(MartyLoop.unevenLimbs(MartyLoop.poseOfView("step 1 poses {\"pilot\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15}}}")), ["arm"])
         do {
             var r: [String: Any] = [:]
             _ = try MartyLoop(model: ScriptedAdapter(replies: ["One leg is raised more than the other.", "The legs are shown."]), out: tempOut(), options: .init())
@@ -1665,7 +1664,8 @@ final class MartyLoopTests: XCTestCase {
         // comparison target is the whole limb phrase.
         XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (i.e. peak output).</p>"))
         XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (also its peak output).</p>"))
-        XCTAssertTrue(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (i.e. enough for a car).</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (note: maximum output).</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (i.e. pulsed output).</p>"))
         for (line, flagged) in [("The left shoulder is raised 15 degrees and the right shoulder is raised 60 degrees.", true),
                                 ("The left elbow is bent 60 degrees.", true),
                                 ("One arm is raised more than the other model allows.", true),
@@ -1676,6 +1676,28 @@ final class MartyLoopTests: XCTestCase {
                 .writeAnswer(system: "s", user: "u", sources: [], posed: shoulders, views: 1, result: &r)
             XCTAssertEqual(r["answerLint"] != nil, flagged, line)
         }
+        // Round 13: the comparison's sides, joint and direction, and the view a sentence names.
+        for (line, flagged) in [("The right arm is raised more than the left arm.", true),
+                                ("The left elbow is bent more than the right elbow.", true),
+                                ("The left arm is raised more than the right.", false),
+                                ("The right arm is raised less than the left one.", false)] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: [line, "The pilot is shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: shoulders, views: 1, result: &r)
+            XCTAssertEqual(r["answerLint"] != nil, flagged, line)
+        }
+        let twoViews = ["step 1 poses {\"pilot\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15}}}",
+                        "step 2 poses {\"pilot\":{\"with\":{\"leftShoulder\":15,\"rightShoulder\":60}}}"]
+        for (line, flagged) in [("Step 1 raises the left shoulder to 15 and the right shoulder to 60.", true),
+                                ("Step 2 raises the left shoulder to 15 and the right shoulder to 60.", false),
+                                ("Steps 1 and 2 raise the left arm more than the right.", true)] {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: [line, "The pilot is shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: twoViews, views: 2, result: &r)
+            XCTAssertEqual(r["answerLint"] != nil, flagged, line)
+        }
+        XCTAssertEqual(PoseClaims.facts(twoViews)[2]?["leftshoulder"], 15)
+        XCTAssertEqual(PoseClaims.namedViews("Steps 2-4 and beat 6 show it"), [2, 3, 4, 6])
         var stuck: [String: Any] = [:]
         _ = try MartyLoop(model: ScriptedAdapter(replies: ["It weighs 99 kg.", "It still weighs 99 kg."]), out: tempOut(), options: .init())
             .writeAnswer(system: "s", user: "u", sources: [], result: &stuck)

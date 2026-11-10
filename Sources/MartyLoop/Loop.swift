@@ -208,26 +208,6 @@ public final class MartyLoop {
         return out
     }
 
-    /// The limb kinds ("arm", "leg") that a pose sets to different values on the left and the right
-    /// ("leftShoulder" 60, "rightShoulder" 15 makes the arms uneven).
-    static func unevenLimbs(_ pose: Any?) -> Set<String> {
-        let kinds: [(String, String)] = [("shoulder", "arm"), ("elbow", "arm"), ("wrist", "arm"), ("arm", "arm"), ("hand", "arm"),
-                                         ("hip", "leg"), ("knee", "leg"), ("ankle", "leg"), ("leg", "leg"), ("foot", "leg")]
-        var out: Set<String> = []
-        func walk(_ v: Any) {
-            if let o = v as? [String: Any] {
-                for (k, l) in o where k.lowercased().hasPrefix("left") {
-                    let suffix = String(k.dropFirst(4))
-                    guard let kind = kinds.first(where: { suffix.lowercased().contains($0.0) })?.1, let r = o["right" + suffix] else { continue }
-                    if poseNumbers(l) != poseNumbers(r) { out.insert(kind) }
-                }
-                o.values.forEach(walk)
-            } else if let a = v as? [Any] { a.forEach(walk) }
-        }
-        if let p = pose { walk(p) }
-        return out
-    }
-
     /// Sentences that deny a motion the model shows ("the model does not show steering", "the arms are held still").
     static let denials = #"(?i)\b(?:does not|doesn't|do not|don't|cannot|can't|can not|is not|isn't|not)\s+(?:\w+\s+){0,2}(?:show|shown|depict|depicted|model|modelled|modeled|animate|animated)\b|\bnot a (?:steering|turning|moving|tilting)\b|\bheld still\b|\bonly (?:shows|models) the hover\b|\bshows the hover, not\b"#
     /// Motion words: a denial counts only when it is about a motion ("does not show steering"), not about scale,
@@ -1025,100 +1005,29 @@ extension MartyLoop {
             }
             return out
         }
-        // A posed view is evidence only by its pose values (the numbers in its pose): not its view number ("step 4"),
-        // its part names ("pilot4") nor its own say text.
-        let posedPoses = posed.map(Self.poseOfView)
-        // Each posed value by the key it sets, lower case ("leftshoulder": ["60"]; an anchor rot, "pilot.rightShoulder",
-        // by its last name).
-        var posedValues: [String: [String]] = [:]
-        func collect(_ v: Any) {
-            if let o = v as? [String: Any] {
-                for (k, x) in o {
-                    let name = String(k.split(separator: ".").last ?? Substring(k)).lowercased()
-                    if x is NSNumber || x is [Any] { posedValues[name, default: []] += Self.poseNumbers(x) }
-                    collect(x)
-                }
-            }
-        }
-        posedPoses.compactMap { $0 }.forEach(collect)
-        // A limb comparison is sourced only by a pose whose left and right limb values differ.
-        let uneven = posedPoses.reduce(into: Set<String>()) { $0.formUnion(Self.unevenLimbs($1)) }
-        // (Its target is the other posed limb: "than the other", "than the right arm"; not "than the safety limit".)
-        let poseComparison = #"(?i)\b(?:(?:raised|lowered|tilted|bent|angled)\s+(?:much\s+|far\s+)?(?:more|less|further|higher|lower)|higher|lower|further)\s+than\s+(?:the\s+|its\s+|his\s+|her\s+)?(?:other(?:\s+(?:one|arm|leg|shoulder|limb|hip|knee|elbow))?|(?:left|right)(?:\s+(?:one|arm|leg|shoulder|limb|hip|knee|elbow))?)(?:\s+(?:does|is|was))?(?=\s*(?:$|[.,;:!?)]|and\b|but\b|while\b|so\b|as\b|in\b|at\b|on\b))"#
+        // A posed view is evidence only for what it poses: an angle or a two-side comparison of the side and joint a
+        // sentence names, in the view it names (PoseClaims). Its view number, part names and say text are no evidence,
+        // and its numbers source nothing else ("60 percent of the thrust").
+        let poseFacts = PoseClaims.facts(posed)
         func problems(_ raw: String) -> (comparative: [String], unsourced: [String]) {
             let text = withoutViewRefs(raw)
-            // The posed views are evidence: their angles, and a comparison of the posed parts ("one arm is raised more
-            // than the other").
-            // (Pose numbers are no general evidence: an angle of 60 sources no "60 percent of the thrust".)
+            // The views each sentence names, from the text before its view numbers were taken out (a sentence that
+            // names a view not found here is checked as it is).
+            var viewsOf: [String: [Int]] = [:]
+            for s in Self.sentences(raw) { viewsOf[withoutViewRefs(s)] = PoseClaims.namedViews(s) }
+            func poseHolds(_ sentence: String) -> Bool {
+                guard !poseFacts.isEmpty, PoseClaims.isPoseSentence(sentence), let views = viewsOf[sentence] else { return false }
+                return PoseClaims.holds(sentence, views: views, facts: poseFacts)
+            }
             let c = Self.unsupportedComparatives(text, sources: sources).filter { sentence in
-                // Only a comparison of a pose ("one arm is raised more than the other") is sourced by a posed view, and
-                // only when it makes no share claim ("the arm supports carry most of the load" is still checked).
-                // The comparison must itself be about the pose: "raised more than the other", "higher than the other".
-                // Every other comparison in the sentence must be absent: the pose comparison is cut out and the rest
-                // checked with the same share and comparison detector ("… and provides two thirds of the support").
-                // The sentence's limbs must be the uneven ones: "one leg is raised more" needs uneven legs.
-                let lower = sentence.lowercased()
-                let arms = lower.range(of: #"\b(arm|arms|shoulder|shoulders|elbow|elbows|hand|hands)\b"#, options: .regularExpression) != nil
-                let legs = lower.range(of: #"\b(leg|legs|hip|hips|knee|knees|foot|feet)\b"#, options: .regularExpression) != nil
-                let limbs = lower.range(of: #"\b(limb|limbs)\b"#, options: .regularExpression) != nil
-                guard (arms || legs || limbs), !arms || uneven.contains("arm"), !legs || uneven.contains("leg"), !limbs || !uneven.isEmpty,
-                      sentence.range(of: poseComparison, options: .regularExpression) != nil
-                else { return true }
-                let rest = sentence.replacingOccurrences(of: poseComparison, with: " ", options: .regularExpression)
-                let restWords = Set(rest.lowercased().split { !$0.isLetter }.map(String.init))
-                if rest.range(of: Self.comparativeWords, options: .regularExpression) != nil || !restWords.isDisjoint(with: QuoteCheck.shareWords)
-                    || rest.range(of: #"(?i)\b(fuel|power|speed|weight|mass|energy|force|load|lift|thrust|support|work|times)\b"#, options: .regularExpression) != nil {
-                    return true
-                }
-                return false
+                // Only a comparison of the posed sides ("the left arm is raised more than the right") that the posed
+                // values show, with no other comparison or share in the sentence.
+                !(sentence.range(of: PoseClaims.comparison, options: .regularExpression) != nil && poseHolds(sentence))
             }
             // Direction words that disagree with the posed step count with the unsourced sentences.
             let d = push.map { PoseText.disagreements(text, push: $0) } ?? []
-            // A sentence about the pose alone (a limb or an angle, no performance or share word) may take its numbers
-            // from the posed values: "the left shoulder is raised 60 degrees".
-            let unsourced = Self.unsourcedSentences(text, sources: sources).filter { sentence in
-                let lower = sentence.lowercased()
-                let aboutPose = lower.range(of: #"\b(arm|arms|shoulder|shoulders|elbow|elbows|hand|hands|leg|legs|hip|hips|knee|knees|limb|limbs|degrees?|angle|angled|tilt\w*|rotat\w*|raised|lowered)\b|\x{00B0}"#, options: .regularExpression) != nil
-                let performance = lower.range(of: #"\b(fuel|power|speed|weight|weighs?|mass|energy|force|load|lift|thrust|support|work|times|kg|kgf|lbf|newtons?|percent|bhp|hp|kw|litres?|liters?|mph|km|seconds?|minutes?|engines?|jets?|turbines?)\b|%"#, options: .regularExpression) != nil
-                // (A pose comparison, "one arm is raised more than the other", is the pose's own; any other is not.)
-                let rest = sentence.replacingOccurrences(of: poseComparison, with: " ", options: .regularExpression)
-                let restWords = Set(rest.lowercased().split { !$0.isLetter }.map(String.init))
-                guard aboutPose, !performance, restWords.isDisjoint(with: QuoteCheck.shareWords),
-                      rest.range(of: Self.comparativeWords, options: .regularExpression) == nil else { return true }
-                // Each number must be a pose angle: followed by a degree word or sign, or a bare number set by a pose
-                // verb ("raises the left shoulder to 60 and the right to 15"); "carries 60 pounds" is none.
-                let poseVerb = lower.range(of: #"\b(rais\w*|lower\w*|tilt\w*|bend\w*|bent|angl\w*|rotat\w*|turn\w*|swing\w*|swung|pos\w*|set|sets)\b"#, options: .regularExpression) != nil
-                let ns = lower as NSString
-                guard let numRE = try? NSRegularExpression(pattern: #"\d+(?:\.\d+)?"#) else { return true }
-                for m in numRE.matches(in: lower, range: NSRange(location: 0, length: ns.length)) {
-                    let after = ns.substring(from: m.range.location + m.range.length)
-                    let before = ns.substring(to: m.range.location)
-                    let angle = after.range(of: #"^\s*(?:\x{00B0}|degrees?\b|deg\b)"#, options: .regularExpression) != nil
-                    let bare = poseVerb && before.range(of: #"\b(?:to|at|by)\s+$"#, options: .regularExpression) != nil
-                        && after.range(of: #"^\s*(?:$|[.,;:!?)]|and\b|or\b|while\b|so\b|but\b)"#, options: .regularExpression) != nil
-                    if !angle && !bare { return true }
-                    // The number's own clause must be about a limb: "and the right to 15" is, "and the price is set
-                    // at 15" or "the ramp is tilted 15 degrees" is not.
-                    let clause = before.replacingOccurrences(of: #"(?s)^.*(?:[,;:]|\band\b|\bbut\b|\bwhile\b|\bwhereas\b|\bso\b|\bor\b)"#, with: "", options: .regularExpression)
-                    if clause.range(of: #"\b(arm|arms|shoulder|shoulders|elbow|elbows|hand|hands|leg|legs|hip|hips|knee|knees|limb|limbs|left|right)\b"#, options: .regularExpression) == nil { return true }
-                    // And it must be the posed value of that side's joint: the side and the joint named last in its
-                    // clause, else earlier in the sentence ("raises the left shoulder to 60 and the right to 15").
-                    // "The left shoulder is raised 15 degrees" with leftShoulder 60 is no posed value; nor is an elbow
-                    // angle when only the shoulders are posed.
-                    func last(_ re: String, _ t: String) -> String? {
-                        guard let x = try? NSRegularExpression(pattern: re) else { return nil }
-                        let tn = t as NSString
-                        return x.matches(in: t, range: NSRange(location: 0, length: tn.length)).last.map { tn.substring(with: $0.range(at: 1)) }
-                    }
-                    let sideRE = #"\b(left|right)\b"#, jointRE = #"\b(shoulder|elbow|arm|forearm)s?\b"#
-                    guard let side = last(sideRE, clause) ?? last(sideRE, before),
-                          let joint = last(jointRE, clause) ?? last(jointRE, before) else { return true }
-                    let key = side + ["arm": "shoulder", "forearm": "elbow"][joint, default: joint]
-                    let number = ns.substring(with: m.range)
-                    if !(posedValues[key] ?? []).contains(where: { Double($0) == Double(number) }) { return true }
-                }
-                return false
-            }
+            // A sentence about the pose alone may take its numbers from the posed values of the side and joint it names.
+            let unsourced = Self.unsourcedSentences(text, sources: sources).filter { !poseHolds($0) }
             return (c, (unsourced + d).filter { !c.contains($0) })
         }
         // An answer may not deny a motion that a posed view of the model shows: one repair with the posed views.

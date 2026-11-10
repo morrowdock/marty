@@ -498,9 +498,14 @@ the MCP server uses), so a run needs no MCP client.
    ("the model does not show steering", "held still", "not a steering move";
    not an unrelated limit such as "not shown to scale") gets one
    rewrite request to say which beat or step shows it (assembly answers are
-   told their views are steps; `answerPosedLint`); the posed views' values and a
-   comparison of the posed parts ("one arm is raised more than the other") are
-   evidence for the answer lint, and `answerLint.remaining` records any sentence
+   told their views are steps; `answerPosedLint`); a sentence about the pose
+   alone (no performance, unit or share word) is evidence-checked against the
+   posed views: each angle must be the posed value of the side and joint it
+   names ("the left shoulder is raised 60 degrees"), and a comparison of the two
+   sides ("the left arm is raised more than the right", "one arm is raised more
+   than the other") must hold for that joint, in the views the sentence names
+   (each of them) or in one posed view when it names none; posed numbers source
+   nothing else, and `answerLint.remaining` records any sentence
    that keeps it from clearing; the engine's push summary names how many shown
    thrust arrows it comes from ("the one shown thrust arrow gives (that arrow
    only, not every engine)"); a beat or
