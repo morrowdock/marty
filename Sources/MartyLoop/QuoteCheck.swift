@@ -900,8 +900,14 @@ public enum QuoteCheck {
             if p[k].hasDigit || numberWords[x] != nil, k + 1 < p.count, timeUnits.contains(p[k + 1].text) { return true }
             // (A time unit attached to its number, "for 30s", "2min"; an article time, "for a minute", "within an hour".)
             if x.range(of: #"^\d+(?:\.\d+)?(?:s|sec|secs|seconds?|min|mins|minutes?|h|hr|hrs|hours?|ms|days?|wk|weeks?)$"#, options: .regularExpression) != nil { return true }
-            if ["a", "an", "half"].contains(x), k > start, ["for", "in", "within", "over", "under", "during", "after", "lasting", "about"].contains(p[k - 1].text),
-               k + 1 < p.count, timeUnits.contains(p[k + 1].text) { return true }
+            // (A time unit with an article, quantifier or number within three words before it: "for just a minute",
+            // "a few seconds", "several seconds"; "second" alone also needs a duration word, not "a second engine".)
+            if timeUnits.contains(x), k > start {
+                let lead = p[max(start, k - 3)..<k].map(\.text)
+                let counted = lead.contains { ["a", "an", "half", "few", "several", "couple", "some", "many"].contains($0) || numberWords[$0] != nil }
+                let durational = lead.contains { ["for", "in", "within", "over", "under", "during", "after", "lasting", "about", "just", "only"].contains($0) }
+                if counted && (x != "second" || durational) { return true }
+            }
             if p[k].terminal { break }
             k += 1
         }

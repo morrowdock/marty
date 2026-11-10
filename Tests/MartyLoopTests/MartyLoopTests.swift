@@ -1712,6 +1712,11 @@ final class MartyLoopTests: XCTestCase {
                 .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 2, result: &r)
             XCTAssertEqual(r["answerLint"] != nil, flagged, line)
         }
+        // Round 32: modified and quantified durations.
+        for tail in ["for just a minute", "for a few seconds", "for several seconds"] {
+            XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, but it can maintain this output \(tail).</p>"), tail)
+        }
+        XCTAssertTrue(QuoteCheck.found("The device has 5 engines", in: "<p>The device has 5 engines, and a second engine pod.</p>"))
         // Round 31: through a comma-set attribution; attached and article durations.
         XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, according to the manufacturer, but only for 30 seconds.</p>"))
         XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, but it can maintain this output for 30s.</p>"))
