@@ -983,11 +983,16 @@ extension MartyLoop {
             }
             return out
         }
+        // A posed view is evidence only by its pose values: not its view number ("step 4"), nor its own say text.
+        let posedEvidence = posed.map {
+            $0.replacingOccurrences(of: #"^(?:beat|step) \d+ poses "#, with: "", options: .regularExpression)
+                .replacingOccurrences(of: #" \(".*"\)$"#, with: "", options: [.regularExpression])
+        }
         func problems(_ raw: String) -> (comparative: [String], unsourced: [String]) {
             let text = withoutViewRefs(raw)
             // The posed views are evidence: their angles, and a comparison of the posed parts ("one arm is raised more
             // than the other").
-            let c = Self.unsupportedComparatives(text, sources: sources + posed).filter { sentence in
+            let c = Self.unsupportedComparatives(text, sources: sources + posedEvidence).filter { sentence in
                 // Only a comparison of a pose ("one arm is raised more than the other") is sourced by a posed view, and
                 // only when it makes no share claim ("the arm supports carry most of the load" is still checked).
                 // The comparison must itself be about the pose: "raised more than the other", "higher than the other".
@@ -1008,7 +1013,7 @@ extension MartyLoop {
             }
             // Direction words that disagree with the posed step count with the unsourced sentences.
             let d = push.map { PoseText.disagreements(text, push: $0) } ?? []
-            return (c, (Self.unsourcedSentences(text, sources: sources + posed) + d).filter { !c.contains($0) })
+            return (c, (Self.unsourcedSentences(text, sources: sources + posedEvidence) + d).filter { !c.contains($0) })
         }
         // An answer may not deny a motion that a posed view of the model shows: one repair with the posed views.
         // A denial counts when a motion action is in its own clause ("does not show steering"; not "the arm

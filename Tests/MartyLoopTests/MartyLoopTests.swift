@@ -1574,6 +1574,20 @@ final class MartyLoopTests: XCTestCase {
         XCTAssertTrue(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (for example, in a test rig).</p>"))
         XCTAssertEqual(QuoteCheck.unstatedWord(value: "most of the lifting force", claim: "Rear unit lift", quotes: ["The rear unit provides [most of] the lifting force"]), "most")
         XCTAssertNil(QuoteCheck.unstatedWord(value: "27 kg", claim: "All-up weight", quotes: ["The total loaded weight is 27 kg"]))
+        // Round 6: modified durations, prefixed rate words, insertions in numeric evidence, view numbers as evidence.
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (for just 30 seconds).</p>"))
+        for rate in ["bimonthly", "semiweekly", "semi-annually", "biennially"] {
+            XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres \(rate).</p>"), rate)
+        }
+        XCTAssertTrue(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres through the hose.</p>"))
+        XCTAssertTrue(QuoteCheck.statedNumbers(QuoteCheck.withoutInsertions("The backpack holds [5] jet engines for lift")).isEmpty)
+        do {
+            var r: [String: Any] = [:]
+            let stepPosed = ["step 4 poses {\"pilot\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15}}} (\"The rear jet gives most of the thrust.\")"]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: ["The rear jet supplies more than 4 times the thrust.", "The rear jet is shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: stepPosed, views: 4, result: &r)
+            XCTAssertNotNil(r["answerLint"], "a view number or the view's own say is no evidence")
+        }
         var stuck: [String: Any] = [:]
         _ = try MartyLoop(model: ScriptedAdapter(replies: ["It weighs 99 kg.", "It still weighs 99 kg."]), out: tempOut(), options: .init())
             .writeAnswer(system: "s", user: "u", sources: [], result: &stuck)

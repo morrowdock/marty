@@ -467,6 +467,24 @@ public enum QuoteCheck {
     static let rateWords: Set<String> = ["once", "twice", "thrice", "daily", "hourly", "weekly", "monthly", "yearly", "annually", "annual",
         "nightly", "quarterly", "biweekly", "fortnightly", "apiece", "semiannually", "biannually"]
 
+    /// A frequency word, also with a prefix, hyphenated or not ("bimonthly", "semiweekly", "semi-annually",
+    /// "biennial"); the bare prefix of a split hyphenated word ("semi") counts too.
+    static func isRateWord(_ raw: String) -> Bool {
+        let w = raw.lowercased().replacingOccurrences(of: "[-\u{2010}\u{2011}]", with: "", options: .regularExpression)
+        if rateWords.contains(w) || ["semi", "bi", "tri"].contains(w) { return true }
+        for p in ["semi", "bi", "tri"] where w.hasPrefix(p) && w.count > p.count + 3 {
+            let rest = String(w.dropFirst(p.count))
+            if rateWords.contains(rest) || rest.hasPrefix("ennial") || rest.hasPrefix("annual") || rest.hasPrefix("week")
+                || rest.hasPrefix("month") || rest.hasPrefix("year") || rest.hasPrefix("dai") || rest.hasPrefix("hour") { return true }
+        }
+        return false
+    }
+
+    /// A quote without its editorial insertions ("[most of]", "[5]", "[...]"): only the page's own words are evidence.
+    static func withoutInsertions(_ quote: String) -> String {
+        quote.replacingOccurrences(of: #"\[[^\]]*\]"#, with: " ", options: .regularExpression)
+    }
+
     /// Share and comparison words: a claim that uses one needs a quote that uses it too.
     static let shareWords: Set<String> = ["most", "majority", "half", "halves", "third", "thirds", "quarter", "quarters", "share", "shares",
         "split", "mainly", "mostly", "chiefly", "primarily", "largely", "largest", "main", "bulk", "predominantly", "dominant", "equal",
@@ -480,7 +498,7 @@ public enum QuoteCheck {
             t.lowercased().replacingOccurrences(of: "all[-\u{2011}](?=[a-z])", with: "all", options: .regularExpression)
                 .split { !$0.isLetter }.map(String.init)
         }
-        let quoted = Set(quotes.map { $0.replacingOccurrences(of: #"\[[^\]]*\]"#, with: " ", options: .regularExpression) }.flatMap(words).map(singular))
+        let quoted = Set(quotes.map(withoutInsertions).flatMap(words).map(singular))
         for w in words(value + " " + claim) where shareWords.contains(w) && !quoted.contains(singular(w)) { return w }
         guard statedNumbers(value, inOrder: true).isEmpty else { return nil }
         // (Only function words are left out: a short term or acronym, "LPG", "gas", "Jet A", must be stated too.)
@@ -683,7 +701,7 @@ public enum QuoteCheck {
             if raw.first == "(" || raw.first == "[" {
                 let inner = String(raw.dropFirst()).trimmingCharacters(in: CharacterSet(charactersIn: "()[].,;:!?"))
                 let qualifies = inner.first?.isNumber == true || inner.first.map { "+-\u{2212}~\u{00B1}\u{2248}<>".contains($0) } == true
-                    || ["per", "every", "each", "plus"].contains(inner) || rateWords.contains(inner)
+                    || ["per", "every", "each", "plus"].contains(inner) || isRateWord(inner)
                     || isUnitWord(inner) || postBounds.contains(inner) || boundTails.contains(inner) || magnitudes.contains(inner)
                     || boundWords.contains(inner)
                 // (Two-word openers: "(a minute)", "(an hour)", "(and up)", "(or more)", "(at most)", "(up to)".)
@@ -691,10 +709,20 @@ public enum QuoteCheck {
                 let qualifiesTwo = (["a", "an"].contains(inner) && timeUnits.contains(second))
                     || (["and", "or"].contains(inner) && (boundTails.contains(second) || second == "more" || second == "less"))
                     || (inner == "at" && ["most", "least"].contains(second)) || (inner == "up" && second == "to")
-                    // ("(for 30 seconds)", "(during two minutes)": a duration; "(for example, …)" is an aside)
-                    || (["for", "during", "over", "within", "under", "in", "after"].contains(inner)
-                        && (second.first?.isNumber == true || numberWords[second] != nil || ["a", "an", "up", "about", "around"].contains(second)))
-                if !qualifies, !qualifiesTwo { close() }
+                // ("(for 30 seconds)", "(for just 30 seconds)", "(during two minutes)": a duration, a number within the
+                // next words of the parenthesis; "(for example, …)" is an aside.)
+                var duration = false
+                if ["for", "during", "over", "within", "under", "in", "after", "lasting"].contains(inner) {
+                    var k = n + 1
+                    while k < raws.count, k <= n + 4 {
+                        let r = String(raws[k])
+                        let x = r.trimmingCharacters(in: CharacterSet(charactersIn: "()[].,;:!?"))
+                        if x.first?.isNumber == true || numberWords[x] != nil || ["a", "an", "half", "several", "few"].contains(x) { duration = true; break }
+                        if r.contains(")") || r.contains("]") || r.contains(",") || r.contains(";") { break }
+                        k += 1
+                    }
+                }
+                if !qualifies, !qualifiesTwo, !duration { close() }
             }
             // A hyphen between two words ("five-engine", "suit - with") is punctuation: next to a number it stays
             // a word of its own (a sign or a range).
@@ -854,7 +882,7 @@ public enum QuoteCheck {
                 let plainProse = next.text.count >= 4 && next.text.allSatisfy(\.isLetter) && !Self.isUnitWord(next.text)
                     && !Self.timeUnits.contains(next.text) && !Self.magnitudes.contains(next.text) && !Self.postBounds.contains(next.text)
                     && !Self.boundTails.contains(next.text) && !["every", "each", "plus", "times", "minus", "continuously"].contains(next.text)
-                    && !Self.rateWords.contains(next.text)
+                    && !Self.isRateWord(next.text)
                 if withUnit, !Self.proseAfterQuantity.contains(next.text), !plainProse { return false }
                 // An allowed word that leads into another quantity or a time continues it ("10 cm by 20 cm",
                 // "10 litres in 30 seconds", "10 kg over 2 hours").
@@ -1226,9 +1254,11 @@ extension FactTable {
             }
             // The row's value must be what a found quote states: its headline number in one of them. A value computed
             // from other figures (a ratio of two rows' numbers) is no published fact: the row is left out.
+            // (Only the page's own words are evidence: an editorial insertion, "[5]", states nothing.)
+            let pageQuotes = foundQuotes.map(QuoteCheck.withoutInsertions)
             if !rows[n].unconfirmed, after != .unknown, let headline = QuoteCheck.statedNumbers(rows[n].value, inOrder: true).first,
-               !foundQuotes.flatMap({ QuoteCheck.statedNumbers($0) }).contains(headline),
-               !foundQuotes.contains(where: { QuoteCheck.statesCountWord(headline, $0, entities: QuoteCheck.countedWords(value: rows[n].value, claim: rows[n].claim, unit: rows[n].unit)) }) {
+               !pageQuotes.flatMap({ QuoteCheck.statedNumbers($0) }).contains(headline),
+               !pageQuotes.contains(where: { QuoteCheck.statesCountWord(headline, $0, entities: QuoteCheck.countedWords(value: rows[n].value, claim: rows[n].claim, unit: rows[n].unit)) }) {
                 downgrades.append("\(rows[n].id): value \(rows[n].value) is in none of its found quotes (computed, not published); left out")
                 after = .unknown
                 rows[n].unconfirmed = true
