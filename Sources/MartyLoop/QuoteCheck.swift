@@ -895,6 +895,9 @@ public enum QuoteCheck {
             if ["total", "all"].contains(x), k > start, p[k - 1].text == "in" { k += 1; continue }
             if continuations.contains(x) || (postBounds.contains(x) && !["or", "plus"].contains(x)) || isRateWord(x)
                 || ["only", "per", "every", "each", "least", "most"].contains(x) || (x == "up" && k + 1 < p.count && p[k + 1].text == "to") { return true }
+            // (A qualitative duration or a duty cycle: "for short periods", "at a 10% duty cycle", "in transient use".)
+            if ["short", "brief", "period", "periods", "duty", "cycle", "transient", "temporary", "temporarily", "limited", "momentary",
+                "intermittent", "percent"].contains(x) || x.hasSuffix("%") { return true }
             // (A number before a time unit is a duration: "for 30 seconds", "in two minutes"; "in two pods", "in 2024"
             // are not.)
             if p[k].hasDigit || numberWords[x] != nil, k + 1 < p.count, timeUnits.contains(p[k + 1].text) { return true }

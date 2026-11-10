@@ -1712,6 +1712,9 @@ final class MartyLoopTests: XCTestCase {
                 .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 2, result: &r)
             XCTAssertEqual(r["answerLint"] != nil, flagged, line)
         }
+        // Round 34: qualitative durations and duty cycles.
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW according to the manufacturer, for short periods.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW according to the manufacturer, at a 10% duty cycle.</p>"))
         // Round 32: modified and quantified durations.
         for tail in ["for just a minute", "for a few seconds", "for several seconds", "for less than a second", "for a fraction of a second"] {
             XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, but it can maintain this output \(tail).</p>"), tail)
