@@ -1534,6 +1534,19 @@ final class MartyLoopTests: XCTestCase {
             let first = try XCTUnwrap((r["attempts"] as? [[String: Any]])?.first)
             XCTAssertNotEqual(first["ok"] as? Bool, true, "\(first)")
         }
+        // A v1 assembly declares no names, and the receipt says none.
+        do {
+            let v1 = #"{"document":{"v":1,"kind":"assembly","units":"mm","title":"Shaft example","parts":[{"id":"shaft","material":"brushedSteel","shape":{"shaft":{"radius":4,"length":40}}}],"steps":[{"say":"A shaft example."}]}}"#
+            let research = MartyJSON.string(["needed": true, "rows": [["id": "F1", "claim": "A320 airframe material", "value": "aluminium", "label": "CLAIM", "appliesTo": "A320",
+                "sources": [["url": "https://a.org/1", "publisher": "A", "date": "2024", "quote": "The A320 airframe uses aluminium in its main structure"]]]]])
+            let model = ScriptedAdapter(replies: [research, #"{"components": [], "primitives": ["shaft"]}"#, v1, "A shaft example."])
+            var options = MartyLoop.Options(); options.render = false; options.research = true
+            MartyLoop.fetcher = TestPages(pages: ["https://a.org/1": "<p>The A320 airframe uses aluminium in its main structure.</p>"], fallback: nil)
+            defer { MartyLoop.fetcher = TestPages() }
+            let r = try MartyLoop(model: model, out: tempOut(), options: options).run(question: "q")
+            XCTAssertEqual(r["accepted"] as? Bool, true, "\(r["attempts"] ?? "")")
+            XCTAssertNil(r["names"], "\(r["names"] ?? "")")
+        }
         // The guide and the hints teach the names and the arrow tail.
         XCTAssertNotNil(MartyPrompts.hint(for: "names.number.1"))
         XCTAssertTrue(MartyPrompts.hint(for: "annotation.arrow.hidden.aT")?.contains("tail") == true)

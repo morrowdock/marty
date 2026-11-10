@@ -537,7 +537,7 @@ public final class MartyLoop {
                     if names.isEmpty { break }
                 }
                 // (Per attempt; the receipt's `names` are the accepted document's.)
-                if let ref = report["ref"] as? String { namesByRef[ref] = names }
+                if let ref = report["ref"] as? String { namesByRef[ref] = (document as? [String: Any])?["names"] as? [String] ?? [] }
                 attemptNames = (names, nameDrops)
                 // The engine's checked anchor suggestions are applied by Marty and checked again (at most 3 rounds)
                 // before the model is asked: each was verified on a copy, so only the issues left go to the model.
@@ -549,7 +549,7 @@ public final class MartyLoop {
                     guard let r2 = try? engine.check(document: fixed, ref: nil, components: components, strict: true) else { break }
                     document = fixed; report = r2; autoFixed += applied
                 }
-                if let ref = report["ref"] as? String { namesByRef[ref] = names }
+                if let ref = report["ref"] as? String { namesByRef[ref] = (document as? [String: Any])?["names"] as? [String] ?? [] }
             } else {
                 report = ["ok": false, "reason": "json", "part": NSNull()]
             }
@@ -643,7 +643,9 @@ public final class MartyLoop {
         // (From the accepted document itself, after any automatic change; else as checked.)
         if let ref = accepted?["ref"] as? String {
             let canonical = engine.canonicalDocument(ref: ref).flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) } as? [String: Any]
-            if let n = (canonical?["names"] as? [String]) ?? namesByRef[ref], !n.isEmpty { receipt["names"] = n }
+            // (A canonical document without names declares none, as a v1 assembly.)
+            let n = canonical.map { $0["names"] as? [String] ?? [] } ?? namesByRef[ref] ?? []
+            if !n.isEmpty { receipt["names"] = n }
         }
 
         if let report = accepted, let ref = report["ref"] as? String {
