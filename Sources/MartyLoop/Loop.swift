@@ -208,22 +208,24 @@ public final class MartyLoop {
         return out
     }
 
-    /// Whether a pose sets a left and a right limb ("leftShoulder", "rightShoulder") to different values.
-    static func hasUnevenLimbs(_ pose: Any?) -> Bool {
-        let limbs = ["shoulder", "arm", "elbow", "hip", "leg", "knee", "wrist", "ankle"]
-        func walk(_ v: Any) -> Bool {
+    /// The limb kinds ("arm", "leg") that a pose sets to different values on the left and the right
+    /// ("leftShoulder" 60, "rightShoulder" 15 makes the arms uneven).
+    static func unevenLimbs(_ pose: Any?) -> Set<String> {
+        let kinds: [(String, String)] = [("shoulder", "arm"), ("elbow", "arm"), ("wrist", "arm"), ("arm", "arm"), ("hand", "arm"),
+                                         ("hip", "leg"), ("knee", "leg"), ("ankle", "leg"), ("leg", "leg"), ("foot", "leg")]
+        var out: Set<String> = []
+        func walk(_ v: Any) {
             if let o = v as? [String: Any] {
                 for (k, l) in o where k.lowercased().hasPrefix("left") {
                     let suffix = String(k.dropFirst(4))
-                    guard limbs.contains(where: { suffix.lowercased().contains($0) }), let r = o["right" + suffix] else { continue }
-                    if poseNumbers(l) != poseNumbers(r) { return true }
+                    guard let kind = kinds.first(where: { suffix.lowercased().contains($0.0) })?.1, let r = o["right" + suffix] else { continue }
+                    if poseNumbers(l) != poseNumbers(r) { out.insert(kind) }
                 }
-                return o.values.contains(where: walk)
-            }
-            if let a = v as? [Any] { return a.contains(where: walk) }
-            return false
+                o.values.forEach(walk)
+            } else if let a = v as? [Any] { a.forEach(walk) }
         }
-        return pose.map(walk) ?? false
+        if let p = pose { walk(p) }
+        return out
     }
 
     /// Sentences that deny a motion the model shows ("the model does not show steering", "the arms are held still").
@@ -1028,7 +1030,7 @@ extension MartyLoop {
         let posedPoses = posed.map(Self.poseOfView)
         let posedEvidence = posedPoses.map { Self.poseNumbers($0).joined(separator: " ") }.filter { !$0.isEmpty }
         // A limb comparison is sourced only by a pose whose left and right limb values differ.
-        let unevenLimbs = posedPoses.contains(where: Self.hasUnevenLimbs)
+        let uneven = posedPoses.reduce(into: Set<String>()) { $0.formUnion(Self.unevenLimbs($1)) }
         func problems(_ raw: String) -> (comparative: [String], unsourced: [String]) {
             let text = withoutViewRefs(raw)
             // The posed views are evidence: their angles, and a comparison of the posed parts ("one arm is raised more
@@ -1040,8 +1042,12 @@ extension MartyLoop {
                 // Every other comparison in the sentence must be absent: the pose comparison is cut out and the rest
                 // checked with the same share and comparison detector ("… and provides two thirds of the support").
                 let poseComparison = #"(?i)\b(raised|lowered|tilted|bent|angled)\s+(?:much\s+|far\s+)?(?:more|less|further|higher|lower)\s+than(?:\s+the\s+other)?\b|\b(higher|lower|further)\s+than\s+the\s+other\b"#
-                guard unevenLimbs,
-                      sentence.range(of: #"(?i)\b(arm|arms|shoulder|shoulders|leg|legs|limb|limbs)\b"#, options: .regularExpression) != nil,
+                // The sentence's limbs must be the uneven ones: "one leg is raised more" needs uneven legs.
+                let lower = sentence.lowercased()
+                let arms = lower.range(of: #"\b(arm|arms|shoulder|shoulders|elbow|elbows|hand|hands)\b"#, options: .regularExpression) != nil
+                let legs = lower.range(of: #"\b(leg|legs|hip|hips|knee|knees|foot|feet)\b"#, options: .regularExpression) != nil
+                let limbs = lower.range(of: #"\b(limb|limbs)\b"#, options: .regularExpression) != nil
+                guard (arms || legs || limbs), !arms || uneven.contains("arm"), !legs || uneven.contains("leg"), !limbs || !uneven.isEmpty,
                       sentence.range(of: poseComparison, options: .regularExpression) != nil
                 else { return true }
                 let rest = sentence.replacingOccurrences(of: poseComparison, with: " ", options: .regularExpression)

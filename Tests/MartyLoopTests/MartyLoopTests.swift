@@ -1608,6 +1608,19 @@ final class MartyLoopTests: XCTestCase {
                 .writeAnswer(system: "s", user: "u", sources: [], posed: ["step 1 poses {\"pilot4\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15}}}"], views: 1, result: &r)
             XCTAssertNotNil(r["answerLint"], "a part name is no evidence")
         }
+        // Round 8: numbers keep their notation in insertion removal, parenthesized number words and qualifiers,
+        // the limb kind must be the uneven one, and "%" is "percent".
+        XCTAssertTrue(QuoteCheck.withoutInsertions("The tank capacity is 10\u{00B3} litres").contains("10\u{00B3}"))
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres (three times a day).</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (rated).</p>"))
+        XCTAssertNil(QuoteCheck.unstatedWord(value: "40 percent", claim: "Arm jet contribution", quotes: ["The arm jets provide 40% of the thrust"]))
+        XCTAssertEqual(MartyLoop.unevenLimbs(MartyLoop.poseOfView("step 1 poses {\"pilot\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15}}}")), ["arm"])
+        do {
+            var r: [String: Any] = [:]
+            _ = try MartyLoop(model: ScriptedAdapter(replies: ["One leg is raised more than the other.", "The legs are shown."]), out: tempOut(), options: .init())
+                .writeAnswer(system: "s", user: "u", sources: [], posed: ["step 1 poses {\"pilot\":{\"with\":{\"leftShoulder\":60,\"rightShoulder\":15}}}"], views: 1, result: &r)
+            XCTAssertNotNil(r["answerLint"], "uneven arms do not source a leg comparison")
+        }
         var stuck: [String: Any] = [:]
         _ = try MartyLoop(model: ScriptedAdapter(replies: ["It weighs 99 kg.", "It still weighs 99 kg."]), out: tempOut(), options: .init())
             .writeAnswer(system: "s", user: "u", sources: [], result: &stuck)

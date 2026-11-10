@@ -487,9 +487,11 @@ public enum QuoteCheck {
     }
 
     /// A quote without its editorial insertions ("[most of]", "[5]", "[...]"): only the page's own words are evidence.
-    /// (Recognized as the matcher does: after compatibility mapping, so full-width brackets "［5］" are insertions too.)
+    /// (Recognized as the matcher does, full-width brackets "［5］" too; only the brackets and ellipses are folded,
+    /// so numbers keep their notation: "10³" is no "103".)
     static func withoutInsertions(_ quote: String) -> String {
-        quote.precomposedStringWithCompatibilityMapping
+        quote.replacingOccurrences(of: "\u{FF3B}", with: "[").replacingOccurrences(of: "\u{FF3D}", with: "]")
+            .replacingOccurrences(of: "\u{2026}", with: "...")
             .replacingOccurrences(of: #"\[[^\]]{0,40}\]"#, with: " ", options: .regularExpression)
             .replacingOccurrences(of: "...", with: " ")
     }
@@ -503,8 +505,10 @@ public enum QuoteCheck {
     /// claim, and for a value in words (no number) at least one of its content words.
     @MainActor static func unstatedWord(value: String, claim: String, quotes: [String]) -> String? {
         // ("all-up weight" is a compound, no share; an editorial insertion "[most of]" in a quote is no page text.)
+        // ("%" and "per cent" are "percent".)
         func words(_ t: String) -> [String] {
             t.lowercased().replacingOccurrences(of: "all[-\u{2011}](?=[a-z])", with: "all", options: .regularExpression)
+                .replacingOccurrences(of: "%", with: " percent ").replacingOccurrences(of: #"\bper\s+cent\b"#, with: "percent", options: .regularExpression)
                 .split { !$0.isLetter }.map(String.init)
         }
         let quoted = Set(quotes.map(withoutInsertions).flatMap(words).map(singular))
@@ -711,6 +715,7 @@ public enum QuoteCheck {
                 let inner = String(raw.dropFirst()).trimmingCharacters(in: CharacterSet(charactersIn: "()[].,;:!?"))
                 let qualifies = inner.first?.isNumber == true || inner.first.map { "+-\u{2212}~\u{00B1}\u{2248}<>".contains($0) } == true
                     || ["per", "every", "each", "plus"].contains(inner) || isRateWord(inner)
+                    || numberWords[inner] != nil || continuations.contains(inner)
                     || isUnitWord(inner) || postBounds.contains(inner) || boundTails.contains(inner) || magnitudes.contains(inner)
                     || boundWords.contains(inner)
                 // (Two-word openers: "(a minute)", "(an hour)", "(and up)", "(or more)", "(at most)", "(up to)".)
