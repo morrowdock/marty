@@ -1712,6 +1712,17 @@ final class MartyLoopTests: XCTestCase {
                 .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 2, result: &r)
             XCTAssertEqual(r["answerLint"] != nil, flagged, line)
         }
+        // Round 21: the limb word is resolved again per verb; asides are skipped at a quantity's end; the value's
+        // distinguishing word.
+        XCTAssertFalse(PoseClaims.holds("The left arm is bent to 60 degrees and the right is raised to 15 degrees",
+                                        in: ["leftelbow": 60, "rightelbow": 15, "leftshoulder": 0, "rightshoulder": 0]))
+        XCTAssertTrue(PoseClaims.holds("The left arm is bent to 60 degrees and the right is raised to 15 degrees",
+                                       in: ["leftelbow": 60, "rightelbow": 0, "leftshoulder": 0, "rightshoulder": 15]))
+        XCTAssertFalse(QuoteCheck.found("The pump delivers 10 litres", in: "<p>The pump delivers 10 litres (see diagram) per minute.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (pictured above) at peak output.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW at peak output.</p>"))
+        XCTAssertTrue(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (pictured above). It is small.</p>"))
+        XCTAssertEqual(QuoteCheck.unstatedWord(value: "kerosene-based aviation fuel", claim: "Fuel type", quotes: ["The engine runs on diesel fuel"]), "kerosene")
         // Round 20: an elliptical clause keeps the verb before it; nested parentheses.
         XCTAssertFalse(PoseClaims.holds("The left arm is bent to 60 degrees and the right arm to 15 degrees",
                                         in: ["leftelbow": 60, "rightelbow": 0, "leftshoulder": 0, "rightshoulder": 15]))

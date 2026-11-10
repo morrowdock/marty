@@ -93,7 +93,9 @@ import Foundation
             .components(separatedBy: "\u{1}").map { $0.trimmingCharacters(in: .whitespaces) }
         guard !clauses.isEmpty, let angleRE = try? NSRegularExpression(pattern: anglePattern),
               let compRE = try? NSRegularExpression(pattern: comparisonPattern) else { return false }
-        var joint: String? = nil
+        // The limb word of the clause before ("arm"), resolved again with each clause's verb: "the left arm is bent to
+        // 60 and the right is raised to 15" is the left elbow, then the right shoulder.
+        var limb: String? = nil
         // The leading pose verb ("Step 1 bends the left arm to 60") holds for the clauses after it too.
         var leadVerb: String? = nil
         for raw in clauses {
@@ -109,7 +111,7 @@ import Foundation
             if let m = compRE.firstMatch(in: c, range: all) {
                 guard let subject = g(m, 1), let j = g(m, 2), let verb = g(m, 3), let word = g(m, 4), let target = g(m, 5) else { return false }
                 let key = jointKey(j, verb: verb)
-                joint = key
+                limb = j
                 leadVerb = verb == "bent" ? "bent" : "raised"
                 guard let l = values["left" + key], let r = values["right" + key] else { return false }
                 if subject == "one" {
@@ -128,8 +130,9 @@ import Foundation
                 guard g(m, 4) != nil || g(m, 6) != nil else { return false }
                 // (The clause's own verb, else the one before it: "bent to 60 and the right arm to 15" is bent too.)
                 if let v = g(m, 3) { leadVerb = v == "bent" ? "bent" : "raised" }
-                guard let key = g(m, 2).map({ jointKey($0, verb: leadVerb) }) ?? joint else { return false }
-                joint = key
+                guard let word = g(m, 2) ?? limb else { return false }
+                limb = word
+                let key = jointKey(word, verb: leadVerb)
                 guard let value = values[side + key], let n = Double(number.replacingOccurrences(of: "\u{2212}", with: "-")), value == n else { return false }
             } else {
                 return false

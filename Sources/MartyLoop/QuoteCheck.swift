@@ -483,7 +483,7 @@ public enum QuoteCheck {
     /// ("10 kW lasting 30 seconds", "10 kW peak", "10 litres three times a day").
     static let continuations: Set<String> = ["lasting", "during", "within", "after", "until", "throughout", "sustained", "continuous",
         "peak", "maximum", "minimum", "nominal", "rated", "average", "typical", "total", "combined", "overall", "altogether", "burst",
-        "bursts", "momentarily", "briefly", "intermittently", "repeatedly", "initially", "afterwards", "thereafter", "before", "when", "while"]
+        "bursts", "full", "idle", "cruise", "takeoff", "momentarily", "briefly", "intermittently", "repeatedly", "initially", "afterwards", "thereafter", "before", "when", "while"]
 
     /// A frequency word, also with a prefix, hyphenated or not ("bimonthly", "semiweekly", "semi-annually",
     /// "biennial"); the bare prefix of a split hyphenated word ("semi") counts too.
@@ -541,6 +541,10 @@ public enum QuoteCheck {
         let filler: Set<String> = ["with", "from", "that", "this", "than", "their", "there", "which", "about", "into", "over", "each",
             "the", "a", "an", "and", "or", "of", "in", "on", "at", "to", "for", "by", "as", "is", "are", "was", "were", "its", "it", "be", "but", "not"]
         let content = words(value).filter { !filler.contains($0) }
+        // The value's first word that the claim label does not already name must be quoted ("kerosene-based
+        // aviation fuel" for "Fuel type" needs "kerosene"; "diesel fuel" shares only the category word).
+        let claimWords = Set(words(claim).map(singular))
+        if let d = content.first(where: { !claimWords.contains(singular($0)) }) { return quoted.contains(singular(d)) ? nil : d }
         guard let first = content.first else { return nil }
         return content.contains(where: { quoted.contains(singular($0)) }) ? nil : first
     }
@@ -723,6 +727,9 @@ public enum QuoteCheck {
         /// The first word of a parenthesis that is no aside ("(which is its peak output)"): a quantity before it does
         /// not end there.
         var attachedParen = false
+        /// A word of an aside in parentheses ("(see diagram)"): a quantity before it goes on after it ("10 litres
+        /// (see diagram) per minute"), so the end check skips it.
+        var inAside = false
         var hasLetter: Bool { text.contains { $0.isLetter } }
         var hasDigit: Bool { text.contains { $0.isNumber } }
     }
@@ -732,13 +739,18 @@ public enum QuoteCheck {
         var closed = true
         func close() { if !out.isEmpty { out[out.count - 1].closedAfter = true }; closed = true }
         let raws = normalized.split(separator: " ")
+        var asideDepth = 0
+        func parens(_ r: Substring) -> Int { r.filter { $0 == "(" || $0 == "[" }.count - r.filter { $0 == ")" || $0 == "]" }.count }
         for (n, raw) in raws.enumerated() {
             var attached = false
+            let wasInAside = asideDepth > 0
+            var aside = wasInAside
+            if wasInAside { asideDepth = max(0, asideDepth + parens(raw)) }
             if raw == "\u{2}" || raw == "\u{2014}" { close(); continue }
             // An opening parenthesis starts an aside, a hard boundary before it ("1,050 horsepower (incidentally …"),
             // unless the aside qualifies the quantity: a rate, unit, bound, magnitude or number ("10 litres (per minute)",
             // "10 kW (maximum)") goes on with it.
-            if raw.first == "(" || raw.first == "[" {
+            if !wasInAside, raw.first == "(" || raw.first == "[" {
                 let inner = String(raw.dropFirst()).trimmingCharacters(in: CharacterSet(charactersIn: "()[].,;:!?"))
                 let qualifies = inner.first?.isNumber == true || inner.first.map { "+-\u{2212}~\u{00B1}\u{2248}<>".contains($0) } == true
                     || ["per", "every", "each", "plus"].contains(inner) || isRateWord(inner)
@@ -786,8 +798,8 @@ public enum QuoteCheck {
                     if depth <= 0 { qualifierInside = false; break }
                     k += 1
                 }
-                let aside = !qualifierInside && (Self.asideOpeners.contains(inner) || (inner == "for" && second == "example"))
-                if !qualifies, !qualifiesTwo, !duration, aside { close() } else { attached = true }
+                let isAside = !qualifierInside && (Self.asideOpeners.contains(inner) || (inner == "for" && second == "example"))
+                if !qualifies, !qualifiesTwo, !duration, isAside { aside = true; asideDepth = max(0, parens(raw)) } else { attached = true }
             }
             // A hyphen between two words ("five-engine", "suit - with") is punctuation: next to a number it stays
             // a word of its own (a sign or a range).
@@ -816,7 +828,7 @@ public enum QuoteCheck {
                 trimEnd()
             }
             if t.isEmpty || t == "..." { close(); continue }
-            out.append(Token(text: t, closedBefore: closed, closedAfter: after, attachedParen: attached))
+            out.append(Token(text: t, closedBefore: closed, closedAfter: after, attachedParen: attached, inAside: aside))
             closed = after
         }
         if !out.isEmpty { out[out.count - 1].closedAfter = true }
@@ -928,11 +940,16 @@ public enum QuoteCheck {
                 }
                 return false
             }()
-            if !completedEnd, e + 1 < p.count, !p[e].closedAfter, numericEnd(w) || countEnd {
-                let next = p[e + 1]
+            // (An aside after the quantity is skipped: what follows it continues the quantity, "10 litres (see
+            // diagram) per minute"; an aside that ends the sentence ends it.)
+            var ni = e + 1
+            var asideEnded = false
+            while ni < p.count, p[ni].inAside { if p[ni].closedAfter { asideEnded = true }; ni += 1 }
+            if !completedEnd, ni < p.count, !asideEnded, !p[e].closedAfter, numericEnd(w) || countEnd {
+                let next = p[ni]
                 // A dash goes on with a number only when a number follows it ("10 - 20"); before a word it is
                 // punctuation ("1,050 bhp - the company").
-                let after = e + 2 < p.count ? p[e + 2] : nil
+                let after = ni + 1 < p.count ? p[ni + 1] : nil
                 let unitEnd = w[last].hasLetter && !(w[last].text.first?.isNumber ?? false)
                 // A unit goes on: "per …", or a power or quotient unit ("10 m s^-1", "10 metres per second").
                 if unitEnd, quantityEnd(w, last) != nil, next.text == "per" || next.text.contains("^") || next.text.contains("/") { return false }
@@ -949,11 +966,15 @@ public enum QuoteCheck {
                 // (Only known prose words: an unknown word may qualify the quantity, "10 kW pulsed output".)
                 let plainProse = Self.proseWords.contains(next.text)
                 if withUnit, !Self.proseAfterQuantity.contains(next.text), !plainProse { return false }
+                // A prose word before a qualifier goes on too ("10 kW at peak output", "10 kW at full throttle").
+                // ("in total", "in all" only restate the sum.)
+                if withUnit || w[last].hasDigit, let t = after, !(next.text == "in" && ["total", "all"].contains(t.text)),
+                   Self.continuations.contains(t.text) || (Self.postBounds.contains(t.text) && !["or", "plus"].contains(t.text)) { return false }
                 // An allowed word that leads into another quantity or a time continues it ("10 cm by 20 cm",
                 // "10 litres in 30 seconds", "10 kg over 2 hours").
                 // Modifiers between the connector and the quantity are skipped ("in just 30 seconds", "by about 20 cm").
-                var m = e + 2
-                while m < p.count, m < e + 5, Self.modifiers.contains(p[m].text) { m += 1 }
+                var m = ni + 1
+                while m < p.count, m < ni + 4, Self.modifiers.contains(p[m].text) { m += 1 }
                 // (After a counted noun only a rate goes on: "5 engines in two pods" is an arrangement.)
                 let connectors: Set<String> = withUnit || w[last].hasDigit ? ["by", "in", "over", "for", "within", "under", "every", "each"] : ["every", "each"]
                 if withUnit || w[last].hasDigit || countEnd, m < p.count, connectors.contains(next.text) {
