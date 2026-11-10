@@ -540,6 +540,14 @@ public enum QuoteCheck {
         // (Only function words are left out: a short term or acronym, "LPG", "gas", "Jet A", must be stated too.)
         let filler: Set<String> = ["with", "from", "that", "this", "than", "their", "there", "which", "about", "into", "over", "each",
             "the", "a", "an", "and", "or", "of", "in", "on", "at", "to", "for", "by", "as", "is", "are", "was", "were", "its", "it", "be", "but", "not"]
+        // A value with a one-letter or coded identifier ("Jet A", "Jet A-1", "RP-1") must be quoted as that phrase:
+        // without it, "Jet A" would be only "jet".
+        let valueTokens = value.split { !($0.isLetter || $0.isNumber) }.map(String.init)
+        if valueTokens.contains(where: { ($0.count == 1 && $0.first?.isUppercase == true) || ($0.contains(where: \.isNumber) && $0.contains(where: \.isLetter)) }) {
+            let phrase = valueTokens.joined(separator: " ").lowercased()
+            let said = quotes.map { withoutInsertions($0).precomposedStringWithCompatibilityMapping.lowercased().split { !($0.isLetter || $0.isNumber) }.joined(separator: " ") }
+            if !said.contains(where: { (" " + $0 + " ").contains(" " + phrase + " ") }) { return value }
+        }
         let content = words(value).filter { !filler.contains($0) }
         // The value's first word that the claim label does not already name must be quoted ("kerosene-based
         // aviation fuel" for "Fuel type" needs "kerosene"; "diesel fuel" shares only the category word).
@@ -733,6 +741,9 @@ public enum QuoteCheck {
         /// A word of an aside in parentheses ("(see diagram)"): a quantity before it goes on after it ("10 litres
         /// (see diagram) per minute"), so the end check skips it.
         var inAside = false
+        /// A sentence or block ends after it (".", "!", "?", a new block, the page end): a quantity ends there. A
+        /// comma or colon does not end a quantity ("10 kW, its peak output").
+        var terminal = false
         var hasLetter: Bool { text.contains { $0.isLetter } }
         var hasDigit: Bool { text.contains { $0.isNumber } }
     }
@@ -749,7 +760,9 @@ public enum QuoteCheck {
             let wasInAside = asideDepth > 0
             var aside = wasInAside
             if wasInAside { asideDepth = max(0, asideDepth + parens(raw)) }
-            if raw == "\u{2}" || raw == "\u{2014}" { close(); continue }
+            if raw == "\u{2}" { close(); if !out.isEmpty { out[out.count - 1].terminal = true }; continue }
+            // (An em dash starts a new clause: it ends a quantity, "144 kgf — 2024 testing confirmed this".)
+            if raw == "\u{2014}" { close(); if !out.isEmpty { out[out.count - 1].terminal = true }; continue }
             // An opening parenthesis starts an aside, a hard boundary before it ("1,050 horsepower (incidentally …"),
             // unless the aside qualifies the quantity: a rate, unit, bound, magnitude or number ("10 litres (per minute)",
             // "10 kW (maximum)") goes on with it.
@@ -816,7 +829,8 @@ public enum QuoteCheck {
             if raw == "-", let before = out.last, before.text.allSatisfy({ $0.isLetter }), n + 1 < raws.count,
                raws[n + 1].first?.isLetter == true, !raws[n + 1].contains(where: { $0.isNumber }) { close(); continue }
             var t = String(raw), after = false
-            func trimEnd() { while let c = t.last, ".,;:!?".contains(c) { t.removeLast(); after = true } }
+            var stop = false
+            func trimEnd() { while let c = t.last, ".,;:!?".contains(c) { t.removeLast(); after = true; if ".!?".contains(c) { stop = true } } }
             trimEnd()
             // A bound abbreviation's period ("approx. 10", "max. 10") does not end it either.
             if after, raw.last == ".", !raw.dropLast().contains(where: { ".,;:!?".contains($0) }),
@@ -831,10 +845,12 @@ public enum QuoteCheck {
                 trimEnd()
             }
             if t.isEmpty || t == "..." { close(); continue }
-            out.append(Token(text: t, closedBefore: closed, closedAfter: after, attachedParen: attached, inAside: aside))
+            // (A period inside a closing parenthesis, "Acme Inc.)", is no sentence end: the raw word must end with it.)
+            let terminal = after && stop && raw.last.map { ".!?".contains($0) } == true
+            out.append(Token(text: t, closedBefore: closed, closedAfter: after, attachedParen: attached, inAside: aside, terminal: terminal))
             closed = after
         }
-        if !out.isEmpty { out[out.count - 1].closedAfter = true }
+        if !out.isEmpty { out[out.count - 1].closedAfter = true; out[out.count - 1].terminal = true }
         return out
     }
 
@@ -945,12 +961,12 @@ public enum QuoteCheck {
             }()
             // (An aside after the quantity is skipped: what follows it continues the quantity, "10 litres (see
             // diagram) per minute"; an aside that ends the sentence ends it.)
+            // (Only a sentence end ends the quantity: a comma, a colon or an aside does not, "10 kW (see chart), its
+            // peak output"; what follows them is checked.)
             var ni = e + 1
-            var asideEnded = false
-            // (Only a sentence end at the aside's last word ends it: a comma inside, "(pictured, right)", does not.)
-            while ni < p.count, p[ni].inAside { ni += 1 }
-            if ni > e + 1 { asideEnded = p[ni - 1].closedAfter }
-            if !completedEnd, ni < p.count, !asideEnded, !p[e].closedAfter, numericEnd(w) || countEnd {
+            var ended = p[e].terminal
+            while ni < p.count, p[ni].inAside { if p[ni].terminal { ended = true }; ni += 1 }
+            if !completedEnd, ni < p.count, !ended, numericEnd(w) || countEnd {
                 let next = p[ni]
                 // A dash goes on with a number only when a number follows it ("10 - 20"); before a word it is
                 // punctuation ("1,050 bhp - the company").

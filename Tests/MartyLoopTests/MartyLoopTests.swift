@@ -1712,6 +1712,13 @@ final class MartyLoopTests: XCTestCase {
                 .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 2, result: &r)
             XCTAssertEqual(r["answerLint"] != nil, flagged, line)
         }
+        // Round 23: coded identifiers as phrases; only a sentence end ends a quantity; "by" is a change.
+        XCTAssertEqual(QuoteCheck.unstatedWord(value: "Jet A", claim: "Fuel type", quotes: ["The engine burns Jet B fuel during cold-weather operations"]), "Jet A")
+        XCTAssertNil(QuoteCheck.unstatedWord(value: "Jet A", claim: "Fuel type", quotes: ["The engine burns Jet A-1 fuel"]))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (see chart), its peak output.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW (source: Acme Inc.) at peak output.</p>"))
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, its peak output.</p>"))
+        XCTAssertFalse(PoseClaims.holds("Step raises the left arm by 60 degrees", in: ["leftshoulder": 60]))
         // Round 22: articles before a qualifier; punctuation inside an aside; every distinguishing value word.
         XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW at its peak output.</p>"))
         XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW at the peak output.</p>"))

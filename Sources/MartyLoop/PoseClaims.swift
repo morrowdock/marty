@@ -128,6 +128,8 @@ import Foundation
                 guard let side = g(m, 1), let number = g(m, 5) else { return false }
                 // ("to/at/by" or a degree word: "and the right shoulder 15 degrees" is the clause before's verb.)
                 guard g(m, 4) != nil || g(m, 6) != nil else { return false }
+                // ("by 60 degrees" is a change between views, no posed value.)
+                if g(m, 4) == "by" { return false }
                 // (The clause's own verb, else the one before it: "bent to 60 and the right arm to 15" is bent too.)
                 if let v = g(m, 3) { leadVerb = v == "bent" ? "bent" : "raised" }
                 guard let word = g(m, 2) ?? limb else { return false }
