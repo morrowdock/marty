@@ -1712,6 +1712,9 @@ final class MartyLoopTests: XCTestCase {
                 .writeAnswer(system: "s", user: "u", sources: [], posed: posedLines, views: 2, result: &r)
             XCTAssertEqual(r["answerLint"] != nil, flagged, line)
         }
+        // Round 30: an attribution lead-in reads on; a year is no duration.
+        XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW according to the manufacturer, but only for 30 seconds.</p>"))
+        XCTAssertTrue(QuoteCheck.found("The suit weighs 27 kg", in: "<p>The suit weighs 27 kg, first flown in 2024.</p>"))
         // Round 29: a dash clause and a repeated subject are read to the clause end.
         XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW \u{2014} which is available for only 30 seconds.</p>"))
         XCTAssertFalse(QuoteCheck.found("The motor produces 10 kW", in: "<p>The motor produces 10 kW, but its output lasts only 30 seconds.</p>"))

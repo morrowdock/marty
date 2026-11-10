@@ -884,19 +884,19 @@ public enum QuoteCheck {
     /// with a number or a unit after one may not be followed by such a word, nor by "to" and a number (a range).
     /// Whether the clause from `start` (to a comma-like or sentence boundary, at most 12 words) qualifies the quantity
     /// before it: a continuation, a bound, a rate, "only", "per", "every", "each", "up to", "at least/most", or a number
-    /// set as a duration or rate ("for 30 seconds", "30 seconds", "in two minutes"). A figure of something else is
-    /// no qualifier ("its tank holds 10 litres", "2024 testing confirmed this", "the arms hold two").
+    /// before a time unit ("for 30 seconds", "in two minutes"). A figure of something else is no qualifier ("its tank
+    /// holds 10 litres", "2024 testing confirmed this", "the arms hold two", "in two pods").
     static func clauseQualifies(_ p: [Token], from start: Int) -> Bool {
         var k = start
         while k < p.count, k <= start + 12 {
             let x = p[k].text
+            // ("in total", "in all" only restate the sum.)
+            if ["total", "all"].contains(x), k > start, p[k - 1].text == "in" { k += 1; continue }
             if continuations.contains(x) || (postBounds.contains(x) && !["or", "plus"].contains(x)) || isRateWord(x)
                 || ["only", "per", "every", "each", "least", "most"].contains(x) || (x == "up" && k + 1 < p.count && p[k + 1].text == "to") { return true }
-            if p[k].hasDigit || numberWords[x] != nil {
-                let before = k > start ? p[k - 1].text : ""
-                let after = k + 1 < p.count ? p[k + 1].text : ""
-                if ["for", "in", "during", "over", "within", "under", "after", "lasting", "about", "around"].contains(before) || timeUnits.contains(after) { return true }
-            }
+            // (A number before a time unit is a duration: "for 30 seconds", "in two minutes"; "in two pods", "in 2024"
+            // are not.)
+            if p[k].hasDigit || numberWords[x] != nil, k + 1 < p.count, timeUnits.contains(p[k + 1].text) { return true }
             if p[k].closedAfter || p[k].terminal { break }
             k += 1
         }
@@ -1039,12 +1039,20 @@ public enum QuoteCheck {
                 let afterBreak = p[e].closedAfter || ni > e + 1
                 let plainProse = Self.proseWords.contains(next.text)
                     || (afterBreak && next.text.count > 4 && next.text.hasSuffix("ing") && !Self.continuations.contains(next.text))
-                    || (afterBreak && ["which", "making", "meaning", "allowing", "enough", "so", "while", "where", "when", "whereas"].contains(next.text))
+                    || (afterBreak && next.text.allSatisfy(\.isLetter) && !Self.isUnitWord(next.text) && !Self.continuations.contains(next.text)
+                        && !Self.isRateWord(next.text) && !Self.timeUnits.contains(next.text))
                 if withUnit, !Self.proseAfterQuantity.contains(next.text), !plainProse { return false }
                 // A clause after a comma or an aside is read to its end for a qualifier ("10 kW, which is its peak
                 // output", "…, which is only available for 30 seconds"; not "27 kg, making it easy to carry").
                 // (A counted quantity too, "100 engines, which is its annual output".)
-                if afterBreak, withUnit || w[last].hasDigit || countEnd, Self.clauseQualifies(p, from: ni) { return false }
+                // (Also after a prose word with no break: "10 kW according to the manufacturer, but only for 30 seconds"
+                // reads on past the comma.)
+                if withUnit || w[last].hasDigit || countEnd, Self.clauseQualifies(p, from: ni) { return false }
+                if !afterBreak, withUnit || w[last].hasDigit || countEnd, Self.proseAfterQuantity.contains(next.text) || Self.proseWords.contains(next.text) {
+                    var k = ni
+                    while k < p.count, k <= ni + 12, !p[k].closedAfter, !p[k].terminal { k += 1 }
+                    if k < p.count, p[k].closedAfter, !p[k].terminal, k + 1 < p.count, Self.clauseQualifies(p, from: k + 1) { return false }
+                }
                 // A prose word before a qualifier goes on too ("10 kW at peak output", "10 kW at full throttle").
                 // ("in total", "in all" only restate the sum.)
                 // (Articles and possessives between are skipped: "at its peak output", "at the peak output".)
