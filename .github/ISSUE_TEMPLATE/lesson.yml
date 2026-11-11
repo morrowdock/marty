@@ -1,0 +1,27 @@
+name: Wrong or misleading lesson
+description: Marty produced an accepted lesson that is wrong, or an answer that overstates what was checked.
+labels: [lesson]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The engine checks motion and layout, not the meaning of words, so an accepted lesson can still be wrong. Reports like this help us improve the prompts and the honesty lints.
+  - type: input
+    id: version
+    attributes:
+      label: Release or commit, and model
+    validations:
+      required: true
+  - type: input
+    id: question
+    attributes:
+      label: The question you asked
+    validations:
+      required: true
+  - type: textarea
+    id: wrong
+    attributes:
+      label: What is wrong?
+      description: Quote the beat or sentence and give a public source for the correction.
+    validations:
+      required: true

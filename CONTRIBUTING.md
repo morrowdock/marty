@@ -16,7 +16,8 @@ Small bug reports and focused pull requests are welcome during this early previe
 
 Every commit must include a Developer Certificate of Origin sign-off. By
 signing, you certify the
-[Developer Certificate of Origin 1.1](https://developercertificate.org/).
+[Developer Certificate of Origin 1.1](https://developercertificate.org/)
+(full text in [DCO](DCO)).
 
 ```sh
 git commit -s

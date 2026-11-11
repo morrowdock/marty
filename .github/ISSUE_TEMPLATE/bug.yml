@@ -1,0 +1,54 @@
+name: Bug report
+description: A crash or wrong behaviour in marty-mcp, marty ask or marty bench.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use synthetic questions and data only. Do not paste credentials, API keys, personal data, private prompts or private course material.
+        For a vulnerability, use the private security report instead (see SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: Release or commit
+      description: The tag (for example v0.2.0) or the full commit SHA, and the output of `marty-mcp --version` if you use the server.
+    validations:
+      required: true
+  - type: dropdown
+    id: part
+    attributes:
+      label: Part
+      options:
+        - marty-mcp (MCP server)
+        - marty ask (loop)
+        - marty bench
+        - Docs
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform and client
+      description: macOS version, Swift version, and the MCP client or model you used.
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: The exact command or MCP request, and the question.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: The error reason, or the relevant part of the run receipt (remove anything private).
+      render: text

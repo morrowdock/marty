@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/morrowdock/marty/security/advisories/new
+    about: Do not open a public issue for a vulnerability. See SECURITY.md.
+  - name: Engine bug or wrong check result
+    url: https://github.com/morrowdock/martygraphics/issues/new/choose
+    about: Problems with the MartyGraphics engine, its formats or marty-solid go to the martygraphics repository.

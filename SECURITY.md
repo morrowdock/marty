@@ -1,13 +1,23 @@
 # Security policy
 
-This is an early preview. Only the latest `main` branch gets security fixes.
-There is no security support SLA or stable release yet.
+This is an early preview. Only the latest release and the latest commit on
+`main` get security fixes. There is no security support SLA.
 
-Report vulnerabilities privately to **admin@morrowdock.app**. Include the
-affected commit, the impact and minimal synthetic steps to reproduce. Do not
-put vulnerabilities, secrets, personal data or private course material in
-public issues. We coordinate disclosure after a fix is available. Never include
-credentials in a report.
+Report vulnerabilities privately to
+[hello@morrowdock.app](mailto:hello@morrowdock.app), the current fallback
+security contact. A dedicated address, `security@morrowdock.app`, is planned;
+until this file names it as active, use `hello@morrowdock.app`. You can also use
+GitHub's private vulnerability reporting: **Security** tab, then **Report a
+vulnerability**.
+
+Include the affected commit or release, the impact, minimal synthetic steps to
+reproduce and how we can reply to you. Do not put vulnerabilities, secrets,
+personal data or private course material in public issues. We coordinate
+disclosure after a fix is available. Never include credentials in a report.
+
+Bugs in the engine itself (a document that crashes the parser or passes a check
+it must fail) go to
+[MartyGraphics](https://github.com/morrowdock/martygraphics/blob/main/SECURITY.md).
 
 ## Design rules that limit risk
 

@@ -1,0 +1,14 @@
+name: Idea or feature request
+description: Suggest a change to the tools, the loop or the bench.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What do you want to do that you cannot today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
