@@ -1,10 +1,14 @@
 # Changelog
 
-## Unreleased
+All notable changes follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-Nothing yet.
+## [Unreleased]
 
-## v0.2.0 — 2026-11-11
+### Changed
+
+- Require a changelog entry for user-facing pull requests.
+
+## [0.2.0] - 2026-11-11
 
 The first tagged release. **Early preview:** the tools, the loop and the receipt formats can still change. macOS 14+,
 Swift 6 tools, Swift 5 language mode. The engine is pinned to MartyGraphics
@@ -12,7 +16,7 @@ Swift 6 tools, Swift 5 language mode. The engine is pinned to MartyGraphics
 is the one that `marty-mcp --version` reports; there was no 0.1.0 tag. Every change is a pull request in the
 [history of `main`](https://github.com/morrowdock/marty/commits/main).
 
-### What it does
+### Added
 
 - **`marty-mcp`**, an MCP server over standard input and output with the engine tools `catalog`, `explain`, `check`,
   `component_check`, `patch`, `render`, `lesson_check` and `lesson_stream`. It opens no network connection, runs no
